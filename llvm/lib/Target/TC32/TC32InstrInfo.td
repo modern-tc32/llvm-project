@@ -31,17 +31,23 @@ def ADJCALLSTACKUP : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2),
                             "#ADJCALLSTACKUP $amt1, $amt2">;
 }
 
-def TPUSH_R7_LR : TC32Inst<(outs), (ins), "tpush\t{r7, lr}">;
+def TPUSH_R7_LR : TC32Inst<(outs), (ins), "tpush\t{r7, lr}"> {
+  let Defs = [R13];
+  let Uses = [R7, R13, R14];
+}
 
 def TPOP_R7_PC : TC32Inst<(outs), (ins), "tpop\t{r7, pc}"> {
+  let Defs = [R7, R13, R15];
+  let Uses = [R13];
   let isReturn = 1;
   let isTerminator = 1;
   let isBarrier = 1;
 }
 
-def TJL : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
+def TJL : TC32Inst<(outs), (ins calltarget:$dst, variable_ops), "tjl\t$dst"> {
   let Size = 4;
   let isCall = 1;
+  let Defs = [R0, R1, R2, R3, R14];
 }
 
 def TCMPri0 : TC32Inst<(outs), (ins LoGR32:$src), "tcmp\t$src, #0">;
@@ -86,16 +92,19 @@ def TJ : TC32Inst<(outs), (ins brtarget:$dst), "tj\t$dst"> {
 }
 
 def TRET : TC32Inst<(outs), (ins), "tmov\tpc, lr"> {
+  let Defs = [R15];
+  let Uses = [R14];
   let isReturn = 1;
   let isTerminator = 1;
   let isBarrier = 1;
 }
 
 def TRET_R0 : TC32Inst<(outs), (ins), "tmov\tpc, lr"> {
+  let Defs = [R15];
   let isReturn = 1;
   let isTerminator = 1;
   let isBarrier = 1;
-  let Uses = [R0];
+  let Uses = [R0, R14];
 }
 
 def TMOVrr : TC32Inst<(outs GR32:$dst), (ins GR32:$src), "tmov\t$dst, $src">;
@@ -111,6 +120,10 @@ def TMOVNrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src),
 
 def TADDSrru8 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src, uimm8:$imm),
                          "tadds\t$dst, $src, #$imm">;
+
+let Constraints = "$dst = $src" in
+def TADDSri8 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src, uimm8:$imm),
+                        "tadds\t$dst, $src, #$imm">;
 
 def TADDSrrr : TC32Inst<(outs LoGR32:$dst),
                         (ins LoGR32:$src, LoGR32:$rhs),
@@ -169,13 +182,19 @@ def TASRi5 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src, uimm8:$imm),
                       "tasr\t$dst, $src, #$imm">;
 
 def TLOADspu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
-                         "tloadr\t$dst, [sp, #$imm]">;
+                         "tloadr\t$dst, [sp, #$imm]"> {
+  let Uses = [R13];
+}
 
 def TLOADfpu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
-                         "tloadr\t$dst, [r7, #$imm]">;
+                         "tloadr\t$dst, [r7, #$imm]"> {
+  let Uses = [R7];
+}
 
 def TLOADpcu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
-                         "tloadr\t$dst, [pc, #$imm]">;
+                         "tloadr\t$dst, [pc, #$imm]"> {
+  let Uses = [R15];
+}
 
 def TLOADrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base),
                        "tloadr\t$dst, [$base]">;
@@ -190,10 +209,14 @@ def TLOADBru3 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base, uimm8:$imm),
                          "tloadrb\t$dst, [$base, #$imm]">;
 
 def TSTOREspu8 : TC32Inst<(outs), (ins LoGR32:$src, uimm8:$imm),
-                          "tstorer\t$src, [sp, #$imm]">;
+                          "tstorer\t$src, [sp, #$imm]"> {
+  let Uses = [R13];
+}
 
 def TSTOREfpu8 : TC32Inst<(outs), (ins LoGR32:$src, uimm8:$imm),
-                          "tstorer\t$src, [r7, #$imm]">;
+                          "tstorer\t$src, [r7, #$imm]"> {
+  let Uses = [R7];
+}
 
 def TSTORErr : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base),
                         "tstorer\t$src, [$base]">;
@@ -207,12 +230,20 @@ def TSTOREBrr : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base),
 def TSTOREBru3 : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base, uimm8:$imm),
                           "tstorerb\t$src, [$base, #$imm]">;
 
-def TADDspu8 : TC32Inst<(outs), (ins uimm8:$imm), "tadd\tsp, #$imm">;
+def TADDspu8 : TC32Inst<(outs), (ins uimm8:$imm), "tadd\tsp, #$imm"> {
+  let Defs = [R13];
+  let Uses = [R13];
+}
 
-def TSUBspu8 : TC32Inst<(outs), (ins uimm8:$imm), "tsub\tsp, #$imm">;
+def TSUBspu8 : TC32Inst<(outs), (ins uimm8:$imm), "tsub\tsp, #$imm"> {
+  let Defs = [R13];
+  let Uses = [R13];
+}
 
 def TADDdstspu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
-                           "tadd\t$dst, sp, #$imm">;
+                           "tadd\t$dst, sp, #$imm"> {
+  let Uses = [R13];
+}
 
 def TLOADaddr : Pseudo<(outs LoGR32:$dst), (ins addrtarget:$addr),
                        "#TLOADaddr $dst, $addr">;
