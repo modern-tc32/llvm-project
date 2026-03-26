@@ -8,9 +8,27 @@ class TC32Inst<dag Outs, dag Ins, string Asm, list<dag> Pats = []>
   let Size = 2;
 }
 
+class Pseudo<dag Outs, dag Ins, string Asm, list<dag> Pats = []> : Instruction {
+  let Namespace = "TC32";
+  let OutOperandList = Outs;
+  let InOperandList = Ins;
+  let AsmString = Asm;
+  let Pattern = Pats;
+  let Size = 0;
+  let isCodeGenOnly = 1;
+  let isPseudo = 1;
+}
+
 def uimm8 : Operand<i32>;
 def calltarget : Operand<i32>;
 def brtarget : Operand<OtherVT>;
+
+let Defs = [R13], Uses = [R13] in {
+def ADJCALLSTACKDOWN : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2),
+                              "#ADJCALLSTACKDOWN $amt1, $amt2">;
+def ADJCALLSTACKUP : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2),
+                            "#ADJCALLSTACKUP $amt1, $amt2">;
+}
 
 def TPUSH_R7_LR : TC32Inst<(outs), (ins), "tpush\t{r7, lr}">;
 

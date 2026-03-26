@@ -41,7 +41,8 @@ void TC32MCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
     SmallVector<MCOperand, 4> Ops;
     unsigned Added = 0;
     for (const MachineOperand &MO : MI->operands()) {
-      if (MO.isImplicit() || MO.isRegMask())
+      if (MO.isImplicit() || MO.isRegMask() ||
+          (MO.isReg() && MO.getReg() == 0))
         continue;
       Ops.push_back(lowerOperand(MO));
       ++Added;
@@ -57,7 +58,8 @@ void TC32MCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
   }
 
   for (const MachineOperand &MO : MI->operands()) {
-    if (MO.isImplicit() || MO.isRegMask())
+    if (MO.isImplicit() || MO.isRegMask() ||
+        (MO.isReg() && MO.getReg() == 0))
       continue;
     OutMI.addOperand(lowerOperand(MO));
   }
