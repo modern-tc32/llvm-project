@@ -38,14 +38,48 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::XOR, MVT::i8, Legal);
   setOperationAction(ISD::MUL, MVT::i32, Legal);
   setOperationAction(ISD::MUL, MVT::i8, Legal);
+  setOperationAction(ISD::MULHU, MVT::i32, Expand);
+  setOperationAction(ISD::MULHS, MVT::i32, Expand);
+  setOperationAction(ISD::UMUL_LOHI, MVT::i32, Expand);
+  setOperationAction(ISD::SMUL_LOHI, MVT::i32, Expand);
+  setOperationAction(ISD::MULHU, MVT::i8, Promote);
+  setOperationAction(ISD::MULHS, MVT::i8, Promote);
+  setOperationAction(ISD::UMUL_LOHI, MVT::i8, Promote);
+  setOperationAction(ISD::SMUL_LOHI, MVT::i8, Promote);
   setOperationAction(ISD::SHL, MVT::i32, Legal);
   setOperationAction(ISD::SHL, MVT::i8, Legal);
   setOperationAction(ISD::SRL, MVT::i32, Legal);
   setOperationAction(ISD::SRL, MVT::i8, Legal);
   setOperationAction(ISD::SRA, MVT::i32, Legal);
   setOperationAction(ISD::SRA, MVT::i8, Legal);
+  setOperationAction(ISD::SDIV, MVT::i32, LibCall);
+  setOperationAction(ISD::UDIV, MVT::i32, LibCall);
+  setOperationAction(ISD::SREM, MVT::i32, LibCall);
+  setOperationAction(ISD::UREM, MVT::i32, LibCall);
+  setOperationAction(ISD::SDIVREM, MVT::i32, Expand);
+  setOperationAction(ISD::UDIVREM, MVT::i32, Expand);
+  setOperationAction(ISD::SDIV, MVT::i8, Promote);
+  setOperationAction(ISD::UDIV, MVT::i8, Promote);
+  setOperationAction(ISD::SREM, MVT::i8, Promote);
+  setOperationAction(ISD::UREM, MVT::i8, Promote);
+  setOperationAction(ISD::SDIVREM, MVT::i8, Promote);
+  setOperationAction(ISD::UDIVREM, MVT::i8, Promote);
+  auto setBuiltinLibcall = [&](RTLIB::Libcall Call, StringRef Name) {
+    for (RTLIB::LibcallImpl Impl :
+         RTLIB::RuntimeLibcallsInfo::lookupLibcallImplName(Name)) {
+      setLibcallImpl(Call, Impl);
+      return;
+    }
+  };
+  setBuiltinLibcall(RTLIB::SDIV_I32, "__divsi3");
+  setBuiltinLibcall(RTLIB::UDIV_I32, "__udivsi3");
+  setBuiltinLibcall(RTLIB::SREM_I32, "__modsi3");
+  setBuiltinLibcall(RTLIB::UREM_I32, "__umodsi3");
   setOperationAction(ISD::AssertZext, MVT::i32, Legal);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MVT::i8, Legal);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MVT::i16, Expand);
+  setLoadExtAction(ISD::EXTLOAD, MVT::i32, MVT::i16, Expand);
+  setLoadExtAction(ISD::SEXTLOAD, MVT::i32, MVT::i16, Expand);
   setTruncStoreAction(MVT::i32, MVT::i8, Legal);
 }
 
