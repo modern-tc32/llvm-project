@@ -39,6 +39,70 @@ void TC32InstPrinter::printInst(const MCInst *MI, uint64_t Address,
     printOperand(MI, 1, O);
     printAnnotation(O, Annot);
     return;
+  case TC32::TMULrr:
+    O << "tmul\t";
+    printOperand(MI, 0, O);
+    O << ", ";
+    printOperand(MI, 1, O);
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TANDrr:
+    O << "tand\t";
+    printOperand(MI, 0, O);
+    O << ", ";
+    printOperand(MI, 1, O);
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TORrr:
+    O << "tor\t";
+    printOperand(MI, 0, O);
+    O << ", ";
+    printOperand(MI, 1, O);
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TXORrr:
+    O << "txor\t";
+    printOperand(MI, 0, O);
+    O << ", ";
+    printOperand(MI, 1, O);
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TRET_R0:
+    O << "tmov\tpc, lr";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TLOADrr:
+    O << "tloadr\t";
+    printOperand(MI, 0, O);
+    O << ", [";
+    printOperand(MI, 1, O);
+    O << "]";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TSTORErr:
+    O << "tstorer\t";
+    printOperand(MI, 0, O);
+    O << ", [";
+    printOperand(MI, 1, O);
+    O << "]";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TLOADBrr:
+    O << "tloadrb\t";
+    printOperand(MI, 0, O);
+    O << ", [";
+    printOperand(MI, 1, O);
+    O << "]";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TSTOREBrr:
+    O << "tstorerb\t";
+    printOperand(MI, 0, O);
+    O << ", [";
+    printOperand(MI, 1, O);
+    O << "]";
+    printAnnotation(O, Annot);
+    return;
   default:
     break;
   }
