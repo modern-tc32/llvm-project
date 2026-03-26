@@ -19,8 +19,9 @@ const MCPhysReg *TC32RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF)
 }
 
 BitVector TC32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
-  (void)MF;
   BitVector Reserved(getNumRegs());
+  if (MF.getSubtarget().getFrameLowering()->hasFP(MF))
+    Reserved.set(TC32::R7);
   Reserved.set(TC32::R13);
   Reserved.set(TC32::R14);
   Reserved.set(TC32::R15);
@@ -43,6 +44,6 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
 }
 
 Register TC32RegisterInfo::getFrameRegister(const MachineFunction &MF) const {
-  (void)MF;
-  return TC32::R13;
+  return MF.getSubtarget().getFrameLowering()->hasFP(MF) ? TC32::R7
+                                                         : TC32::R13;
 }

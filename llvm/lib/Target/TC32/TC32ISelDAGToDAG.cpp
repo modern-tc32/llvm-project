@@ -122,13 +122,9 @@ static SDValue materializeConstant(SelectionDAG *DAG, const SDLoc &DL,
       SDValue(DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(Bytes[0])), 0);
   for (unsigned I = 1; I < Bytes.size(); ++I) {
     Cur = SDValue(DAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, Cur, getImm(8)), 0);
-    uint32_t Rem = Bytes[I];
-    while (Rem != 0) {
-      uint32_t Step = std::min<uint32_t>(Rem, 7);
+    if (Bytes[I] != 0)
       Cur = SDValue(
-          DAG->getMachineNode(TC32::TADDSrru8, DL, MVT::i32, Cur, getImm(Step)), 0);
-      Rem -= Step;
-    }
+          DAG->getMachineNode(TC32::TADDSri8, DL, MVT::i32, Cur, getImm(Bytes[I])), 0);
   }
   return Cur;
 }
@@ -240,6 +236,14 @@ public:
     case ISD::SETLT:
       if (HasRConst && RV == 0)
         return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, LHS), 0);
+      if (HasRConst && RV == 1) {
+        SDValue NonZeroOrPositive = selectSetCCValue(
+            DL, ISD::SETGT, LHS,
+            CurDAG->getConstant(0, DL, MVT::i32));
+        if (!NonZeroOrPositive)
+          return SDValue();
+        return emitEqZero(NonZeroOrPositive);
+      }
       if (HasLConst && LV == 0) {
         SDValue Neg = SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, RHS), 0);
         return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, Neg), 0);
@@ -259,6 +263,9 @@ public:
       }
       return SDValue();
     case ISD::SETGE:
+      if (HasRConst && RV == 1)
+        return selectSetCCValue(DL, ISD::SETGT, LHS,
+                                CurDAG->getConstant(0, DL, MVT::i32));
       if (HasRConst && RV == 0) {
         SDValue Neg = SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, LHS), 0);
         return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, Neg), 0);
@@ -278,6 +285,15 @@ public:
       }
       return SDValue();
     case ISD::SETGT:
+      if (HasRConst && RV == 0) {
+        SDValue NonZero = emitNeZero(LHS);
+        SDValue Sign =
+            SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, LHS), 0);
+        SDValue NonNeg =
+            SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, Sign), 0);
+        return SDValue(
+            CurDAG->getMachineNode(TC32::TANDrr, DL, MVT::i32, NonZero, NonNeg), 0);
+      }
       if (HasRConst && RV == -1) {
         SDValue Neg = SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, LHS), 0);
         return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, Neg), 0);
@@ -299,6 +315,12 @@ public:
       }
       return SDValue();
     case ISD::SETLE:
+      if (HasRConst && RV == 0) {
+        SDValue Positive = selectSetCCValue(DL, ISD::SETGT, LHS, RHS);
+        if (!Positive)
+          return SDValue();
+        return emitEqZero(Positive);
+      }
       if (HasRConst && RV == -1)
         return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, LHS), 0);
       if (HasLConst && LV == -1) {
@@ -345,6 +367,49 @@ public:
       return;
     }
 
+    if (auto *LD = dyn_cast<LoadSDNode>(Node)) {
+      SDValue Base;
+      int64_t Imm;
+      if (Node->getValueType(0) == MVT::i32 && LD->getMemoryVT() == MVT::i8 &&
+          (LD->getExtensionType() == ISD::ZEXTLOAD ||
+           LD->getExtensionType() == ISD::EXTLOAD) &&
+          LD->getBasePtr().getValueType() == MVT::i32) {
+        if (matchBasePlusConst(LD->getBasePtr(), Base, Imm) &&
+            Imm >= 0 && Imm <= 7) {
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADBru3, DL,
+                                                   {MVT::i32, MVT::Other},
+                                                   {Base,
+                                                    CurDAG->getTargetConstant(Imm, DL, MVT::i32),
+                                                    LD->getChain()}));
+          return;
+        }
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADBrr, DL,
+                                                 {MVT::i32, MVT::Other},
+                                                 {LD->getBasePtr(),
+                                                  LD->getChain()}));
+        return;
+      }
+      if (Node->getValueType(0) == MVT::i32 && LD->getMemoryVT() == MVT::i16 &&
+          (LD->getExtensionType() == ISD::ZEXTLOAD ||
+           LD->getExtensionType() == ISD::EXTLOAD) &&
+          LD->getBasePtr().getValueType() == MVT::i32) {
+        if (matchBasePlusConst(LD->getBasePtr(), Base, Imm) &&
+            Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADru3, DL,
+                                                   {MVT::i32, MVT::Other},
+                                                   {Base,
+                                                    CurDAG->getTargetConstant(Imm, DL, MVT::i32),
+                                                    LD->getChain()}));
+          return;
+        }
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADrr, DL,
+                                                 {MVT::i32, MVT::Other},
+                                                 {LD->getBasePtr(),
+                                                  LD->getChain()}));
+        return;
+      }
+    }
+
     switch (Node->getOpcode()) {
     case ISD::EntryToken:
     case ISD::Register:
@@ -361,6 +426,10 @@ public:
     case ISD::CopyFromReg:
     case ISD::CopyToReg:
       Node->setNodeId(-1);
+      return;
+    case ISD::FAKE_USE:
+      CurDAG->SelectNodeTo(Node, TargetOpcode::FAKE_USE, Node->getValueType(0),
+                           Node->getOperand(1), Node->getOperand(0));
       return;
     case ISD::LIFETIME_START:
     case ISD::LIFETIME_END:
@@ -809,25 +878,6 @@ public:
                               TC32::TLOADspu8, DL, {MVT::i32, MVT::Other},
                               {CurDAG->getTargetConstant(Imm, DL, MVT::i32),
                                LD->getChain()}));
-        return;
-      }
-      if (Node->getValueType(0) == MVT::i32 &&
-          LD->getMemoryVT() == MVT::i8 &&
-          LD->getExtensionType() == ISD::ZEXTLOAD &&
-          LD->getBasePtr().getValueType() == MVT::i32) {
-        if (matchBasePlusConst(LD->getBasePtr(), Base, Imm) &&
-            Imm >= 0 && Imm <= 7) {
-          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADBru3, DL,
-                                                   {MVT::i32, MVT::Other},
-                                                   {Base,
-                                                    CurDAG->getTargetConstant(Imm, DL, MVT::i32),
-                                                    LD->getChain()}));
-          return;
-        }
-        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADBrr, DL,
-                                                 {MVT::i32, MVT::Other},
-                                                 {LD->getBasePtr(),
-                                                  LD->getChain()}));
         return;
       }
       if (Node->getValueType(0) == MVT::i8 && LD->getMemoryVT() == MVT::i8 &&

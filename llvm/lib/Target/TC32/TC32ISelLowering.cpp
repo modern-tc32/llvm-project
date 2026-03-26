@@ -80,6 +80,7 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MVT::i16, Expand);
   setLoadExtAction(ISD::EXTLOAD, MVT::i32, MVT::i16, Expand);
   setLoadExtAction(ISD::SEXTLOAD, MVT::i32, MVT::i16, Expand);
+  setTruncStoreAction(MVT::i32, MVT::i16, Expand);
   setTruncStoreAction(MVT::i32, MVT::i8, Legal);
 }
 
@@ -105,13 +106,17 @@ SDValue TC32TargetLowering::LowerFormalArguments(
 
   MachineFunction &MF = DAG.getMachineFunction();
   for (unsigned I = 0; I < Ins.size(); ++I) {
-    if (Ins[I].VT != MVT::i32 && Ins[I].VT != MVT::i8)
-      report_fatal_error("TC32 only supports i32/i8 arguments right now");
+    if (Ins[I].VT != MVT::i32 && Ins[I].VT != MVT::i16 && Ins[I].VT != MVT::i8)
+      report_fatal_error("TC32 only supports i32/i16/i8 arguments right now");
     if (I < std::size(ArgRegs)) {
       Register VReg = MF.addLiveIn(ArgRegs[I], &TC32::LoGR32RegClass);
-      EVT ArgVT = Ins[I].VT == MVT::i8 ? MVT::i8 : MVT::i32;
-      SDValue Arg = DAG.getCopyFromReg(Chain, dl, VReg, ArgVT);
-      InVals.push_back(Arg);
+      SDValue Arg = DAG.getCopyFromReg(Chain, dl, VReg, MVT::i32);
+      if (Ins[I].VT == MVT::i8)
+        InVals.push_back(DAG.getNode(ISD::TRUNCATE, dl, MVT::i8, Arg));
+      else if (Ins[I].VT == MVT::i16)
+        InVals.push_back(DAG.getNode(ISD::TRUNCATE, dl, MVT::i16, Arg));
+      else
+        InVals.push_back(Arg);
       Chain = Arg.getValue(1);
     } else {
       int FI = MF.getFrameInfo().CreateFixedObject(4, (I - std::size(ArgRegs)) * 4,
@@ -121,6 +126,8 @@ SDValue TC32TargetLowering::LowerFormalArguments(
           DAG.getLoad(MVT::i32, dl, Chain, FIN, MachinePointerInfo::getFixedStack(MF, FI));
       if (Ins[I].VT == MVT::i8)
         InVals.push_back(DAG.getNode(ISD::TRUNCATE, dl, MVT::i8, Load));
+      else if (Ins[I].VT == MVT::i16)
+        InVals.push_back(DAG.getNode(ISD::TRUNCATE, dl, MVT::i16, Load));
       else
         InVals.push_back(Load);
       Chain = Load.getValue(1);
@@ -157,6 +164,9 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
     Callee = DAG.getTargetExternalSymbol(ESN->getSymbol(), PtrVT);
     break;
   }
+  case ISD::TargetGlobalAddress:
+  case ISD::TargetExternalSymbol:
+    break;
   default:
     report_fatal_error("TC32 only supports direct calls right now");
   }
@@ -172,10 +182,10 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
   SDValue StackPtr;
 
   for (unsigned I = 0; I < Outs.size(); ++I) {
-    if (Outs[I].VT != MVT::i32 && Outs[I].VT != MVT::i8)
-      report_fatal_error("TC32 only supports i32/i8 call arguments right now");
+    if (Outs[I].VT != MVT::i32 && Outs[I].VT != MVT::i16 && Outs[I].VT != MVT::i8)
+      report_fatal_error("TC32 only supports i32/i16/i8 call arguments right now");
     SDValue ArgVal = OutVals[I];
-    if (Outs[I].VT == MVT::i8)
+    if (Outs[I].VT == MVT::i8 || Outs[I].VT == MVT::i16)
       ArgVal = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, ArgVal);
 
     if (I < std::size(ArgRegs)) {
@@ -221,12 +231,15 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   if (Ins.empty())
     return Chain;
-  if (Ins.size() != 1 || (Ins[0].VT != MVT::i32 && Ins[0].VT != MVT::i8))
-    report_fatal_error("TC32 only supports single i32/i8 call return values right now");
+  if (Ins.size() != 1 ||
+      (Ins[0].VT != MVT::i32 && Ins[0].VT != MVT::i16 && Ins[0].VT != MVT::i8))
+    report_fatal_error("TC32 only supports single i32/i16/i8 call return values right now");
 
   SDValue RetVal32 = DAG.getCopyFromReg(Chain, DL, TC32::R0, MVT::i32, Glue);
   if (Ins[0].VT == MVT::i8)
     InVals.push_back(DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, RetVal32));
+  else if (Ins[0].VT == MVT::i16)
+    InVals.push_back(DAG.getNode(ISD::TRUNCATE, DL, MVT::i16, RetVal32));
   else
     InVals.push_back(RetVal32);
   return RetVal32.getValue(1);
@@ -245,7 +258,8 @@ bool TC32TargetLowering::CanLowerReturn(
     return false;
   if (Outs.size() > 1)
     return false;
-  return Outs.empty() || Outs[0].VT == MVT::i32 || Outs[0].VT == MVT::i8;
+  return Outs.empty() || Outs[0].VT == MVT::i32 || Outs[0].VT == MVT::i16 ||
+         Outs[0].VT == MVT::i8;
 }
 
 SDValue TC32TargetLowering::LowerReturn(
@@ -259,10 +273,11 @@ SDValue TC32TargetLowering::LowerReturn(
 
   SDValue Glue;
   if (!Outs.empty()) {
-    if (Outs.size() != 1 || (Outs[0].VT != MVT::i32 && Outs[0].VT != MVT::i8))
-      report_fatal_error("TC32 only supports single i32/i8 return values right now");
+    if (Outs.size() != 1 ||
+        (Outs[0].VT != MVT::i32 && Outs[0].VT != MVT::i16 && Outs[0].VT != MVT::i8))
+      report_fatal_error("TC32 only supports single i32/i16/i8 return values right now");
     SDValue RetVal = OutVals[0];
-    if (Outs[0].VT == MVT::i8)
+    if (Outs[0].VT == MVT::i8 || Outs[0].VT == MVT::i16)
       RetVal = DAG.getNode(ISD::ZERO_EXTEND, dl, MVT::i32, RetVal);
     Chain = DAG.getCopyToReg(Chain, dl, TC32::R0, RetVal, Glue);
     Glue = Chain.getValue(1);

@@ -416,6 +416,7 @@ public:
       Bits = encodeTMOVNrr(MI);
       break;
     case TC32::TADDSrru8:
+    case TC32::TADDSri8:
       Bits = encodeTADDSrru8(MI);
       break;
     case TC32::TADDSrrr:

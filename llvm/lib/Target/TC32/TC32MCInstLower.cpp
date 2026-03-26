@@ -35,6 +35,24 @@ MCOperand TC32MCInstLower::lowerOperand(const MachineOperand &MO) const {
 void TC32MCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
   OutMI.setOpcode(MI->getOpcode());
 
+  if (MI->getOpcode() == TC32::TJL) {
+    for (const MachineOperand &MO : MI->operands()) {
+      if (MO.isImplicit() || MO.isRegMask())
+        continue;
+      switch (MO.getType()) {
+      case MachineOperand::MO_GlobalAddress:
+      case MachineOperand::MO_ExternalSymbol:
+      case MachineOperand::MO_MachineBasicBlock:
+      case MachineOperand::MO_BlockAddress:
+        OutMI.addOperand(lowerOperand(MO));
+        return;
+      default:
+        break;
+      }
+    }
+    report_fatal_error("TC32 TJL is missing a call target operand");
+  }
+
   if (MI->getOpcode() == TC32::TADDCrr || MI->getOpcode() == TC32::TSUBCrr ||
       MI->getOpcode() == TC32::TANDrr || MI->getOpcode() == TC32::TORrr ||
       MI->getOpcode() == TC32::TXORrr || MI->getOpcode() == TC32::TMULrr) {
