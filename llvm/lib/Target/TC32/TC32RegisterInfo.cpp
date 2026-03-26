@@ -2,7 +2,10 @@
 #include "MCTargetDesc/TC32MCTargetDesc.h"
 #include "TC32FrameLowering.h"
 #include "llvm/ADT/BitVector.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
@@ -36,11 +39,63 @@ const TargetRegisterClass *TC32RegisterInfo::getPointerRegClass(unsigned Kind) c
 bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int SPAdj,
                                            unsigned FIOperandNum,
                                            RegScavenger *RS) const {
-  (void)II;
   (void)SPAdj;
-  (void)FIOperandNum;
   (void)RS;
-  report_fatal_error("TC32 frame indices are not implemented yet");
+
+  MachineInstr &MI = *II;
+  MachineBasicBlock &MBB = *MI.getParent();
+  MachineFunction &MF = *MBB.getParent();
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  const TargetFrameLowering *TFI = MF.getSubtarget().getFrameLowering();
+
+  int FI = MI.getOperand(FIOperandNum).getIndex();
+  bool Fixed = MFI.isFixedObjectIndex(FI);
+  int Offset = MFI.getObjectOffset(FI);
+  int StackSize = MFI.getStackSize();
+
+  unsigned BaseReg = Fixed ? TC32::R13 : TC32::R7;
+  int FrameImm = Fixed ? Offset : Offset + StackSize;
+  if (TFI->hasFP(MF) && Fixed) {
+    BaseReg = TC32::R7;
+    FrameImm += StackSize + 8;
+  }
+
+  switch (MI.getOpcode()) {
+  case TC32::TLOADrr: {
+    if (BaseReg == TC32::R13 && FrameImm >= 0 && FrameImm <= 1020 &&
+        (FrameImm & 3) == 0) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TLOADspu8));
+      MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      return false;
+    }
+    if (BaseReg == TC32::R7 && FrameImm >= 0 && FrameImm <= 252 &&
+        (FrameImm & 3) == 0) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TLOADfpu8));
+      MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      return false;
+    }
+    break;
+  }
+  case TC32::TSTORErr: {
+    if (BaseReg == TC32::R13 && FrameImm >= 0 && FrameImm <= 1020 &&
+        (FrameImm & 3) == 0) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTOREspu8));
+      MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      return false;
+    }
+    if (BaseReg == TC32::R7 && FrameImm >= 0 && FrameImm <= 252 &&
+        (FrameImm & 3) == 0) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTOREfpu8));
+      MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      return false;
+    }
+    break;
+  }
+  default:
+    break;
+  }
+
+  report_fatal_error("TC32 frame index address does not fit supported spill forms");
 }
 
 Register TC32RegisterInfo::getFrameRegister(const MachineFunction &MF) const {

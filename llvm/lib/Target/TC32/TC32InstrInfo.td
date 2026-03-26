@@ -19,6 +19,7 @@ class Pseudo<dag Outs, dag Ins, string Asm, list<dag> Pats = []> : Instruction {
   let isPseudo = 1;
 }
 
+def uimm3 : Operand<i32>;
 def uimm8 : Operand<i32>;
 def calltarget : Operand<i32>;
 def brtarget : Operand<OtherVT>;
@@ -118,7 +119,7 @@ def TNEGrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src),
 def TMOVNrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src),
                        "tmovn\t$dst, $src">;
 
-def TADDSrru8 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src, uimm8:$imm),
+def TADDSrru8 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src, uimm3:$imm),
                          "tadds\t$dst, $src, #$imm">;
 
 let Constraints = "$dst = $src" in

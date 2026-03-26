@@ -76,11 +76,13 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setBuiltinLibcall(RTLIB::SREM_I32, "__modsi3");
   setBuiltinLibcall(RTLIB::UREM_I32, "__umodsi3");
   setOperationAction(ISD::AssertZext, MVT::i32, Legal);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::i8, MVT::i1, Promote);
+  setLoadExtAction(ISD::EXTLOAD, MVT::i8, MVT::i1, Promote);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MVT::i8, Legal);
-  setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MVT::i16, Expand);
-  setLoadExtAction(ISD::EXTLOAD, MVT::i32, MVT::i16, Expand);
+  setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MVT::i16, Legal);
+  setLoadExtAction(ISD::EXTLOAD, MVT::i32, MVT::i16, Legal);
   setLoadExtAction(ISD::SEXTLOAD, MVT::i32, MVT::i16, Expand);
-  setTruncStoreAction(MVT::i32, MVT::i16, Expand);
+  setTruncStoreAction(MVT::i32, MVT::i16, Legal);
   setTruncStoreAction(MVT::i32, MVT::i8, Legal);
 }
 
