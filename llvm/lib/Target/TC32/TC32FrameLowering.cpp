@@ -52,7 +52,8 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
     BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TADDspu8))
         .addImm(StackSize);
 
-  if (I != MBB.end() && I->getOpcode() == TC32::TRET)
+  if (I != MBB.end() &&
+      (I->getOpcode() == TC32::TRET || I->getOpcode() == TC32::TRET_R0))
     I = MBB.erase(I);
 
   BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R7_PC));

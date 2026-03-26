@@ -246,12 +246,16 @@ bool TC32AsmParser::parseMemoryOperand(OperandVector &Operands) {
   SMLoc RS, RE;
   if (parseRegister(Base, RS, RE))
     return true;
+  Operands.push_back(TC32Operand::createReg(Base, S, RE));
+
+  if (getLexer().getKind() == AsmToken::Comma) {
+    getLexer().Lex();
+    if (parseImmediateOperand(Operands))
+      return true;
+  }
   if (getLexer().getKind() != AsmToken::RBrac)
     return Error(getLexer().getTok().getLoc(), "expected ']'");
-  SMLoc E = getLexer().getTok().getEndLoc();
   getLexer().Lex();
-
-  Operands.push_back(TC32Operand::createReg(Base, S, E));
   return false;
 }
 
@@ -586,24 +590,62 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       return Error(IDLoc, "invalid operands for tcmp");
     }
   } else if (Name == "tloadr" || Name == "tloadrb") {
-    if (Operands.size() != 3)
+    if (Operands.size() != 3 && Operands.size() != 4)
       return Error(IDLoc, "expected two operands");
     auto &Dst = static_cast<TC32Operand &>(*Operands[1]);
     auto &Base = static_cast<TC32Operand &>(*Operands[2]);
     if (!Dst.isReg() || !Base.isReg() || !isLoReg(Dst.getReg()) ||
         !isLoReg(Base.getReg()))
       return Error(IDLoc, "lo register required");
+    if (Operands.size() == 4) {
+      auto &ImmOp = static_cast<TC32Operand &>(*Operands[3]);
+      int64_t Imm;
+      if (!ImmOp.isImm() || !extractAbsoluteImm(ImmOp.Expr, Imm))
+        return Error(IDLoc, "immediate offset required");
+      if (Name == "tloadr") {
+        if (Imm < 0 || Imm > 28 || (Imm & 3) != 0)
+          return Error(IDLoc, "word offset must be 0..28 step 4");
+        Inst.setOpcode(TC32::TLOADru3);
+      } else {
+        if (Imm < 0 || Imm > 7)
+          return Error(IDLoc, "byte offset must be 0..7");
+        Inst.setOpcode(TC32::TLOADBru3);
+      }
+      Inst.addOperand(MCOperand::createReg(Dst.getReg()));
+      Inst.addOperand(MCOperand::createReg(Base.getReg()));
+      Inst.addOperand(MCOperand::createImm(Imm));
+      goto emit_inst;
+    }
     Inst.setOpcode(Name == "tloadr" ? TC32::TLOADrr : TC32::TLOADBrr);
     Inst.addOperand(MCOperand::createReg(Dst.getReg()));
     Inst.addOperand(MCOperand::createReg(Base.getReg()));
   } else if (Name == "tstorer" || Name == "tstorerb") {
-    if (Operands.size() != 3)
+    if (Operands.size() != 3 && Operands.size() != 4)
       return Error(IDLoc, "expected two operands");
     auto &Src = static_cast<TC32Operand &>(*Operands[1]);
     auto &Base = static_cast<TC32Operand &>(*Operands[2]);
     if (!Src.isReg() || !Base.isReg() || !isLoReg(Src.getReg()) ||
         !isLoReg(Base.getReg()))
       return Error(IDLoc, "lo register required");
+    if (Operands.size() == 4) {
+      auto &ImmOp = static_cast<TC32Operand &>(*Operands[3]);
+      int64_t Imm;
+      if (!ImmOp.isImm() || !extractAbsoluteImm(ImmOp.Expr, Imm))
+        return Error(IDLoc, "immediate offset required");
+      if (Name == "tstorer") {
+        if (Imm < 0 || Imm > 28 || (Imm & 3) != 0)
+          return Error(IDLoc, "word offset must be 0..28 step 4");
+        Inst.setOpcode(TC32::TSTOREru3);
+      } else {
+        if (Imm < 0 || Imm > 7)
+          return Error(IDLoc, "byte offset must be 0..7");
+        Inst.setOpcode(TC32::TSTOREBru3);
+      }
+      Inst.addOperand(MCOperand::createReg(Src.getReg()));
+      Inst.addOperand(MCOperand::createReg(Base.getReg()));
+      Inst.addOperand(MCOperand::createImm(Imm));
+      goto emit_inst;
+    }
     Inst.setOpcode(Name == "tstorer" ? TC32::TSTORErr : TC32::TSTOREBrr);
     Inst.addOperand(MCOperand::createReg(Src.getReg()));
     Inst.addOperand(MCOperand::createReg(Base.getReg()));

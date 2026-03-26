@@ -79,6 +79,16 @@ void TC32InstPrinter::printInst(const MCInst *MI, uint64_t Address,
     O << "]";
     printAnnotation(O, Annot);
     return;
+  case TC32::TLOADru3:
+    O << "tloadr\t";
+    printOperand(MI, 0, O);
+    O << ", [";
+    printOperand(MI, 1, O);
+    O << ", #";
+    printOperand(MI, 2, O);
+    O << "]";
+    printAnnotation(O, Annot);
+    return;
   case TC32::TSTORErr:
     O << "tstorer\t";
     printOperand(MI, 0, O);
@@ -95,11 +105,41 @@ void TC32InstPrinter::printInst(const MCInst *MI, uint64_t Address,
     O << "]";
     printAnnotation(O, Annot);
     return;
+  case TC32::TLOADBru3:
+    O << "tloadrb\t";
+    printOperand(MI, 0, O);
+    O << ", [";
+    printOperand(MI, 1, O);
+    O << ", #";
+    printOperand(MI, 2, O);
+    O << "]";
+    printAnnotation(O, Annot);
+    return;
   case TC32::TSTOREBrr:
     O << "tstorerb\t";
     printOperand(MI, 0, O);
     O << ", [";
     printOperand(MI, 1, O);
+    O << "]";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TSTOREru3:
+    O << "tstorer\t";
+    printOperand(MI, 0, O);
+    O << ", [";
+    printOperand(MI, 1, O);
+    O << ", #";
+    printOperand(MI, 2, O);
+    O << "]";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TSTOREBru3:
+    O << "tstorerb\t";
+    printOperand(MI, 0, O);
+    O << ", [";
+    printOperand(MI, 1, O);
+    O << ", #";
+    printOperand(MI, 2, O);
     O << "]";
     printAnnotation(O, Annot);
     return;
