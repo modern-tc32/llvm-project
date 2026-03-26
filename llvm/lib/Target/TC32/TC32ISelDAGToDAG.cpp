@@ -652,8 +652,16 @@ public:
         ReplaceNode(Node, CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Base));
         return;
       }
+      if (Imm <= 7) {
+        ReplaceNode(Node, CurDAG->getMachineNode(
+                              TC32::TADDSrru8, DL, MVT::i32, Base,
+                              CurDAG->getTargetConstant(Imm, DL, MVT::i32)));
+        return;
+      }
+
+      SDValue Tmp = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Base), 0);
       ReplaceNode(Node, CurDAG->getMachineNode(
-                            TC32::TADDSrru8, DL, MVT::i32, Base,
+                            TC32::TADDSri8, DL, MVT::i32, Tmp,
                             CurDAG->getTargetConstant(Imm, DL, MVT::i32)));
       return;
     }
@@ -775,8 +783,33 @@ public:
     case ISD::AND: {
       EVT VT = Node->getValueType(0);
       if (VT == MVT::i32 || VT == MVT::i8) {
-        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TANDrr, DL, VT,
-                                                 Node->getOperand(0), Node->getOperand(1)));
+        SDValue LHS = Node->getOperand(0);
+        SDValue RHS = Node->getOperand(1);
+
+        auto foldNestedConstAnd = [&](SDValue &Value, SDValue &Mask) {
+          auto *OuterC = dyn_cast<ConstantSDNode>(Mask);
+          if (!OuterC || Value.getOpcode() != ISD::AND)
+            return false;
+
+          SDValue InnerLHS = Value.getOperand(0);
+          SDValue InnerRHS = Value.getOperand(1);
+          auto *InnerCRHS = dyn_cast<ConstantSDNode>(InnerRHS);
+          auto *InnerCLHS = dyn_cast<ConstantSDNode>(InnerLHS);
+          const ConstantSDNode *InnerC = InnerCRHS ? InnerCRHS : InnerCLHS;
+          if (!InnerC)
+            return false;
+
+          SDValue InnerValue = InnerCRHS ? InnerLHS : InnerRHS;
+          uint64_t FoldedMask = OuterC->getZExtValue() & InnerC->getZExtValue();
+          Value = InnerValue;
+          Mask = CurDAG->getConstant(FoldedMask, DL, VT);
+          return true;
+        };
+
+        foldNestedConstAnd(LHS, RHS);
+        foldNestedConstAnd(RHS, LHS);
+
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TANDrr, DL, VT, LHS, RHS));
         return;
       }
       break;
@@ -944,6 +977,42 @@ public:
       SDValue Base;
       int64_t Imm;
       int FI;
+      if (ST->getMemoryVT() == MVT::i16 &&
+          (ST->getValue().getValueType() == MVT::i16 ||
+           ST->getValue().getValueType() == MVT::i32) &&
+          ST->getBasePtr().getValueType() == MVT::i32) {
+        SDValue Value32 = ST->getValue();
+        if (Value32.getValueType() == MVT::i16)
+          Value32 = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Value32), 0);
+
+        SDValue LowByte = Value32;
+        SDValue HighByte =
+            SDValue(CurDAG->getMachineNode(TC32::TSHFTRi5, DL, MVT::i32, Value32,
+                                          CurDAG->getTargetConstant(8, DL, MVT::i32)),
+                    0);
+
+        if (matchBasePlusConst(ST->getBasePtr(), Base, Imm) && Imm >= 0 && Imm <= 6) {
+          SmallVector<SDValue, 4> FirstOps = {
+              LowByte, Base, CurDAG->getTargetConstant(Imm, DL, MVT::i32), ST->getChain()};
+          SDValue First =
+              SDValue(CurDAG->getMachineNode(TC32::TSTOREBru3, DL, MVT::Other, FirstOps), 0);
+          SmallVector<SDValue, 4> SecondOps = {
+              HighByte, Base, CurDAG->getTargetConstant(Imm + 1, DL, MVT::i32), First};
+          ReplaceNode(Node,
+                      CurDAG->getMachineNode(TC32::TSTOREBru3, DL, MVT::Other, SecondOps));
+          return;
+        }
+
+        SDValue First = SDValue(
+            CurDAG->getMachineNode(TC32::TSTOREBrr, DL, MVT::Other,
+                                   LowByte, ST->getBasePtr(), ST->getChain()),
+            0);
+        SmallVector<SDValue, 4> SecondOps = {HighByte, ST->getBasePtr(),
+                                             CurDAG->getTargetConstant(1, DL, MVT::i32), First};
+        ReplaceNode(Node,
+                    CurDAG->getMachineNode(TC32::TSTOREBru3, DL, MVT::Other, SecondOps));
+        return;
+      }
       if (ST->getValue().getValueType() == MVT::i32 &&
           ST->getMemoryVT() == MVT::i32 && matchSPPlusConst(ST->getBasePtr(), Imm) &&
           Imm >= 0 && Imm <= 1020 && (Imm & 3) == 0) {
