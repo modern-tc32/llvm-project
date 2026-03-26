@@ -29,6 +29,7 @@ public:
         {"fixup_tc32_call", 0, 32, 0},
         {"fixup_tc32_branch8", 0, 16, 0},
         {"fixup_tc32_jump11", 0, 16, 0},
+        {"fixup_tc32_ldr_pcrel_u8", 0, 16, 0},
     };
 
     if (Kind < FirstTargetFixupKind)
@@ -42,6 +43,7 @@ public:
     case TC32::fixup_tc32_call:
     case TC32::fixup_tc32_branch8:
     case TC32::fixup_tc32_jump11:
+    case TC32::fixup_tc32_ldr_pcrel_u8:
       break;
     default:
       return {};
@@ -49,16 +51,25 @@ public:
 
     const MCSymbol *Add = Target.getAddSym();
     const MCSymbol *Sub = Target.getSubSym();
-    if (!Add || Sub || Target.getSpecifier())
+    if (!Add || Target.getSpecifier())
       return {};
     if (!Add->isDefined() || Add->isUndefined() || Add->isAbsolute())
+      return {};
+    if (Sub && (!Sub->isDefined() || Sub->isUndefined() || Sub->isAbsolute()))
       return {};
 
     const MCFragment *AddFrag = Add->getFragment();
     if (!AddFrag || AddFrag->getParent() != F.getParent())
       return {};
+    if (Sub) {
+      const MCFragment *SubFrag = Sub->getFragment();
+      if (!SubFrag || SubFrag->getParent() != F.getParent())
+        return {};
+    }
 
     Value = Target.getConstant() + Asm->getSymbolOffset(*Add);
+    if (Sub)
+      Value -= Asm->getSymbolOffset(*Sub);
     return true;
   }
 
@@ -102,6 +113,19 @@ public:
       uint16_t Encoded = static_cast<uint16_t>((Data[1] << 8) | Data[0]);
       Encoded = static_cast<uint16_t>((Encoded & 0xF800u) |
                                       (static_cast<uint16_t>(Imm) & 0x07FFu));
+      Data[0] = static_cast<uint8_t>(Encoded & 0xFF);
+      Data[1] = static_cast<uint8_t>((Encoded >> 8) & 0xFF);
+      return;
+    }
+
+    if (Fixup.getKind() == TC32::fixup_tc32_ldr_pcrel_u8) {
+      if ((Value & 3) != 0)
+        report_fatal_error("TC32 pc literal load target must be 4-byte aligned");
+      if (Value > 1020)
+        report_fatal_error("TC32 pc literal load out of range");
+      uint16_t Encoded = static_cast<uint16_t>((Data[1] << 8) | Data[0]);
+      Encoded = static_cast<uint16_t>((Encoded & 0xFF00u) |
+                                      (static_cast<uint16_t>(Value >> 2) & 0x00FFu));
       Data[0] = static_cast<uint8_t>(Encoded & 0xFF);
       Data[1] = static_cast<uint8_t>((Encoded >> 8) & 0xFF);
       return;

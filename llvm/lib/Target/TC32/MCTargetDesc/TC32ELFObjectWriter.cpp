@@ -24,6 +24,8 @@ protected:
     (void)Target;
     (void)IsPCRel;
     switch (Fixup.getKind()) {
+    case FK_Data_4:
+      return ELF::R_ARM_ABS32;
     case TC32::fixup_tc32_call:
       return ELF::R_ARM_THM_CALL;
     default:

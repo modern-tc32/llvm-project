@@ -16,12 +16,11 @@ class TC32MCInstLower {
   MCContext &Ctx;
   AsmPrinter &Printer;
 
-  MCOperand lowerOperand(const MachineOperand &MO) const;
-
 public:
   TC32MCInstLower(MCContext &Ctx, AsmPrinter &Printer)
       : Ctx(Ctx), Printer(Printer) {}
 
+  MCOperand lowerOperand(const MachineOperand &MO) const;
   void lower(const MachineInstr *MI, MCInst &OutMI) const;
 };
 

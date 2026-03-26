@@ -10,6 +10,7 @@ enum Fixups {
   fixup_tc32_call = FirstTargetFixupKind,
   fixup_tc32_branch8,
   fixup_tc32_jump11,
+  fixup_tc32_ldr_pcrel_u8,
   LastTargetFixupKind,
   NumTargetFixupKinds = LastTargetFixupKind - FirstTargetFixupKind
 };

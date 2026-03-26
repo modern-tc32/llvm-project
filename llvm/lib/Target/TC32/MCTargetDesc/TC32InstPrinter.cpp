@@ -79,6 +79,14 @@ void TC32InstPrinter::printInst(const MCInst *MI, uint64_t Address,
     O << "]";
     printAnnotation(O, Annot);
     return;
+  case TC32::TLOADpcu8:
+    O << "tloadr\t";
+    printOperand(MI, 0, O);
+    O << ", [pc, #";
+    printOperand(MI, 1, O);
+    O << "]";
+    printAnnotation(O, Annot);
+    return;
   case TC32::TLOADru3:
     O << "tloadr\t";
     printOperand(MI, 0, O);

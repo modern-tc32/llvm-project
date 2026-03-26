@@ -201,6 +201,24 @@ class TC32MCCodeEmitter : public MCCodeEmitter {
                                  (0x38u + Dst + ((Scaled & 0x3) << 6)));
   }
 
+  uint16_t encodeTLOADpcu8(const MCInst &MI, SmallVectorImpl<MCFixup> &Fixups) const {
+    unsigned Dst = getRegEncoding(MI.getOperand(0).getReg());
+    check(Dst < 8, "tloadr pc form requires low destination register");
+
+    const MCOperand &ImmOp = MI.getOperand(1);
+    if (ImmOp.isExpr()) {
+      addFixup(Fixups, 0, ImmOp.getExpr(),
+               static_cast<MCFixupKind>(TC32::fixup_tc32_ldr_pcrel_u8));
+      return static_cast<uint16_t>(((0x08u + Dst) << 8));
+    }
+
+    int64_t Imm = ImmOp.getImm();
+    check(Imm >= 0 && Imm <= 1020 && (Imm & 3) == 0,
+          "tloadr pc immediate must be 0..1020 step 4");
+    return static_cast<uint16_t>(((0x08u + Dst) << 8) |
+                                 static_cast<uint16_t>(Imm >> 2));
+  }
+
   uint16_t encodeTLOADrr(const MCInst &MI) const {
     unsigned Dst = getRegEncoding(MI.getOperand(0).getReg());
     unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
@@ -447,6 +465,9 @@ public:
       break;
     case TC32::TLOADfpu8:
       Bits = encodeTLOADfpu8(MI);
+      break;
+    case TC32::TLOADpcu8:
+      Bits = encodeTLOADpcu8(MI, Fixups);
       break;
     case TC32::TLOADrr:
       Bits = encodeTLOADrr(MI);

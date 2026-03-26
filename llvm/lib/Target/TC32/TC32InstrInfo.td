@@ -22,6 +22,7 @@ class Pseudo<dag Outs, dag Ins, string Asm, list<dag> Pats = []> : Instruction {
 def uimm8 : Operand<i32>;
 def calltarget : Operand<i32>;
 def brtarget : Operand<OtherVT>;
+def addrtarget : Operand<i32>;
 
 let Defs = [R13], Uses = [R13] in {
 def ADJCALLSTACKDOWN : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2),
@@ -173,6 +174,9 @@ def TLOADspu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
 def TLOADfpu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
                          "tloadr\t$dst, [r7, #$imm]">;
 
+def TLOADpcu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
+                         "tloadr\t$dst, [pc, #$imm]">;
+
 def TLOADrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base),
                        "tloadr\t$dst, [$base]">;
 
@@ -209,3 +213,6 @@ def TSUBspu8 : TC32Inst<(outs), (ins uimm8:$imm), "tsub\tsp, #$imm">;
 
 def TADDdstspu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
                            "tadd\t$dst, sp, #$imm">;
+
+def TLOADaddr : Pseudo<(outs LoGR32:$dst), (ins addrtarget:$addr),
+                       "#TLOADaddr $dst, $addr">;
