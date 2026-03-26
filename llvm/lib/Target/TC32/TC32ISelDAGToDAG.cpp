@@ -17,14 +17,11 @@ public:
   explicit TC32DAGToDAGISel(TC32TargetMachine &TM, CodeGenOptLevel OptLevel)
       : SelectionDAGISel(TM, OptLevel) {}
 
-  SDValue selectSetCC(SDNode *Node) {
-    SDLoc DL(Node);
-    auto *CC = dyn_cast<CondCodeSDNode>(Node->getOperand(2));
-    if (!CC || Node->getValueType(0) != MVT::i32)
+  SDValue selectSetCCValue(SDLoc DL, ISD::CondCode CCVal, SDValue LHS,
+                           SDValue RHS) {
+    if (LHS.getValueType() != MVT::i32 || RHS.getValueType() != MVT::i32)
       return SDValue();
 
-    SDValue LHS = Node->getOperand(0);
-    SDValue RHS = Node->getOperand(1);
     auto isConst = [](SDValue V, int64_t &Value) {
       if (const auto *CN = dyn_cast<ConstantSDNode>(V)) {
         Value = CN->getSExtValue();
@@ -53,7 +50,7 @@ public:
                      0);
     };
 
-    switch (CC->get()) {
+    switch (CCVal) {
     case ISD::SETEQ:
     case ISD::SETNE: {
       SDValue Diff;
@@ -66,7 +63,7 @@ public:
       else
         return SDValue();
 
-      return CC->get() == ISD::SETEQ ? emitEqZero(Diff) : emitNeZero(Diff);
+      return CCVal == ISD::SETEQ ? emitEqZero(Diff) : emitNeZero(Diff);
     }
     case ISD::SETLT:
       if (HasRConst && RV == 0)
@@ -153,6 +150,14 @@ public:
     }
   }
 
+  SDValue selectSetCC(SDNode *Node) {
+    SDLoc DL(Node);
+    auto *CC = dyn_cast<CondCodeSDNode>(Node->getOperand(2));
+    if (!CC || Node->getValueType(0) != MVT::i32)
+      return SDValue();
+    return selectSetCCValue(DL, CC->get(), Node->getOperand(0), Node->getOperand(1));
+  }
+
   void Select(SDNode *Node) override {
     SDLoc DL(Node);
 
@@ -176,6 +181,21 @@ public:
     case ISD::CopyToReg:
       Node->setNodeId(-1);
       return;
+    case ISD::UNDEF:
+      CurDAG->SelectNodeTo(Node, TargetOpcode::IMPLICIT_DEF,
+                           Node->getValueType(0));
+      return;
+    case ISD::AssertZext:
+      ReplaceNode(Node, Node->getOperand(0).getNode());
+      return;
+    case ISD::ZERO_EXTEND:
+      if (Node->getValueType(0) == MVT::i32 &&
+          Node->getOperand(0).getValueType() == MVT::i8) {
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32,
+                                                 Node->getOperand(0)));
+        return;
+      }
+      break;
     case ISD::BR: {
       ReplaceNode(Node, CurDAG->getMachineNode(TC32::TJ, DL, MVT::Other,
                                                Node->getOperand(1),
@@ -331,10 +351,81 @@ public:
       }
       break;
     }
+    case ISD::SIGN_EXTEND_INREG: {
+      if (Node->getValueType(0) == MVT::i32 &&
+          cast<VTSDNode>(Node->getOperand(1))->getVT() == MVT::i1) {
+        SDValue One = SDValue(CurDAG->getMachineNode(
+                                  TC32::TMOVi8, DL, MVT::i32,
+                                  CurDAG->getTargetConstant(1, DL, MVT::i32)),
+                              0);
+        SDValue Zero = SDValue(CurDAG->getMachineNode(
+                                   TC32::TMOVi8, DL, MVT::i32,
+                                   CurDAG->getTargetConstant(0, DL, MVT::i32)),
+                               0);
+        SDValue Bit = SDValue(CurDAG->getMachineNode(TC32::TANDrr, DL, MVT::i32,
+                                                     Node->getOperand(0), One),
+                              0);
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32,
+                                                 Zero, Bit));
+        return;
+      }
+      break;
+    }
+    case ISD::SELECT_CC: {
+      if (Node->getValueType(0) != MVT::i32)
+        break;
+      auto *CC = dyn_cast<CondCodeSDNode>(Node->getOperand(4));
+      if (!CC)
+        break;
+
+      SDValue LHS = Node->getOperand(0);
+      SDValue RHS = Node->getOperand(1);
+      SDValue TrueVal = Node->getOperand(2);
+      SDValue FalseVal = Node->getOperand(3);
+
+      SDValue BoolVal = selectSetCCValue(DL, CC->get(), LHS, RHS);
+      if (!BoolVal)
+        break;
+
+      auto materializeValue = [&](SDValue V) -> SDValue {
+        if (auto *CN = dyn_cast<ConstantSDNode>(V)) {
+          if (CN->getZExtValue() <= 255)
+            return SDValue(CurDAG->getMachineNode(
+                               TC32::TMOVi8, DL, MVT::i32,
+                               CurDAG->getTargetConstant(CN->getZExtValue(), DL, MVT::i32)),
+                           0);
+        }
+        return V;
+      };
+
+      TrueVal = materializeValue(TrueVal);
+      FalseVal = materializeValue(FalseVal);
+
+      SDValue Zero = SDValue(CurDAG->getMachineNode(
+                                 TC32::TMOVi8, DL, MVT::i32,
+                                 CurDAG->getTargetConstant(0, DL, MVT::i32)),
+                             0);
+      SDValue Mask =
+          SDValue(CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32, Zero, BoolVal), 0);
+      SDValue Diff =
+          SDValue(CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, TrueVal, FalseVal), 0);
+      SDValue Bits =
+          SDValue(CurDAG->getMachineNode(TC32::TANDrr, DL, MVT::i32, Diff, Mask), 0);
+      ReplaceNode(Node, CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, FalseVal, Bits));
+      return;
+    }
     case ISD::ADD: {
       if (Node->getValueType(0) == MVT::i32) {
         SDValue LHS = Node->getOperand(0);
         SDValue RHS = Node->getOperand(1);
+        if (auto *RC = dyn_cast<ConstantSDNode>(RHS); RC && RC->getSExtValue() == -1) {
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSUBri1, DL, MVT::i32, LHS));
+          return;
+        }
+        if (auto *LC = dyn_cast<ConstantSDNode>(LHS); LC && LC->getSExtValue() == -1) {
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSUBri1, DL, MVT::i32, RHS));
+          return;
+        }
         ReplaceNode(Node, CurDAG->getMachineNode(TC32::TADDSrrr, DL, MVT::i32, LHS, RHS));
         return;
       }
@@ -362,6 +453,15 @@ public:
     case ISD::OR: {
       if (Node->getValueType(0) == MVT::i32) {
         ReplaceNode(Node, CurDAG->getMachineNode(TC32::TORrr, DL, MVT::i32,
+                                                 Node->getOperand(0),
+                                                 Node->getOperand(1)));
+        return;
+      }
+      break;
+    }
+    case ISD::MUL: {
+      if (Node->getValueType(0) == MVT::i32) {
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TMULrr, DL, MVT::i32,
                                                  Node->getOperand(0),
                                                  Node->getOperand(1)));
         return;
@@ -435,6 +535,32 @@ public:
     case ISD::LOAD: {
       auto *LD = cast<LoadSDNode>(Node);
       if (Node->getValueType(0) == MVT::i32 &&
+          LD->getMemoryVT() == MVT::i8 &&
+          LD->getExtensionType() == ISD::ZEXTLOAD &&
+          LD->getBasePtr().getValueType() == MVT::i32) {
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADBrr, DL,
+                                                 {MVT::i32, MVT::Other},
+                                                 {LD->getBasePtr(),
+                                                  LD->getChain()}));
+        return;
+      }
+      if (Node->getValueType(0) == MVT::i8 && LD->getMemoryVT() == MVT::i8 &&
+          LD->getBasePtr().getValueType() == MVT::i32) {
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADBrr, DL,
+                                                 {MVT::i8, MVT::Other},
+                                                 {LD->getBasePtr(),
+                                                  LD->getChain()}));
+        return;
+      }
+      if (Node->getValueType(0) == MVT::i32 && LD->getMemoryVT() == MVT::i32 &&
+          LD->getBasePtr().getValueType() == MVT::i32) {
+        SDValue Base = LD->getBasePtr();
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADrr, DL,
+                                                 {MVT::i32, MVT::Other},
+                                                 {Base, LD->getChain()}));
+        return;
+      }
+      if (Node->getValueType(0) == MVT::i32 &&
           LD->getBasePtr().getOpcode() == ISD::FrameIndex) {
         int FI = cast<FrameIndexSDNode>(LD->getBasePtr())->getIndex();
         const MachineFrameInfo &MFI = CurDAG->getMachineFunction().getFrameInfo();
@@ -462,6 +588,30 @@ public:
     }
     case ISD::STORE: {
       auto *ST = cast<StoreSDNode>(Node);
+      if (ST->getMemoryVT() == MVT::i8 &&
+          ST->getBasePtr().getValueType() == MVT::i32 &&
+          ST->getValue().getValueType() == MVT::i8) {
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSTOREBrr, DL, MVT::Other,
+                                                 ST->getValue(), ST->getBasePtr(),
+                                                 ST->getChain()));
+        return;
+      }
+      if (ST->getMemoryVT() == MVT::i8 &&
+          ST->getBasePtr().getValueType() == MVT::i32 &&
+          ST->getValue().getValueType() == MVT::i32) {
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSTOREBrr, DL, MVT::Other,
+                                                 ST->getValue(), ST->getBasePtr(),
+                                                 ST->getChain()));
+        return;
+      }
+      if (ST->getValue().getValueType() == MVT::i32 &&
+          ST->getMemoryVT() == MVT::i32 &&
+          ST->getBasePtr().getValueType() == MVT::i32) {
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSTORErr, DL, MVT::Other,
+                                                 ST->getValue(), ST->getBasePtr(),
+                                                 ST->getChain()));
+        return;
+      }
       if (ST->getValue().getValueType() == MVT::i32 &&
           ST->getBasePtr().getOpcode() == ISD::FrameIndex) {
         int FI = cast<FrameIndexSDNode>(ST->getBasePtr())->getIndex();
@@ -503,6 +653,11 @@ public:
       errs() << '\n';
       report_fatal_error("TC32 instruction selection is only implemented for empty void returns");
     }
+
+    errs() << "Unhandled TC32 ISel node opcode " << Node->getOpcode() << "\n";
+    Node->print(errs(), CurDAG);
+    errs() << '\n';
+    report_fatal_error("TC32 instruction selection does not handle this node yet");
   }
 };
 

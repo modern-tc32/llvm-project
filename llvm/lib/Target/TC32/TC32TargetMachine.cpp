@@ -30,7 +30,7 @@ TC32TargetMachine::TC32TargetMachine(const Target &T, const Triple &TT,
                                      CodeGenOptLevel OL, bool JIT)
     : CodeGenTargetMachineImpl(
           T,
-          "e-p:32:32-i8:8:8-i16:16:16-i32:32:32-n32-S32",
+          "e-m:e-p:32:32-i8:8:8-i16:16:16-i32:32:32-i64:32:32-f32:32:32-f64:32:32-n32-S32",
           TT, CPU, FS, Options, getEffectiveRelocModel(RM, JIT),
           getEffectiveCodeModel(CM, CodeModel::Small), OL),
       TLOF(std::make_unique<TargetLoweringObjectFileELF>()),

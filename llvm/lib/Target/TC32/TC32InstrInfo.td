@@ -117,6 +117,11 @@ def TXORrr : TC32Inst<(outs LoGR32:$dst),
                       (ins LoGR32:$lhs, LoGR32:$rhs),
                       "txor\t$dst, $rhs">;
 
+let Constraints = "$dst = $lhs" in
+def TMULrr : TC32Inst<(outs LoGR32:$dst),
+                      (ins LoGR32:$lhs, LoGR32:$rhs),
+                      "tmul\t$dst, $rhs">;
+
 def TSUBrrr : TC32Inst<(outs LoGR32:$dst),
                        (ins LoGR32:$src, LoGR32:$rhs),
                        "tsub\t$dst, $src, $rhs">;
@@ -150,11 +155,23 @@ def TLOADspu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
 def TLOADfpu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
                          "tloadr\t$dst, [r7, #$imm]">;
 
+def TLOADrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base),
+                       "tloadr\t$dst, [$base]">;
+
+def TLOADBrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base),
+                        "tloadrb\t$dst, [$base]">;
+
 def TSTOREspu8 : TC32Inst<(outs), (ins LoGR32:$src, uimm8:$imm),
                           "tstorer\t$src, [sp, #$imm]">;
 
 def TSTOREfpu8 : TC32Inst<(outs), (ins LoGR32:$src, uimm8:$imm),
                           "tstorer\t$src, [r7, #$imm]">;
+
+def TSTORErr : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base),
+                        "tstorer\t$src, [$base]">;
+
+def TSTOREBrr : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base),
+                         "tstorerb\t$src, [$base]">;
 
 def TADDspu8 : TC32Inst<(outs), (ins uimm8:$imm), "tadd\tsp, #$imm">;
 

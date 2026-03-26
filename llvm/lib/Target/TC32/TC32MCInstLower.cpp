@@ -37,7 +37,7 @@ void TC32MCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
 
   if (MI->getOpcode() == TC32::TADDCrr || MI->getOpcode() == TC32::TSUBCrr ||
       MI->getOpcode() == TC32::TANDrr || MI->getOpcode() == TC32::TORrr ||
-      MI->getOpcode() == TC32::TXORrr) {
+      MI->getOpcode() == TC32::TXORrr || MI->getOpcode() == TC32::TMULrr) {
     SmallVector<MCOperand, 4> Ops;
     unsigned Added = 0;
     for (const MachineOperand &MO : MI->operands()) {

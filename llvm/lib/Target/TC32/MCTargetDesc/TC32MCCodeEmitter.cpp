@@ -201,6 +201,20 @@ class TC32MCCodeEmitter : public MCCodeEmitter {
                                  (0x38u + Dst + ((Scaled & 0x3) << 6)));
   }
 
+  uint16_t encodeTLOADrr(const MCInst &MI) const {
+    unsigned Dst = getRegEncoding(MI.getOperand(0).getReg());
+    unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
+    check(Dst < 8 && Base < 8, "tloadr [reg] form requires low registers");
+    return static_cast<uint16_t>(0x5800u | (Base << 3) | Dst);
+  }
+
+  uint16_t encodeTLOADBrr(const MCInst &MI) const {
+    unsigned Dst = getRegEncoding(MI.getOperand(0).getReg());
+    unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
+    check(Dst < 8 && Base < 8, "tloadrb [reg] form requires low registers");
+    return static_cast<uint16_t>(0x4800u | (Base << 3) | Dst);
+  }
+
   uint16_t encodeTSTOREspu8(const MCInst &MI) const {
     unsigned Src = getRegEncoding(MI.getOperand(0).getReg());
     int64_t Imm = MI.getOperand(1).getImm();
@@ -222,6 +236,20 @@ class TC32MCCodeEmitter : public MCCodeEmitter {
     unsigned Scaled = static_cast<unsigned>(Imm >> 2);
     return static_cast<uint16_t>(((0x50u + (Scaled >> 2)) << 8) |
                                  (0x38u + Src + ((Scaled & 0x3) << 6)));
+  }
+
+  uint16_t encodeTSTORErr(const MCInst &MI) const {
+    unsigned Src = getRegEncoding(MI.getOperand(0).getReg());
+    unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
+    check(Src < 8 && Base < 8, "tstorer [reg] form requires low registers");
+    return static_cast<uint16_t>(0x5000u | (Base << 3) | Src);
+  }
+
+  uint16_t encodeTSTOREBrr(const MCInst &MI) const {
+    unsigned Src = getRegEncoding(MI.getOperand(0).getReg());
+    unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
+    check(Src < 8 && Base < 8, "tstorerb [reg] form requires low registers");
+    return static_cast<uint16_t>(0x4000u | (Base << 3) | Src);
   }
 
   uint16_t encodeTADDspu8(const MCInst &MI) const {
@@ -345,6 +373,9 @@ public:
     case TC32::TXORrr:
       Bits = encodeTLogic2Addr(MI, 0x0040u);
       break;
+    case TC32::TMULrr:
+      Bits = encodeTLogic2Addr(MI, 0x0340u);
+      break;
     case TC32::TSUBrrr:
       Bits = encodeTSUBrrr(MI);
       break;
@@ -375,11 +406,23 @@ public:
     case TC32::TLOADfpu8:
       Bits = encodeTLOADfpu8(MI);
       break;
+    case TC32::TLOADrr:
+      Bits = encodeTLOADrr(MI);
+      break;
+    case TC32::TLOADBrr:
+      Bits = encodeTLOADBrr(MI);
+      break;
     case TC32::TSTOREspu8:
       Bits = encodeTSTOREspu8(MI);
       break;
     case TC32::TSTOREfpu8:
       Bits = encodeTSTOREfpu8(MI);
+      break;
+    case TC32::TSTORErr:
+      Bits = encodeTSTORErr(MI);
+      break;
+    case TC32::TSTOREBrr:
+      Bits = encodeTSTOREBrr(MI);
       break;
     case TC32::TADDspu8:
       Bits = encodeTADDspu8(MI);

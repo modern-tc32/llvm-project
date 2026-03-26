@@ -23,10 +23,10 @@ def R14 : TC32Reg<14, "r14", ["lr"]>;
 def R15 : TC32Reg<15, "r15", ["pc"]>;
 
 let RegInfos = RegInfoByHwMode<[DefaultMode], [RegInfo<32, 32, 32>]> in
-def GR32 : RegisterClass<"TC32", [i32], 32,
+def GR32 : RegisterClass<"TC32", [i32, i8], 32,
                          (add R0, R1, R2, R3, R4, R5, R6, R7,
                               R8, R9, R10, R11, R12, R13, R14, R15)>;
 
 let RegInfos = RegInfoByHwMode<[DefaultMode], [RegInfo<32, 32, 32>]> in
-def LoGR32 : RegisterClass<"TC32", [i32], 32,
+def LoGR32 : RegisterClass<"TC32", [i32, i8], 32,
                            (add R0, R1, R2, R3, R4, R5, R6, R7)>;

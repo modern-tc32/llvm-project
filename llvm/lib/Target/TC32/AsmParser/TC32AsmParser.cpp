@@ -94,6 +94,7 @@ class TC32AsmParser : public MCTargetAsmParser {
   void convertToMapAndConstraints(unsigned, const OperandVector &) override {}
 
   bool parseOperand(OperandVector &Operands);
+  bool parseMemoryOperand(OperandVector &Operands);
   bool parseImmediateOperand(OperandVector &Operands);
   bool parseFixedPushPopOperands(StringRef Mnemonic, OperandVector &Operands);
   bool parseComma();
@@ -226,11 +227,32 @@ bool TC32AsmParser::parseImmediateOperand(OperandVector &Operands) {
 bool TC32AsmParser::parseOperand(OperandVector &Operands) {
   MCRegister Reg;
   SMLoc S, E;
+  if (getLexer().getKind() == AsmToken::LBrac)
+    return parseMemoryOperand(Operands);
   if (tryParseRegister(Reg, S, E).isSuccess()) {
     Operands.push_back(TC32Operand::createReg(Reg, S, E));
     return false;
   }
   return parseImmediateOperand(Operands);
+}
+
+bool TC32AsmParser::parseMemoryOperand(OperandVector &Operands) {
+  SMLoc S = getLexer().getTok().getLoc();
+  if (getLexer().getKind() != AsmToken::LBrac)
+    return Error(S, "expected '['");
+  getLexer().Lex();
+
+  MCRegister Base;
+  SMLoc RS, RE;
+  if (parseRegister(Base, RS, RE))
+    return true;
+  if (getLexer().getKind() != AsmToken::RBrac)
+    return Error(getLexer().getTok().getLoc(), "expected ']'");
+  SMLoc E = getLexer().getTok().getEndLoc();
+  getLexer().Lex();
+
+  Operands.push_back(TC32Operand::createReg(Base, S, E));
+  return false;
 }
 
 bool TC32AsmParser::parseFixedPushPopOperands(StringRef Mnemonic,
@@ -334,7 +356,7 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                   : Name == "tjle" ? TC32::TJLE
                                    : TC32::TJ);
     Inst.addOperand(MCOperand::createExpr(Target.Expr));
-  } else if (Name == "tmov") {
+  } else if (Name == "tmov" || Name == "tmovs") {
     if (Operands.size() != 3)
       return Error(IDLoc, "expected two operands");
     auto &Dst = static_cast<TC32Operand &>(*Operands[1]);
@@ -342,6 +364,8 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     if (!Dst.isReg())
       return Error(IDLoc, "invalid operands for tmov");
     if (Src.isReg()) {
+      if (Name == "tmovs")
+        return Error(IDLoc, "tmovs only supports immediate operands");
       Inst.setOpcode(TC32::TMOVrr);
       Inst.addOperand(MCOperand::createReg(Dst.getReg()));
       Inst.addOperand(MCOperand::createReg(Src.getReg()));
@@ -448,7 +472,7 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     Inst.setOpcode(Name == "taddc" ? TC32::TADDCrr : TC32::TSUBCrr);
     Inst.addOperand(MCOperand::createReg(Dst.getReg()));
     Inst.addOperand(MCOperand::createReg(RHS.getReg()));
-  } else if (Name == "tand" || Name == "tor" || Name == "txor") {
+  } else if (Name == "tand" || Name == "tor" || Name == "txor" || Name == "tmul") {
     if (Operands.size() != 3 && Operands.size() != 4)
       return Error(IDLoc, "expected two or three operands");
     auto &Dst = static_cast<TC32Operand &>(*Operands[1]);
@@ -465,7 +489,8 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     }
     Inst.setOpcode(Name == "tand" ? TC32::TANDrr
                   : Name == "tor" ? TC32::TORrr
-                                   : TC32::TXORrr);
+                  : Name == "txor" ? TC32::TXORrr
+                                   : TC32::TMULrr);
     Inst.addOperand(MCOperand::createReg(Dst.getReg()));
     Inst.addOperand(MCOperand::createReg(RHS.getReg()));
   } else if (Name == "tshftr" || Name == "tasr") {
@@ -560,6 +585,28 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     } else {
       return Error(IDLoc, "invalid operands for tcmp");
     }
+  } else if (Name == "tloadr" || Name == "tloadrb") {
+    if (Operands.size() != 3)
+      return Error(IDLoc, "expected two operands");
+    auto &Dst = static_cast<TC32Operand &>(*Operands[1]);
+    auto &Base = static_cast<TC32Operand &>(*Operands[2]);
+    if (!Dst.isReg() || !Base.isReg() || !isLoReg(Dst.getReg()) ||
+        !isLoReg(Base.getReg()))
+      return Error(IDLoc, "lo register required");
+    Inst.setOpcode(Name == "tloadr" ? TC32::TLOADrr : TC32::TLOADBrr);
+    Inst.addOperand(MCOperand::createReg(Dst.getReg()));
+    Inst.addOperand(MCOperand::createReg(Base.getReg()));
+  } else if (Name == "tstorer" || Name == "tstorerb") {
+    if (Operands.size() != 3)
+      return Error(IDLoc, "expected two operands");
+    auto &Src = static_cast<TC32Operand &>(*Operands[1]);
+    auto &Base = static_cast<TC32Operand &>(*Operands[2]);
+    if (!Src.isReg() || !Base.isReg() || !isLoReg(Src.getReg()) ||
+        !isLoReg(Base.getReg()))
+      return Error(IDLoc, "lo register required");
+    Inst.setOpcode(Name == "tstorer" ? TC32::TSTORErr : TC32::TSTOREBrr);
+    Inst.addOperand(MCOperand::createReg(Src.getReg()));
+    Inst.addOperand(MCOperand::createReg(Base.getReg()));
   } else {
     return Error(IDLoc, "invalid instruction mnemonic");
   }
