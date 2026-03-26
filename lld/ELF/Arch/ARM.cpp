@@ -1623,7 +1623,7 @@ template <typename ELFT> void elf::writeARMCmseImportLib(Ctx &ctx) {
   eHdr->e_ident[EI_VERSION] = EV_CURRENT;
   eHdr->e_ident[EI_OSABI] = ctx.arg.osabi;
   eHdr->e_ident[EI_ABIVERSION] = 0;
-  eHdr->e_machine = EM_ARM;
+  eHdr->e_machine = ctx.arg.emachine;
   eHdr->e_version = EV_CURRENT;
   eHdr->e_flags = ctx.arg.eflags;
   eHdr->e_ehsize = sizeof(typename ELFT::Ehdr);

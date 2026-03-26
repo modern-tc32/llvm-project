@@ -556,6 +556,7 @@ set(LLVM_ALL_EXPERIMENTAL_TARGETS
   CSKY
   DirectX
   M68k
+  TC32
   Xtensa
 )
 

@@ -27,6 +27,9 @@ class Symbol;
 template <class RelTy> struct Relocs;
 
 std::string toStr(Ctx &, RelType type);
+inline bool isARM(uint16_t emachine) {
+  return emachine == llvm::ELF::EM_ARM || emachine == llvm::ELF::EM_TC32;
+}
 
 class TargetInfo {
 public:

@@ -34,6 +34,7 @@
 #include "Targets/SPIR.h"
 #include "Targets/Sparc.h"
 #include "Targets/SystemZ.h"
+#include "Targets/TC32.h"
 #include "Targets/TCE.h"
 #include "Targets/VE.h"
 #include "Targets/WebAssembly.h"
@@ -538,6 +539,9 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
     default:
       return std::make_unique<SystemZTargetInfo>(Triple, Opts);
     }
+
+  case llvm::Triple::tc32:
+    return std::make_unique<TC32TargetInfo>(Triple, Opts);
 
   case llvm::Triple::tce:
     return std::make_unique<TCETargetInfo>(Triple, Opts);

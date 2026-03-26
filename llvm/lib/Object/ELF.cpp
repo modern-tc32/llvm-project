@@ -62,6 +62,7 @@ StringRef llvm::object::getELFRelocationTypeName(uint32_t Machine,
     }
     break;
   case ELF::EM_ARM:
+  case ELF::EM_TC32:
     switch (Type) {
 #include "llvm/BinaryFormat/ELFRelocs/ARM.def"
     default:
@@ -216,6 +217,7 @@ uint32_t llvm::object::getELFRelativeRelocationType(uint32_t Machine) {
   case ELF::EM_AARCH64:
     return ELF::R_AARCH64_RELATIVE;
   case ELF::EM_ARM:
+  case ELF::EM_TC32:
     return ELF::R_ARM_RELATIVE;
   case ELF::EM_ARC_COMPACT:
   case ELF::EM_ARC_COMPACT2:
@@ -257,6 +259,7 @@ uint32_t llvm::object::getELFRelativeRelocationType(uint32_t Machine) {
 StringRef llvm::object::getELFSectionTypeName(uint32_t Machine, unsigned Type) {
   switch (Machine) {
   case ELF::EM_ARM:
+  case ELF::EM_TC32:
     switch (Type) {
       STRINGIFY_ENUM_CASE(ELF, SHT_ARM_EXIDX);
       STRINGIFY_ENUM_CASE(ELF, SHT_ARM_PREEMPTMAP);

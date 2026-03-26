@@ -768,6 +768,7 @@ static int64_t getTlsTpOffset(Ctx &ctx, const Symbol &s) {
   switch (ctx.arg.emachine) {
     // Variant 1.
   case EM_ARM:
+  case EM_TC32:
   case EM_AARCH64:
     return s.getVA(ctx, 0) + ctx.arg.wordsize * 2 +
            ((tls->p_vaddr - ctx.arg.wordsize * 2) & (tls->p_align - 1));
@@ -934,7 +935,7 @@ uint64_t InputSectionBase::getRelocTargetVA(Ctx &ctx, const Relocation &r,
       // aware of the issue) while ensuring no overflow.
       // Note: if the symbol is hidden, its binding has been converted to local,
       // so we just check isUndefined() here.
-      if (ctx.arg.emachine == EM_ARM)
+      if (isARM(ctx.arg.emachine))
         dest = getARMUndefinedRelativeWeakVA(r.type, a, p);
       else if (ctx.arg.emachine == EM_AARCH64)
         dest = getAArch64UndefinedRelativeWeakVA(r.type, p) + a;

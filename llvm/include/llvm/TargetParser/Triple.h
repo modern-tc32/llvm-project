@@ -83,6 +83,7 @@ public:
     sparcv9,     // Sparcv9: Sparcv9
     sparcel,     // Sparc: (endianness = little). NB: 'Sparcle' is a CPU variant
     systemz,     // SystemZ: s390x
+    tc32,        // TC32: Telink TC32
     tce,         // TCE (http://tce.cs.tut.fi/): tce
     tcele,       // TCE little endian (http://tce.cs.tut.fi/): tcele
     thumb,       // Thumb (little endian): thumb, thumbv.*

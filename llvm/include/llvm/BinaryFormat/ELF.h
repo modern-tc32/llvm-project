@@ -159,6 +159,7 @@ enum {
   EM_RH32 = 38,          // TRW RH-32
   EM_RCE = 39,           // Motorola RCE
   EM_ARM = 40,           // ARM
+  EM_TC32 = 0x8800,      // Telink TC32
   EM_ALPHA = 41,         // DEC Alpha
   EM_SH = 42,            // Hitachi SH
   EM_SPARCV9 = 43,       // SPARC V9
@@ -361,6 +362,7 @@ enum {
   ELFOSABI_AROS = 15,          // AROS
   ELFOSABI_FENIXOS = 16,       // FenixOS
   ELFOSABI_CLOUDABI = 17,      // Nuxi CloudABI
+  ELFOSABI_TC32 = 0x58,        // Telink TC32
   ELFOSABI_CUDA = 51,          // NVIDIA CUDA architecture.
   ELFOSABI_CUDA_V2 = 41,       // NVIDIA CUDA architecture.
   ELFOSABI_FIRST_ARCH = 64,    // First architecture-specific OS ABI
