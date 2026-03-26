@@ -28,6 +28,47 @@ static bool matchBasePlusConst(SDValue Ptr, SDValue &Base, int64_t &Imm) {
   return false;
 }
 
+static bool matchFrameIndexPlusConst(SDValue Ptr, int &FI, int64_t &Imm) {
+  Imm = 0;
+  if (Ptr.getOpcode() == ISD::FrameIndex) {
+    FI = cast<FrameIndexSDNode>(Ptr)->getIndex();
+    return true;
+  }
+  if (Ptr.getOpcode() != ISD::ADD)
+    return false;
+
+  auto match = [&](SDValue MaybeFI, SDValue MaybeConst) {
+    if (MaybeFI.getOpcode() != ISD::FrameIndex)
+      return false;
+    auto *CN = dyn_cast<ConstantSDNode>(MaybeConst);
+    if (!CN)
+      return false;
+    FI = cast<FrameIndexSDNode>(MaybeFI)->getIndex();
+    Imm = CN->getSExtValue();
+    return true;
+  };
+
+  return match(Ptr.getOperand(0), Ptr.getOperand(1)) ||
+         match(Ptr.getOperand(1), Ptr.getOperand(0));
+}
+
+static bool getFrameIndexReference(const SelectionDAG *DAG, int FI, int64_t ExtraImm,
+                                   unsigned &BaseReg, int &Imm) {
+  const MachineFrameInfo &MFI = DAG->getMachineFunction().getFrameInfo();
+  bool Fixed = MFI.isFixedObjectIndex(FI);
+  int Offset = MFI.getObjectOffset(FI);
+  int StackSize = MFI.getStackSize();
+
+  BaseReg = Fixed ? TC32::R13 : TC32::R7;
+  Imm = (Fixed ? Offset : Offset + StackSize) + ExtraImm;
+  if (DAG->getSubtarget().getFrameLowering()->hasFP(DAG->getMachineFunction()) &&
+      Fixed) {
+    BaseReg = TC32::R7;
+    Imm += StackSize + 8;
+  }
+  return Imm >= 0 && Imm <= 255;
+}
+
 class TC32DAGToDAGISel : public SelectionDAGISel {
 public:
   explicit TC32DAGToDAGISel(TC32TargetMachine &TM, CodeGenOptLevel OptLevel)
@@ -176,6 +217,13 @@ public:
 
   void Select(SDNode *Node) override {
     SDLoc DL(Node);
+    auto getTargetImm = [&](const SDValue &Op) -> SDValue {
+      if (auto *CN = dyn_cast<ConstantSDNode>(Op))
+        return CurDAG->getTargetConstant(CN->getSExtValue(), DL, MVT::i32);
+      if (Op.getOpcode() == ISD::TargetConstant)
+        return Op;
+      report_fatal_error("TC32 expected constant call frame adjustment");
+    };
 
     if (Node->isMachineOpcode()) {
       Node->setNodeId(-1);
@@ -185,10 +233,12 @@ public:
     switch (Node->getOpcode()) {
     case ISD::EntryToken:
     case ISD::Register:
+    case ISD::RegisterMask:
     case ISD::TokenFactor:
     case ISD::BasicBlock:
     case ISD::VALUETYPE:
     case ISD::CONDCODE:
+    case ISD::TargetConstant:
     case ISD::TargetGlobalAddress:
     case ISD::TargetExternalSymbol:
       Node->setNodeId(-1);
@@ -197,6 +247,23 @@ public:
     case ISD::CopyToReg:
       Node->setNodeId(-1);
       return;
+    case ISD::CALLSEQ_START: {
+      SDValue Ops[] = {getTargetImm(Node->getOperand(1)),
+                       getTargetImm(Node->getOperand(2)), Node->getOperand(0)};
+      ReplaceNode(Node, CurDAG->getMachineNode(TC32::ADJCALLSTACKDOWN, DL,
+                                               {MVT::Other, MVT::Glue}, Ops));
+      return;
+    }
+    case ISD::CALLSEQ_END: {
+      SmallVector<SDValue, 4> Ops = {getTargetImm(Node->getOperand(1)),
+                                     getTargetImm(Node->getOperand(2)),
+                                     Node->getOperand(0)};
+      if (Node->getNumOperands() > 3)
+        Ops.push_back(Node->getOperand(3));
+      ReplaceNode(Node, CurDAG->getMachineNode(TC32::ADJCALLSTACKUP, DL,
+                                               {MVT::Other, MVT::Glue}, Ops));
+      return;
+    }
     case ISD::UNDEF:
       CurDAG->SelectNodeTo(Node, TargetOpcode::IMPLICIT_DEF,
                            Node->getValueType(0));
@@ -360,6 +427,30 @@ public:
         return;
       }
       break;
+    }
+    case ISD::FrameIndex: {
+      int FI = cast<FrameIndexSDNode>(Node)->getIndex();
+      unsigned BaseReg;
+      int Imm;
+      if (!getFrameIndexReference(CurDAG, FI, 0, BaseReg, Imm))
+        report_fatal_error("TC32 frame index address does not fit in immediate range");
+
+      if (BaseReg == TC32::R13) {
+        ReplaceNode(Node, CurDAG->getMachineNode(
+                              TC32::TADDdstspu8, DL, MVT::i32,
+                              CurDAG->getTargetConstant(Imm, DL, MVT::i32)));
+        return;
+      }
+
+      SDValue Base = CurDAG->getRegister(BaseReg, MVT::i32);
+      if (Imm == 0) {
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Base));
+        return;
+      }
+      ReplaceNode(Node, CurDAG->getMachineNode(
+                            TC32::TADDSrru8, DL, MVT::i32, Base,
+                            CurDAG->getTargetConstant(Imm, DL, MVT::i32)));
+      return;
     }
     case ISD::SETCC: {
       if (SDValue Res = selectSetCC(Node)) {
@@ -557,6 +648,7 @@ public:
       auto *LD = cast<LoadSDNode>(Node);
       SDValue Base;
       int64_t Imm;
+      int FI;
       if (Node->getValueType(0) == MVT::i32 &&
           LD->getMemoryVT() == MVT::i8 &&
           LD->getExtensionType() == ISD::ZEXTLOAD &&
@@ -611,23 +703,22 @@ public:
         return;
       }
       if (Node->getValueType(0) == MVT::i32 &&
-          LD->getBasePtr().getOpcode() == ISD::FrameIndex) {
-        int FI = cast<FrameIndexSDNode>(LD->getBasePtr())->getIndex();
+          matchFrameIndexPlusConst(LD->getBasePtr(), FI, Imm)) {
         const MachineFrameInfo &MFI = CurDAG->getMachineFunction().getFrameInfo();
         bool Fixed = MFI.isFixedObjectIndex(FI);
         int Offset = MFI.getObjectOffset(FI);
         int StackSize = MFI.getStackSize();
-        int Imm = Fixed ? Offset : Offset + StackSize;
+        int FrameImm = (Fixed ? Offset : Offset + StackSize) + Imm;
         unsigned Opc = Fixed ? TC32::TLOADspu8 : TC32::TLOADfpu8;
         if (CurDAG->getSubtarget().getFrameLowering()->hasFP(
                 CurDAG->getMachineFunction()) &&
             Fixed) {
-          Imm += StackSize + 8;
+          FrameImm += StackSize + 8;
           Opc = TC32::TLOADfpu8;
         }
-        if (Imm >= 0 && Imm <= (Opc == TC32::TLOADspu8 ? 1020 : 252) &&
-            (Imm & 3) == 0) {
-          SDValue ImmVal = CurDAG->getTargetConstant(Imm, DL, MVT::i32);
+        if (FrameImm >= 0 && FrameImm <= (Opc == TC32::TLOADspu8 ? 1020 : 252) &&
+            (FrameImm & 3) == 0) {
+          SDValue ImmVal = CurDAG->getTargetConstant(FrameImm, DL, MVT::i32);
           ReplaceNode(Node, CurDAG->getMachineNode(Opc, DL,
                                                    {MVT::i32, MVT::Other},
                                                    {ImmVal, LD->getChain()}));
@@ -640,6 +731,7 @@ public:
       auto *ST = cast<StoreSDNode>(Node);
       SDValue Base;
       int64_t Imm;
+      int FI;
       if (ST->getMemoryVT() == MVT::i8 &&
           ST->getBasePtr().getValueType() == MVT::i32 &&
           ST->getValue().getValueType() == MVT::i8) {
@@ -689,23 +781,22 @@ public:
         return;
       }
       if (ST->getValue().getValueType() == MVT::i32 &&
-          ST->getBasePtr().getOpcode() == ISD::FrameIndex) {
-        int FI = cast<FrameIndexSDNode>(ST->getBasePtr())->getIndex();
+          matchFrameIndexPlusConst(ST->getBasePtr(), FI, Imm)) {
         const MachineFrameInfo &MFI = CurDAG->getMachineFunction().getFrameInfo();
         bool Fixed = MFI.isFixedObjectIndex(FI);
         int Offset = MFI.getObjectOffset(FI);
         int StackSize = MFI.getStackSize();
-        int Imm = Fixed ? Offset : Offset + StackSize;
+        int FrameImm = (Fixed ? Offset : Offset + StackSize) + Imm;
         unsigned Opc = Fixed ? TC32::TSTOREspu8 : TC32::TSTOREfpu8;
         if (CurDAG->getSubtarget().getFrameLowering()->hasFP(
                 CurDAG->getMachineFunction()) &&
             Fixed) {
-          Imm += StackSize + 8;
+          FrameImm += StackSize + 8;
           Opc = TC32::TSTOREfpu8;
         }
-        if (Imm >= 0 && Imm <= (Opc == TC32::TSTOREspu8 ? 1020 : 252) &&
-            (Imm & 3) == 0) {
-          SDValue ImmVal = CurDAG->getTargetConstant(Imm, DL, MVT::i32);
+        if (FrameImm >= 0 && FrameImm <= (Opc == TC32::TSTOREspu8 ? 1020 : 252) &&
+            (FrameImm & 3) == 0) {
+          SDValue ImmVal = CurDAG->getTargetConstant(FrameImm, DL, MVT::i32);
           ReplaceNode(Node, CurDAG->getMachineNode(Opc, DL, MVT::Other,
                                                    ST->getValue(), ImmVal,
                                                    ST->getChain()));

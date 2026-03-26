@@ -9,7 +9,8 @@ using namespace llvm;
 #include "TC32GenInstrInfo.inc"
 
 TC32InstrInfo::TC32InstrInfo(const TC32Subtarget &STI)
-    : TC32GenInstrInfo(STI, RI), RI() {}
+    : TC32GenInstrInfo(STI, RI, TC32::ADJCALLSTACKDOWN, TC32::ADJCALLSTACKUP),
+      RI() {}
 
 void TC32InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                 MachineBasicBlock::iterator I,

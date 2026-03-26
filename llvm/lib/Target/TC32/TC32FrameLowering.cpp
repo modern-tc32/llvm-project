@@ -59,6 +59,29 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
   BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R7_PC));
 }
 
+bool TC32FrameLowering::hasReservedCallFrame(const MachineFunction &MF) const {
+  return !MF.getFrameInfo().hasVarSizedObjects();
+}
+
+MachineBasicBlock::iterator TC32FrameLowering::eliminateCallFramePseudoInstr(
+    MachineFunction &MF, MachineBasicBlock &MBB,
+    MachineBasicBlock::iterator MI) const {
+  if (!hasReservedCallFrame(MF)) {
+    int64_t Amount = MI->getOperand(0).getImm();
+    DebugLoc DL = MI->getDebugLoc();
+
+    if (Amount != 0) {
+      unsigned Opc = MI->getOpcode() == TC32::ADJCALLSTACKDOWN
+                         ? TC32::TSUBspu8
+                         : TC32::TADDspu8;
+      BuildMI(MBB, MI, DL, MF.getSubtarget().getInstrInfo()->get(Opc))
+          .addImm(Amount);
+    }
+  }
+
+  return MBB.erase(MI);
+}
+
 bool TC32FrameLowering::hasFPImpl(const MachineFunction &MF) const {
   const MachineFrameInfo &MFI = MF.getFrameInfo();
   return MFI.getStackSize() != 0 || MFI.hasCalls();

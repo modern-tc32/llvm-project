@@ -108,8 +108,6 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   if (CLI.IsVarArg)
     report_fatal_error("TC32 varargs calls are not implemented yet");
-  if (Outs.size() > std::size(ArgRegs))
-    report_fatal_error("TC32 stack-passed call arguments are not implemented yet");
   CLI.IsTailCall = false;
 
   SDValue Callee = CLI.Callee;
@@ -131,10 +129,13 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   MachineFunction &MF = DAG.getMachineFunction();
   MF.getFrameInfo().setHasCalls(true);
+  unsigned StackArgBytes =
+      Outs.size() > std::size(ArgRegs) ? (Outs.size() - std::size(ArgRegs)) * 4 : 0;
+  Chain = DAG.getCALLSEQ_START(Chain, StackArgBytes, 0, DL);
 
-  SDValue Glue;
-  SmallVector<SDValue, 8> Ops;
-  Ops.push_back(Callee);
+  SmallVector<std::pair<Register, SDValue>, 8> RegsToPass;
+  SmallVector<SDValue, 8> MemOpChains;
+  SDValue StackPtr;
 
   for (unsigned I = 0; I < Outs.size(); ++I) {
     if (Outs[I].VT != MVT::i32 && Outs[I].VT != MVT::i8)
@@ -142,12 +143,37 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
     SDValue ArgVal = OutVals[I];
     if (Outs[I].VT == MVT::i8)
       ArgVal = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, ArgVal);
-    Chain = DAG.getCopyToReg(Chain, DL, ArgRegs[I], ArgVal, Glue);
-    Glue = Chain.getValue(1);
-    Ops.push_back(DAG.getRegister(ArgRegs[I], MVT::i32));
+
+    if (I < std::size(ArgRegs)) {
+      RegsToPass.push_back({ArgRegs[I], ArgVal});
+      continue;
+    }
+
+    if (!StackPtr.getNode())
+      StackPtr = DAG.getCopyFromReg(Chain, DL, TC32::R13, PtrVT);
+    unsigned StackOffset = (I - std::size(ArgRegs)) * 4;
+    SDValue Addr = StackPtr;
+    if (StackOffset != 0)
+      Addr = DAG.getNode(ISD::ADD, DL, PtrVT, StackPtr,
+                         DAG.getIntPtrConstant(StackOffset, DL));
+    MemOpChains.push_back(
+        DAG.getStore(Chain, DL, ArgVal, Addr, MachinePointerInfo::getStack(MF, StackOffset)));
   }
 
+  if (!MemOpChains.empty())
+    Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, MemOpChains);
+
+  SDValue Glue;
+  for (auto &Reg : RegsToPass) {
+    Chain = DAG.getCopyToReg(Chain, DL, Reg.first, Reg.second, Glue);
+    Glue = Chain.getValue(1);
+  }
+
+  SmallVector<SDValue, 8> Ops;
   Ops.push_back(Chain);
+  Ops.push_back(Callee);
+  for (auto &Reg : RegsToPass)
+    Ops.push_back(DAG.getRegister(Reg.first, Reg.second.getValueType()));
   if (Glue)
     Ops.push_back(Glue);
 
@@ -155,6 +181,9 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
       DAG.getMachineNode(TC32::TJL, DL, {MVT::Other, MVT::Glue}, Ops);
   Chain = SDValue(Call, 0);
   Glue = SDValue(Call, 1);
+  Chain = DAG.getCALLSEQ_END(Chain, DAG.getConstant(StackArgBytes, DL, PtrVT),
+                             DAG.getConstant(0, DL, PtrVT), Glue, DL);
+  Glue = Chain.getValue(1);
 
   if (Ins.empty())
     return Chain;
