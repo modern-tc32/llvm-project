@@ -1196,7 +1196,7 @@ template <class ELFT> void elf::scanRelocations(Ctx &ctx) {
         for (InputSectionBase *s : f->getSections()) {
           if (s && s->kind() == SectionBase::Regular && s->isLive() &&
               (s->flags & SHF_ALLOC) &&
-              !(s->type == SHT_ARM_EXIDX && ctx.arg.emachine == EM_ARM))
+              !(s->type == SHT_ARM_EXIDX && isARM(ctx.arg.emachine)))
             ctx.target->scanSection(*s);
         }
       };
@@ -1626,7 +1626,7 @@ static int getHexagonPacketOffset(const InputSection &isec,
 
 static int64_t getPCBias(Ctx &ctx, const InputSection &isec,
                          const Relocation &rel) {
-  if (ctx.arg.emachine == EM_ARM) {
+  if (isARM(ctx.arg.emachine)) {
     switch (rel.type) {
     case R_ARM_THM_JUMP19:
     case R_ARM_THM_JUMP24:

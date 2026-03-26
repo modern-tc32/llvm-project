@@ -278,6 +278,9 @@ static bool isCompatible(Ctx &ctx, InputFile *file) {
     if (isMipsN32Abi(ctx, *file) == ctx.arg.mipsN32Abi)
       return true;
   }
+  if (file->ekind == ctx.arg.ekind && isARM(file->emachine) &&
+      isARM(ctx.arg.emachine))
+    return true;
 
   StringRef target =
       !ctx.arg.bfdname.empty() ? ctx.arg.bfdname : ctx.arg.emulation;
@@ -646,6 +649,7 @@ template <class ELFT> void ObjFile<ELFT>::parse(bool ignoreComdats) {
 
     switch (ctx.arg.emachine) {
     case EM_ARM:
+    case EM_TC32:
       if (sec.sh_type == SHT_ARM_ATTRIBUTES) {
         ARMAttributeParser attributes;
         ArrayRef<uint8_t> contents =

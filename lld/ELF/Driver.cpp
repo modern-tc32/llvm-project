@@ -364,7 +364,7 @@ static void checkOptions(Ctx &ctx) {
     ErrAlways(ctx)
         << "the .gnu.hash section is not compatible with the MIPS target";
 
-  if (ctx.arg.emachine == EM_ARM) {
+  if (isARM(ctx.arg.emachine)) {
     if (!ctx.arg.cmseImplib) {
       if (!ctx.arg.cmseInputLib.empty())
         ErrAlways(ctx) << "--in-implib may not be used without --cmse-implib";
@@ -408,7 +408,7 @@ static void checkOptions(Ctx &ctx) {
       ErrAlways(ctx) << "-z gcs only supported on AArch64";
   }
 
-  if (ctx.arg.emachine != EM_AARCH64 && ctx.arg.emachine != EM_ARM &&
+  if (ctx.arg.emachine != EM_AARCH64 && !isARM(ctx.arg.emachine) &&
       ctx.arg.zExecuteOnlyReport != ReportPolicy::None)
     ErrAlways(ctx)
         << "-z execute-only-report only supported on AArch64 and ARM";
@@ -2211,8 +2211,25 @@ void LinkerDriver::createFiles(opt::InputArgList &args) {
 
 // If -m <machine_type> was not given, infer it from object files.
 void LinkerDriver::inferMachineType() {
-  if (ctx.arg.ekind != ELFNoneKind)
+  if (ctx.arg.ekind != ELFNoneKind) {
+    if (ctx.arg.emachine == EM_ARM) {
+      bool sawTc32 = false;
+      for (auto &f : files) {
+        if (f->ekind == ELFNoneKind)
+          continue;
+        if (f->emachine == EM_TC32 ||
+            f->osabi == ELFOSABI_TC32) {
+          sawTc32 = true;
+          break;
+        }
+      }
+      if (sawTc32) {
+        ctx.arg.emachine = EM_TC32;
+        ctx.arg.osabi = ELFOSABI_TC32;
+      }
+    }
     return;
+  }
 
   bool inferred = false;
   for (auto &f : files) {

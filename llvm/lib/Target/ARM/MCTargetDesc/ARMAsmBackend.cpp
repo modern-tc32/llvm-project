@@ -39,7 +39,9 @@ namespace {
 class ARMELFObjectWriter : public MCELFObjectTargetWriter {
 public:
   ARMELFObjectWriter(uint8_t OSABI)
-      : MCELFObjectTargetWriter(/*Is64Bit*/ false, OSABI, ELF::EM_ARM,
+      : MCELFObjectTargetWriter(/*Is64Bit*/ false, OSABI,
+                                OSABI == ELF::ELFOSABI_TC32 ? ELF::EM_TC32
+                                                            : ELF::EM_ARM,
                                 /*HasRelocationAddend*/ false) {}
 };
 } // end anonymous namespace
@@ -1372,7 +1374,7 @@ static MCAsmBackend *createARMAsmBackend(const Target &T,
     assert(TheTriple.isOSBinFormatELF() && "using ELF for non-ELF target");
     uint8_t OSABI = Options.FDPIC
                         ? static_cast<uint8_t>(ELF::ELFOSABI_ARM_FDPIC)
-                        : MCELFObjectTargetWriter::getOSABI(TheTriple.getOS());
+                        : static_cast<uint8_t>(ELF::ELFOSABI_TC32);
     return new ARMAsmBackendELF(T, OSABI, Endian);
   }
 }

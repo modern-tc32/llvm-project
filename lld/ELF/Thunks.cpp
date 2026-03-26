@@ -1819,6 +1819,7 @@ std::unique_ptr<Thunk> elf::addThunk(Ctx &ctx, const InputSection &isec,
   case EM_AARCH64:
     return addThunkAArch64(ctx, isec, rel.type, s, a);
   case EM_ARM:
+  case EM_TC32:
     return addThunkArm(ctx, isec, rel.type, s, a);
   case EM_AVR:
     return addThunkAVR(ctx, rel.type, s, a);

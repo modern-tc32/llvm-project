@@ -44,7 +44,8 @@ public:
 
 ARMELFObjectWriter::ARMELFObjectWriter(uint8_t OSABI)
   : MCELFObjectTargetWriter(/*Is64Bit*/ false, OSABI,
-                            ELF::EM_ARM,
+                            OSABI == ELF::ELFOSABI_TC32 ? ELF::EM_TC32
+                                                         : ELF::EM_ARM,
                             /*HasRelocationAddend*/ false) {}
 
 bool ARMELFObjectWriter::needsRelocateWithSymbol(const MCValue &V,

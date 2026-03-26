@@ -1,0 +1,64 @@
+#include "TC32MCInstLower.h"
+#include "MCTargetDesc/TC32MCTargetDesc.h"
+#include "llvm/CodeGen/AsmPrinter.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCInst.h"
+#include "llvm/Support/ErrorHandling.h"
+
+using namespace llvm;
+
+MCOperand TC32MCInstLower::lowerOperand(const MachineOperand &MO) const {
+  switch (MO.getType()) {
+  default:
+    llvm_unreachable("unsupported TC32 machine operand");
+  case MachineOperand::MO_Register:
+    return MCOperand::createReg(MO.getReg());
+  case MachineOperand::MO_Immediate:
+    return MCOperand::createImm(MO.getImm());
+  case MachineOperand::MO_MachineBasicBlock:
+    return MCOperand::createExpr(
+        MCSymbolRefExpr::create(MO.getMBB()->getSymbol(), Ctx));
+  case MachineOperand::MO_GlobalAddress:
+    return MCOperand::createExpr(
+        MCSymbolRefExpr::create(Printer.getSymbol(MO.getGlobal()), Ctx));
+  case MachineOperand::MO_ExternalSymbol:
+    return MCOperand::createExpr(MCSymbolRefExpr::create(
+        Printer.GetExternalSymbolSymbol(MO.getSymbolName()), Ctx));
+  case MachineOperand::MO_BlockAddress:
+    return MCOperand::createExpr(MCSymbolRefExpr::create(
+        Printer.GetBlockAddressSymbol(MO.getBlockAddress()), Ctx));
+  }
+}
+
+void TC32MCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
+  OutMI.setOpcode(MI->getOpcode());
+
+  if (MI->getOpcode() == TC32::TADDCrr || MI->getOpcode() == TC32::TSUBCrr ||
+      MI->getOpcode() == TC32::TANDrr || MI->getOpcode() == TC32::TORrr ||
+      MI->getOpcode() == TC32::TXORrr) {
+    SmallVector<MCOperand, 4> Ops;
+    unsigned Added = 0;
+    for (const MachineOperand &MO : MI->operands()) {
+      if (MO.isImplicit() || MO.isRegMask())
+        continue;
+      Ops.push_back(lowerOperand(MO));
+      ++Added;
+    }
+    if (Added >= 3) {
+      OutMI.addOperand(Ops[0]);
+      OutMI.addOperand(Ops[2]);
+    } else if (Added == 2) {
+      OutMI.addOperand(Ops[0]);
+      OutMI.addOperand(Ops[1]);
+    }
+    return;
+  }
+
+  for (const MachineOperand &MO : MI->operands()) {
+    if (MO.isImplicit() || MO.isRegMask())
+      continue;
+    OutMI.addOperand(lowerOperand(MO));
+  }
+}

@@ -43,7 +43,7 @@ using namespace lld::elf;
 uint32_t OutputSection::getPhdrFlags() const {
   uint32_t ret = 0;
   bool purecode =
-      (ctx.arg.emachine == EM_ARM && (flags & SHF_ARM_PURECODE)) ||
+      (isARM(ctx.arg.emachine) && (flags & SHF_ARM_PURECODE)) ||
       (ctx.arg.emachine == EM_AARCH64 && (flags & SHF_AARCH64_PURECODE));
   if (!purecode)
     ret |= PF_R;
@@ -165,7 +165,7 @@ void OutputSection::commitSection(InputSection *isec) {
 
   isec->parent = this;
   uint64_t andMask = 0;
-  if (ctx.arg.emachine == EM_ARM)
+  if (isARM(ctx.arg.emachine))
     andMask |= (uint64_t)SHF_ARM_PURECODE;
   if (ctx.arg.emachine == EM_AARCH64)
     andMask |= (uint64_t)SHF_AARCH64_PURECODE;
@@ -553,7 +553,7 @@ void OutputSection::writeTo(Ctx &ctx, uint8_t *buf, parallel::TaskGroup &tg) {
 
       // When in Arm BE8 mode, the linker has to convert the big-endian
       // instructions to little-endian, leaving the data big-endian.
-      if (ctx.arg.emachine == EM_ARM && !ctx.arg.isLE && ctx.arg.armBe8 &&
+      if (isARM(ctx.arg.emachine) && !ctx.arg.isLE && ctx.arg.armBe8 &&
           (flags & SHF_EXECINSTR))
         convertArmInstructionstoBE8(ctx, isec, buf + isec->outSecOff);
 

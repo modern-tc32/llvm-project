@@ -1155,6 +1155,7 @@ const EnumEntry<unsigned> AMDGPUElfOSABI[] = {
 
 const EnumEntry<unsigned> ARMElfOSABI[] = {
     {"ARM", "ARM", ELF::ELFOSABI_ARM},
+    {"TC32", "Telink TC32", ELF::ELFOSABI_TC32},
     {"ARM FDPIC", "ARM FDPIC", ELF::ELFOSABI_ARM_FDPIC},
 };
 
@@ -1189,6 +1190,7 @@ const EnumEntry<unsigned> ElfMachineType[] = {
   ENUM_ENT(EM_RH32,          "TRW RH-32"),
   ENUM_ENT(EM_RCE,           "Motorola RCE"),
   ENUM_ENT(EM_ARM,           "ARM"),
+  ENUM_ENT(EM_TC32,          "Telink TC32"),
   ENUM_ENT(EM_ALPHA,         "EM_ALPHA"),
   ENUM_ENT(EM_SH,            "Hitachi SH"),
   ENUM_ENT(EM_SPARCV9,       "Sparc v9"),

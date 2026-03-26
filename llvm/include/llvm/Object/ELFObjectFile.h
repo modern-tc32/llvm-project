@@ -800,7 +800,8 @@ Expected<uint32_t> ELFObjectFile<ELFT>::getSymbolFlags(DataRefImpl Sym) const {
       // TODO: Actually report errors helpfully.
       consumeError(NameOrErr.takeError());
     }
-  } else if (EF.getHeader().e_machine == ELF::EM_ARM) {
+  } else if (EF.getHeader().e_machine == ELF::EM_ARM ||
+             EF.getHeader().e_machine == ELF::EM_TC32) {
     if (Expected<StringRef> NameOrErr = getSymbolName(Sym)) {
       StringRef Name = *NameOrErr;
       // TODO Investigate why empty name symbols need to be marked.
@@ -1299,6 +1300,8 @@ StringRef ELFObjectFile<ELFT>::getFileFormatName() const {
       return "elf32-x86-64";
     case ELF::EM_ARM:
       return (IsLittleEndian ? "elf32-littlearm" : "elf32-bigarm");
+    case ELF::EM_TC32:
+      return "elf32-tc32";
     case ELF::EM_AVR:
       return "elf32-avr";
     case ELF::EM_HEXAGON:
@@ -1376,6 +1379,8 @@ template <class ELFT> Triple::ArchType ELFObjectFile<ELFT>::getArch() const {
     return IsLittleEndian ? Triple::aarch64 : Triple::aarch64_be;
   case ELF::EM_ARM:
     return Triple::arm;
+  case ELF::EM_TC32:
+    return Triple::tc32;
   case ELF::EM_AVR:
     return Triple::avr;
   case ELF::EM_HEXAGON:
