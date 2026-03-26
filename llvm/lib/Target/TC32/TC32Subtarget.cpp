@@ -1,4 +1,5 @@
 #include "TC32Subtarget.h"
+#include "llvm/CodeGen/LibcallLoweringInfo.h"
 
 using namespace llvm;
 
@@ -18,3 +19,18 @@ TC32Subtarget::TC32Subtarget(const Triple &TT, const std::string &CPU,
     : TC32GenSubtargetInfo(TT, CPU, CPU, FS),
       InstrInfo(initializeSubtargetDependencies(CPU, FS)), TLInfo(TM, *this),
       FrameLowering(*this) {}
+
+void TC32Subtarget::initLibcallLoweringInfo(LibcallLoweringInfo &Info) const {
+  auto setBuiltinLibcall = [&](RTLIB::Libcall Call, StringRef Name) {
+    for (RTLIB::LibcallImpl Impl :
+         RTLIB::RuntimeLibcallsInfo::lookupLibcallImplName(Name)) {
+      Info.setLibcallImpl(Call, Impl);
+      return;
+    }
+  };
+
+  setBuiltinLibcall(RTLIB::SDIV_I32, "__divsi3");
+  setBuiltinLibcall(RTLIB::UDIV_I32, "__udivsi3");
+  setBuiltinLibcall(RTLIB::SREM_I32, "__modsi3");
+  setBuiltinLibcall(RTLIB::UREM_I32, "__umodsi3");
+}

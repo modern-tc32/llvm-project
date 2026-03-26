@@ -119,13 +119,18 @@ public:
     }
 
     if (Fixup.getKind() == TC32::fixup_tc32_ldr_pcrel_u8) {
-      if ((Value & 3) != 0)
+      uint64_t PC = Asm->getFragmentOffset(F) + Fixup.getOffset() + 4;
+      uint64_t Base = alignDown(PC, uint64_t(4));
+      if (Value < Base)
+        report_fatal_error("TC32 pc literal load target must be forward");
+      uint64_t Delta = Value - Base;
+      if ((Delta & 3) != 0)
         report_fatal_error("TC32 pc literal load target must be 4-byte aligned");
-      if (Value > 1020)
+      if (Delta > 1020)
         report_fatal_error("TC32 pc literal load out of range");
       uint16_t Encoded = static_cast<uint16_t>((Data[1] << 8) | Data[0]);
       Encoded = static_cast<uint16_t>((Encoded & 0xFF00u) |
-                                      (static_cast<uint16_t>(Value >> 2) & 0x00FFu));
+                                      (static_cast<uint16_t>(Delta >> 2) & 0x00FFu));
       Data[0] = static_cast<uint8_t>(Encoded & 0xFF);
       Data[1] = static_cast<uint8_t>((Encoded >> 8) & 0xFF);
       return;

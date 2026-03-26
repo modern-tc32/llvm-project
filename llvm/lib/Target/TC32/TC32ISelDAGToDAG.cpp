@@ -53,6 +53,34 @@ static bool matchFrameIndexPlusConst(SDValue Ptr, int &FI, int64_t &Imm) {
          match(Ptr.getOperand(1), Ptr.getOperand(0));
 }
 
+static bool isCopyFromReg(SDValue V, unsigned Reg) {
+  if (V.getOpcode() != ISD::CopyFromReg)
+    return false;
+  auto *R = dyn_cast<RegisterSDNode>(V.getOperand(1));
+  return R && R->getReg() == Reg;
+}
+
+static bool matchSPPlusConst(SDValue Ptr, int64_t &Imm) {
+  Imm = 0;
+  if (isCopyFromReg(Ptr, TC32::R13))
+    return true;
+  if (Ptr.getOpcode() != ISD::ADD)
+    return false;
+
+  auto match = [&](SDValue MaybeSP, SDValue MaybeConst) {
+    if (!isCopyFromReg(MaybeSP, TC32::R13))
+      return false;
+    auto *CN = dyn_cast<ConstantSDNode>(MaybeConst);
+    if (!CN)
+      return false;
+    Imm = CN->getSExtValue();
+    return true;
+  };
+
+  return match(Ptr.getOperand(0), Ptr.getOperand(1)) ||
+         match(Ptr.getOperand(1), Ptr.getOperand(0));
+}
+
 static bool getFrameIndexReference(const SelectionDAG *DAG, int FI, int64_t ExtraImm,
                                    unsigned &BaseReg, int &Imm) {
   const MachineFrameInfo &MFI = DAG->getMachineFunction().getFrameInfo();
@@ -194,6 +222,16 @@ public:
         Diff = LHS;
       else if (!HasLConst && !HasRConst)
         Diff = SDValue(CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32, LHS, RHS), 0);
+      else if (HasLConst)
+        Diff = SDValue(CurDAG->getMachineNode(
+                           TC32::TSUBrrr, DL, MVT::i32,
+                           materializeConstant(CurDAG, DL, static_cast<uint32_t>(LV)), RHS),
+                       0);
+      else if (HasRConst)
+        Diff = SDValue(CurDAG->getMachineNode(
+                           TC32::TSUBrrr, DL, MVT::i32, LHS,
+                           materializeConstant(CurDAG, DL, static_cast<uint32_t>(RV))),
+                       0);
       else
         return SDValue();
 
@@ -323,6 +361,10 @@ public:
     case ISD::CopyFromReg:
     case ISD::CopyToReg:
       Node->setNodeId(-1);
+      return;
+    case ISD::LIFETIME_START:
+    case ISD::LIFETIME_END:
+      ReplaceNode(Node, Node->getOperand(0).getNode());
       return;
     case ISD::CALLSEQ_START: {
       SDValue Ops[] = {getTargetImm(Node->getOperand(1)),
@@ -587,7 +629,8 @@ public:
       break;
     }
     case ISD::SELECT_CC: {
-      if (Node->getValueType(0) != MVT::i32)
+      EVT VT = Node->getValueType(0);
+      if (VT != MVT::i32 && VT != MVT::i8)
         break;
       auto *CC = dyn_cast<CondCodeSDNode>(Node->getOperand(4));
       if (!CC)
@@ -607,6 +650,8 @@ public:
           return materializeConstant(CurDAG, DL,
                                      static_cast<uint32_t>(CN->getZExtValue()));
         }
+        if (V.getValueType() == MVT::i8)
+          return SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, V), 0);
         return V;
       };
 
@@ -623,7 +668,11 @@ public:
           SDValue(CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, TrueVal, FalseVal), 0);
       SDValue Bits =
           SDValue(CurDAG->getMachineNode(TC32::TANDrr, DL, MVT::i32, Diff, Mask), 0);
-      ReplaceNode(Node, CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, FalseVal, Bits));
+      SDValue Res =
+          SDValue(CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, FalseVal, Bits), 0);
+      if (VT == MVT::i8)
+        Res = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i8, Res), 0);
+      ReplaceNode(Node, Res.getNode());
       return;
     }
     case ISD::ADD: {
@@ -753,6 +802,15 @@ public:
       SDValue Base;
       int64_t Imm;
       int FI;
+      if (Node->getValueType(0) == MVT::i32 && LD->getMemoryVT() == MVT::i32 &&
+          matchSPPlusConst(LD->getBasePtr(), Imm) &&
+          Imm >= 0 && Imm <= 1020 && (Imm & 3) == 0) {
+        ReplaceNode(Node, CurDAG->getMachineNode(
+                              TC32::TLOADspu8, DL, {MVT::i32, MVT::Other},
+                              {CurDAG->getTargetConstant(Imm, DL, MVT::i32),
+                               LD->getChain()}));
+        return;
+      }
       if (Node->getValueType(0) == MVT::i32 &&
           LD->getMemoryVT() == MVT::i8 &&
           LD->getExtensionType() == ISD::ZEXTLOAD &&
@@ -836,6 +894,15 @@ public:
       SDValue Base;
       int64_t Imm;
       int FI;
+      if (ST->getValue().getValueType() == MVT::i32 &&
+          ST->getMemoryVT() == MVT::i32 && matchSPPlusConst(ST->getBasePtr(), Imm) &&
+          Imm >= 0 && Imm <= 1020 && (Imm & 3) == 0) {
+        ReplaceNode(Node, CurDAG->getMachineNode(
+                              TC32::TSTOREspu8, DL, MVT::Other, ST->getValue(),
+                              CurDAG->getTargetConstant(Imm, DL, MVT::i32),
+                              ST->getChain()));
+        return;
+      }
       if (ST->getMemoryVT() == MVT::i8 &&
           ST->getBasePtr().getValueType() == MVT::i32 &&
           ST->getValue().getValueType() == MVT::i8) {

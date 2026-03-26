@@ -12,6 +12,8 @@
 
 namespace llvm {
 
+class LibcallLoweringInfo;
+
 class TC32Subtarget : public TC32GenSubtargetInfo {
   TC32InstrInfo InstrInfo;
   TC32TargetLowering TLInfo;
@@ -23,6 +25,7 @@ public:
 
   TC32Subtarget &initializeSubtargetDependencies(StringRef CPU, StringRef FS);
   void ParseSubtargetFeatures(StringRef CPU, StringRef TuneCPU, StringRef FS);
+  void initLibcallLoweringInfo(LibcallLoweringInfo &Info) const override;
 
   const TC32InstrInfo *getInstrInfo() const override { return &InstrInfo; }
   const TC32RegisterInfo *getRegisterInfo() const override {
