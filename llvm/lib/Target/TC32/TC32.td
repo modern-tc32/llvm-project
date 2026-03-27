@@ -8,7 +8,7 @@ def : Proc<"generic", []>;
 include "TC32RegisterInfo.td"
 include "TC32InstrInfo.td"
 
-defm : RemapAllTargetPseudoPointerOperands<GR32>;
+defm : RemapAllTargetPseudoPointerOperands<LoGR32>;
 
 def TC32InstrInfo : InstrInfo;
 

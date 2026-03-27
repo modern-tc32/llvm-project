@@ -14,7 +14,7 @@ using namespace llvm;
 TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
                                        const TC32Subtarget &STI)
     : TargetLowering(TM, STI) {
-  addRegisterClass(MVT::i32, &TC32::GR32RegClass);
+  addRegisterClass(MVT::i32, &TC32::LoGR32RegClass);
   addRegisterClass(MVT::i8, &TC32::LoGR32RegClass);
   computeRegisterProperties(STI.getRegisterInfo());
 
@@ -94,6 +94,15 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   MaxLoadsPerMemcmpOptSize = 0;
   setOperationAction(ISD::AssertSext, MVT::i32, Legal);
   setOperationAction(ISD::AssertZext, MVT::i32, Legal);
+  setOperationAction(ISD::SETCC, MVT::i32, Legal);
+  setOperationAction(ISD::SETCC, MVT::i8, Legal);
+  setOperationAction(ISD::SELECT, MVT::i32, Legal);
+  setOperationAction(ISD::SELECT, MVT::i8, Legal);
+  setOperationAction(ISD::SELECT_CC, MVT::i32, Legal);
+  setOperationAction(ISD::SELECT_CC, MVT::i8, Legal);
+  setOperationAction(ISD::BRCOND, MVT::Other, Legal);
+  setOperationAction(ISD::BR_CC, MVT::i32, Legal);
+  setOperationAction(ISD::BR_CC, MVT::i8, Legal);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i8, MVT::i1, Promote);
   setLoadExtAction(ISD::EXTLOAD, MVT::i8, MVT::i1, Promote);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MVT::i8, Legal);
@@ -104,6 +113,24 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setLoadExtAction(ISD::SEXTLOAD, MVT::i32, MVT::i16, Expand);
   setTruncStoreAction(MVT::i32, MVT::i16, Legal);
   setTruncStoreAction(MVT::i32, MVT::i8, Legal);
+}
+
+static SDValue normalizeIncomingScalarArgI32(SelectionDAG &DAG, const SDLoc &DL,
+                                             SDValue Arg, EVT VT,
+                                             const ISD::ArgFlagsTy &Flags) {
+  if (VT != MVT::i8 && VT != MVT::i16)
+    return Arg;
+
+  if (!Flags.isSExt()) {
+    uint32_t Mask = VT == MVT::i8 ? 0xffu : 0xffffu;
+    return DAG.getNode(ISD::AND, DL, MVT::i32, Arg,
+                       DAG.getConstant(Mask, DL, MVT::i32));
+  }
+
+  unsigned Shift = VT == MVT::i8 ? 24 : 16;
+  SDValue ShiftAmt = DAG.getConstant(Shift, DL, MVT::i32);
+  Arg = DAG.getNode(ISD::SHL, DL, MVT::i32, Arg, ShiftAmt);
+  return DAG.getNode(ISD::SRA, DL, MVT::i32, Arg, ShiftAmt);
 }
 
 const char *TC32TargetLowering::getTargetNodeName(unsigned Opcode) const {
@@ -177,10 +204,11 @@ SDValue TC32TargetLowering::LowerFormalArguments(
     if (I < std::size(ArgRegs)) {
       Register VReg = MF.addLiveIn(ArgRegs[I], &TC32::LoGR32RegClass);
       SDValue Arg = DAG.getCopyFromReg(Chain, dl, VReg, MVT::i32);
-      if (Ins[I].VT == MVT::i8)
-        InVals.push_back(DAG.getNode(ISD::TRUNCATE, dl, MVT::i8, Arg));
-      else if (Ins[I].VT == MVT::i16)
-        InVals.push_back(DAG.getNode(ISD::TRUNCATE, dl, MVT::i16, Arg));
+      if (Ins[I].VT == MVT::i8 || Ins[I].VT == MVT::i16) {
+        SDValue NarrowArg =
+            normalizeIncomingScalarArgI32(DAG, dl, Arg, Ins[I].VT, Ins[I].Flags);
+        InVals.push_back(DAG.getNode(ISD::TRUNCATE, dl, Ins[I].VT, NarrowArg));
+      }
       else
         InVals.push_back(Arg);
       Chain = Arg.getValue(1);
@@ -190,10 +218,11 @@ SDValue TC32TargetLowering::LowerFormalArguments(
       SDValue FIN = DAG.getFrameIndex(FI, MVT::i32);
       SDValue Load =
           DAG.getLoad(MVT::i32, dl, Chain, FIN, MachinePointerInfo::getFixedStack(MF, FI));
-      if (Ins[I].VT == MVT::i8)
-        InVals.push_back(DAG.getNode(ISD::TRUNCATE, dl, MVT::i8, Load));
-      else if (Ins[I].VT == MVT::i16)
-        InVals.push_back(DAG.getNode(ISD::TRUNCATE, dl, MVT::i16, Load));
+      if (Ins[I].VT == MVT::i8 || Ins[I].VT == MVT::i16) {
+        SDValue NarrowArg =
+            normalizeIncomingScalarArgI32(DAG, dl, Load, Ins[I].VT, Ins[I].Flags);
+        InVals.push_back(DAG.getNode(ISD::TRUNCATE, dl, Ins[I].VT, NarrowArg));
+      }
       else
         InVals.push_back(Load);
       Chain = Load.getValue(1);
