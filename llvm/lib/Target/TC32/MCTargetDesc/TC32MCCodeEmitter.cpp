@@ -33,7 +33,7 @@ class TC32MCCodeEmitter : public MCCodeEmitter {
   uint16_t encodeTCMPri0(const MCInst &MI) const {
     unsigned Src = getRegEncoding(MI.getOperand(0).getReg());
     check(Src < 8, "tcmp immediate form requires low register");
-    return static_cast<uint16_t>(0xA800u | Src);
+    return static_cast<uint16_t>(((0xA8u + Src) << 8));
   }
 
   uint16_t encodeTCMPrr(const MCInst &MI) const {
