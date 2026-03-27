@@ -82,6 +82,22 @@ public:
     if (!IsResolved)
       maybeAddReloc(F, Fixup, Target, Value, IsResolved);
 
+    switch (Fixup.getKind()) {
+    case FK_Data_1:
+      Data[0] = static_cast<uint8_t>(Value & 0xFF);
+      return;
+    case FK_Data_2:
+      Data[0] = static_cast<uint8_t>(Value & 0xFF);
+      Data[1] = static_cast<uint8_t>((Value >> 8) & 0xFF);
+      return;
+    case FK_Data_4:
+      for (unsigned I = 0; I != 4; ++I)
+        Data[I] = static_cast<uint8_t>((Value >> (I * 8)) & 0xFF);
+      return;
+    default:
+      break;
+    }
+
     if (Fixup.getKind() == TC32::fixup_tc32_branch8) {
       if (Value == 0)
         return;

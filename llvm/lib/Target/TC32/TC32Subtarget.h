@@ -4,6 +4,7 @@
 #include "TC32FrameLowering.h"
 #include "TC32ISelLowering.h"
 #include "TC32InstrInfo.h"
+#include "llvm/CodeGen/SelectionDAGTargetInfo.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
 #include <memory>
 
@@ -18,6 +19,7 @@ class TC32Subtarget : public TC32GenSubtargetInfo {
   TC32InstrInfo InstrInfo;
   TC32TargetLowering TLInfo;
   TC32FrameLowering FrameLowering;
+  SelectionDAGTargetInfo TSInfo;
 
 public:
   TC32Subtarget(const Triple &TT, const std::string &CPU,
@@ -33,6 +35,9 @@ public:
   }
   const TC32TargetLowering *getTargetLowering() const override {
     return &TLInfo;
+  }
+  const SelectionDAGTargetInfo *getSelectionDAGInfo() const override {
+    return &TSInfo;
   }
   const TargetFrameLowering *getFrameLowering() const override {
     return &FrameLowering;
