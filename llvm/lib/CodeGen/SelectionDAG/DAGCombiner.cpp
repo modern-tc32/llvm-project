@@ -22177,9 +22177,15 @@ bool DAGCombiner::mergeStoresOfConstantsOrVecElts(
         }
         BuildVector.push_back(Val);
       }
-      StoredVal = DAG.getNode(MemVT.isVector() ? ISD::CONCAT_VECTORS
-                                               : ISD::BUILD_VECTOR,
-                              DL, StoreTy, BuildVector);
+      if (!StoreTy.isVector()) {
+        assert(BuildVector.size() == 1 &&
+               "scalarized merged store expects exactly one element");
+        StoredVal = BuildVector.front();
+      } else {
+        StoredVal = DAG.getNode(MemVT.isVector() ? ISD::CONCAT_VECTORS
+                                                 : ISD::BUILD_VECTOR,
+                                DL, StoreTy, BuildVector);
+      }
     } else {
       SmallVector<SDValue, 8> Ops;
       for (unsigned i = 0; i < NumStores; ++i) {
@@ -22213,9 +22219,15 @@ bool DAGCombiner::mergeStoresOfConstantsOrVecElts(
       }
 
       // Build the extracted vector elements back into a vector.
-      StoredVal = DAG.getNode(MemVT.isVector() ? ISD::CONCAT_VECTORS
-                                               : ISD::BUILD_VECTOR,
-                              DL, StoreTy, Ops);
+      if (!StoreTy.isVector()) {
+        assert(Ops.size() == 1 &&
+               "scalarized merged store expects exactly one element");
+        StoredVal = Ops.front();
+      } else {
+        StoredVal = DAG.getNode(MemVT.isVector() ? ISD::CONCAT_VECTORS
+                                                 : ISD::BUILD_VECTOR,
+                                DL, StoreTy, Ops);
+      }
     }
   } else {
     // We should always use a vector store when merging extracted vector

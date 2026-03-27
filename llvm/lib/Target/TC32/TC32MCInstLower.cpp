@@ -20,9 +20,15 @@ MCOperand TC32MCInstLower::lowerOperand(const MachineOperand &MO) const {
   case MachineOperand::MO_MachineBasicBlock:
     return MCOperand::createExpr(
         MCSymbolRefExpr::create(MO.getMBB()->getSymbol(), Ctx));
-  case MachineOperand::MO_GlobalAddress:
-    return MCOperand::createExpr(
-        MCSymbolRefExpr::create(Printer.getSymbol(MO.getGlobal()), Ctx));
+  case MachineOperand::MO_GlobalAddress: {
+    const MCExpr *Expr =
+        MCSymbolRefExpr::create(Printer.getSymbol(MO.getGlobal()), Ctx);
+    if (int64_t Offset = MO.getOffset(); Offset != 0) {
+      Expr = MCBinaryExpr::createAdd(
+          Expr, MCConstantExpr::create(Offset, Ctx), Ctx);
+    }
+    return MCOperand::createExpr(Expr);
+  }
   case MachineOperand::MO_ExternalSymbol:
     return MCOperand::createExpr(MCSymbolRefExpr::create(
         Printer.GetExternalSymbolSymbol(MO.getSymbolName()), Ctx));

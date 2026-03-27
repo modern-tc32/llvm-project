@@ -6685,6 +6685,8 @@ static SDValue foldCONCAT_VECTORS(const SDLoc &DL, EVT VT,
 
 /// Gets or creates the specified node.
 SDValue SelectionDAG::getNode(unsigned Opcode, const SDLoc &DL, EVT VT) {
+  if (Opcode == ISD::BUILD_VECTOR)
+    return getUNDEF(VT);
   SDVTList VTs = getVTList(VT);
   FoldingSetNodeID ID;
   AddNodeIDNode(ID, Opcode, VTs, {});
@@ -11300,6 +11302,16 @@ SDValue SelectionDAG::getNode(unsigned Opcode, const SDLoc &DL, EVT VT,
   switch (Opcode) {
   default: break;
   case ISD::BUILD_VECTOR:
+    if (!VT.isVector()) {
+      errs() << "Invalid scalar BUILD_VECTOR requested for VT " << VT.getEVTString()
+             << " with " << Ops.size() << " operands\n";
+      for (const auto &Op : Ops) {
+        errs() << "  op: ";
+        Op.getNode()->printr(errs(), this);
+        errs() << '\n';
+      }
+      report_fatal_error("SelectionDAG attempted to create scalar BUILD_VECTOR");
+    }
     // Attempt to simplify BUILD_VECTOR.
     if (SDValue V = FoldBUILD_VECTOR(DL, VT, Ops, *this))
       return V;
