@@ -10,6 +10,10 @@ using namespace llvm;
 #define GET_INSTRINFO_CTOR_DTOR
 #include "TC32GenInstrInfo.inc"
 
+static bool isLowPhysReg(Register Reg) {
+  return Reg.isPhysical() && TC32::LoGR32RegClass.contains(Reg);
+}
+
 TC32InstrInfo::TC32InstrInfo(const TC32Subtarget &STI)
     : TC32GenInstrInfo(STI, RI, TC32::ADJCALLSTACKDOWN, TC32::ADJCALLSTACKUP),
       RI() {}
@@ -35,6 +39,15 @@ void TC32InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
   if (RC != &TC32::LoGR32RegClass && RC != &TC32::GR32RegClass)
     report_fatal_error("TC32 spill only supports GPRs");
 
+  if (!isLowPhysReg(SrcReg)) {
+    assert(SrcReg != TC32::R6 && "reserved low scratch register spilled unexpectedly");
+    BuildMI(MBB, MI, DebugLoc(), get(TC32::TMOVrr), TC32::R6)
+        .addReg(SrcReg, getKillRegState(IsKill))
+        .setMIFlags(Flags);
+    SrcReg = TC32::R6;
+    IsKill = true;
+  }
+
   BuildMI(MBB, MI, DebugLoc(), get(TC32::TSTORErr))
       .addReg(SrcReg, getKillRegState(IsKill))
       .addFrameIndex(FrameIndex)
@@ -51,6 +64,17 @@ void TC32InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
   (void)SubReg;
   if (RC != &TC32::LoGR32RegClass && RC != &TC32::GR32RegClass)
     report_fatal_error("TC32 reload only supports GPRs");
+
+  if (!isLowPhysReg(DestReg)) {
+    assert(DestReg != TC32::R6 && "reserved low scratch register reloaded unexpectedly");
+    BuildMI(MBB, MI, DebugLoc(), get(TC32::TLOADrr), TC32::R6)
+        .addFrameIndex(FrameIndex)
+        .setMIFlags(Flags);
+    BuildMI(MBB, MI, DebugLoc(), get(TC32::TMOVrr), DestReg)
+        .addReg(TC32::R6)
+        .setMIFlags(Flags);
+    return;
+  }
 
   BuildMI(MBB, MI, DebugLoc(), get(TC32::TLOADrr), DestReg)
       .addFrameIndex(FrameIndex)

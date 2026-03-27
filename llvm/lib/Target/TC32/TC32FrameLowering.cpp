@@ -3,6 +3,7 @@
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
 
@@ -84,5 +85,7 @@ MachineBasicBlock::iterator TC32FrameLowering::eliminateCallFramePseudoInstr(
 
 bool TC32FrameLowering::hasFPImpl(const MachineFunction &MF) const {
   const MachineFrameInfo &MFI = MF.getFrameInfo();
-  return MFI.getStackSize() != 0 || MFI.hasCalls();
+  if (MF.getTarget().Options.DisableFramePointerElim(MF))
+    return true;
+  return MFI.hasStackObjects() || MFI.hasCalls();
 }
