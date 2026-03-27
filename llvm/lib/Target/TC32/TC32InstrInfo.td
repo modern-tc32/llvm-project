@@ -45,7 +45,7 @@ def TPOP_R7_PC : TC32Inst<(outs), (ins), "tpop\t{r7, pc}"> {
   let isBarrier = 1;
 }
 
-def TJL : TC32Inst<(outs), (ins calltarget:$dst, variable_ops), "tjl\t$dst"> {
+def TJL : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
   let Size = 4;
   let isCall = 1;
   let Defs = [R0, R1, R2, R3, R14];

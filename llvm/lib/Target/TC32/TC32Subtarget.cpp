@@ -33,4 +33,9 @@ void TC32Subtarget::initLibcallLoweringInfo(LibcallLoweringInfo &Info) const {
   setBuiltinLibcall(RTLIB::UDIV_I32, "__udivsi3");
   setBuiltinLibcall(RTLIB::SREM_I32, "__modsi3");
   setBuiltinLibcall(RTLIB::UREM_I32, "__umodsi3");
+  setBuiltinLibcall(RTLIB::MEMSET, "memset");
+  setBuiltinLibcall(RTLIB::MEMCPY, "memcpy");
+  setBuiltinLibcall(RTLIB::MEMMOVE, "memmove");
+  setBuiltinLibcall(RTLIB::MEMCMP, "memcmp");
+  setBuiltinLibcall(RTLIB::BCMP, "bcmp");
 }

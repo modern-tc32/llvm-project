@@ -75,10 +75,18 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setBuiltinLibcall(RTLIB::UDIV_I32, "__udivsi3");
   setBuiltinLibcall(RTLIB::SREM_I32, "__modsi3");
   setBuiltinLibcall(RTLIB::UREM_I32, "__umodsi3");
+  setBuiltinLibcall(RTLIB::MEMSET, "memset");
+  setBuiltinLibcall(RTLIB::MEMCPY, "memcpy");
+  setBuiltinLibcall(RTLIB::MEMMOVE, "memmove");
+  setBuiltinLibcall(RTLIB::MEMCMP, "memcmp");
+  setBuiltinLibcall(RTLIB::BCMP, "bcmp");
+  setOperationAction(ISD::AssertSext, MVT::i32, Legal);
   setOperationAction(ISD::AssertZext, MVT::i32, Legal);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i8, MVT::i1, Promote);
   setLoadExtAction(ISD::EXTLOAD, MVT::i8, MVT::i1, Promote);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MVT::i8, Legal);
+  setLoadExtAction(ISD::SEXTLOAD, MVT::i32, MVT::i8, Expand);
+  setLoadExtAction(ISD::EXTLOAD, MVT::i32, MVT::i8, Expand);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MVT::i16, Legal);
   setLoadExtAction(ISD::EXTLOAD, MVT::i32, MVT::i16, Legal);
   setLoadExtAction(ISD::SEXTLOAD, MVT::i32, MVT::i16, Expand);
@@ -155,6 +163,7 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   SDValue Callee = CLI.Callee;
   EVT PtrVT = getPointerTy(DAG.getDataLayout());
+  bool IsIndirectCall = false;
   switch (Callee.getOpcode()) {
   case ISD::GlobalAddress: {
     auto *GAN = cast<GlobalAddressSDNode>(Callee);
@@ -170,7 +179,8 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
   case ISD::TargetExternalSymbol:
     break;
   default:
-    report_fatal_error("TC32 only supports direct calls right now");
+    IsIndirectCall = true;
+    break;
   }
 
   MachineFunction &MF = DAG.getMachineFunction();
@@ -215,11 +225,15 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
     Glue = Chain.getValue(1);
   }
 
+  if (IsIndirectCall) {
+    Chain = DAG.getCopyToReg(Chain, DL, TC32::R12, Callee, Glue);
+    Glue = Chain.getValue(1);
+    Callee = DAG.getTargetExternalSymbol("__tc32_indirect_call_r12", PtrVT);
+  }
+
   SmallVector<SDValue, 8> Ops;
-  Ops.push_back(Chain);
   Ops.push_back(Callee);
-  for (auto &Reg : RegsToPass)
-    Ops.push_back(DAG.getRegister(Reg.first, Reg.second.getValueType()));
+  Ops.push_back(Chain);
   if (Glue)
     Ops.push_back(Glue);
 

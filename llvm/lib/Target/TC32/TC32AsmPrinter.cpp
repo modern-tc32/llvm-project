@@ -26,11 +26,6 @@ class TC32AsmPrinter : public AsmPrinter {
 public:
   static char ID;
 
-  struct LiteralPoolEntry {
-    MCSymbol *Label;
-    const MCExpr *Value;
-  };
-
   TC32AsmPrinter(TargetMachine &TM, std::unique_ptr<MCStreamer> Streamer)
       : AsmPrinter(TM, std::move(Streamer), ID) {}
 
@@ -38,17 +33,14 @@ public:
 
   bool runOnMachineFunction(MachineFunction &MF) override {
     SetupMachineFunction(MF);
-    LiteralPool.clear();
     emitFunctionBody();
-    emitLiteralPool();
     return false;
   }
 
   void emitInstruction(const MachineInstr *MI) override {
     if (MI->getOpcode() == TC32::TLOADaddr) {
-      MCSymbol *InstLabel = OutContext.createTempSymbol();
       MCSymbol *PoolLabel = OutContext.createTempSymbol();
-      OutStreamer->emitLabel(InstLabel);
+      MCSymbol *SkipLabel = OutContext.createTempSymbol();
 
       MCInst Load;
       Load.setOpcode(TC32::TLOADpcu8);
@@ -56,9 +48,18 @@ public:
       Load.addOperand(MCOperand::createExpr(MCSymbolRefExpr::create(PoolLabel, OutContext)));
       EmitToStreamer(*OutStreamer, Load);
 
+      MCInst SkipPool;
+      SkipPool.setOpcode(TC32::TJ);
+      SkipPool.addOperand(
+          MCOperand::createExpr(MCSymbolRefExpr::create(SkipLabel, OutContext)));
+      EmitToStreamer(*OutStreamer, SkipPool);
+
       TC32MCInstLower Lower(OutContext, *this);
       MCOperand Value = Lower.lowerOperand(MI->getOperand(1));
-      LiteralPool.push_back({PoolLabel, Value.getExpr()});
+      OutStreamer->emitValueToAlignment(Align(4));
+      OutStreamer->emitLabel(PoolLabel);
+      OutStreamer->emitValue(Value.getExpr(), 4);
+      OutStreamer->emitLabel(SkipLabel);
       return;
     }
 
@@ -106,21 +107,6 @@ public:
     MCInst OutMI;
     Lower.lower(MI, OutMI);
     EmitToStreamer(*OutStreamer, OutMI);
-  }
-
-private:
-  SmallVector<LiteralPoolEntry, 8> LiteralPool;
-
-  void emitLiteralPool() {
-    if (LiteralPool.empty())
-      return;
-
-    OutStreamer->emitValueToAlignment(Align(4));
-    for (const LiteralPoolEntry &Entry : LiteralPool) {
-      OutStreamer->emitLabel(Entry.Label);
-      OutStreamer->emitValue(Entry.Value, 4);
-    }
-    LiteralPool.clear();
   }
 };
 
