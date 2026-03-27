@@ -50,7 +50,7 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::STACKSAVE, MVT::Other, Expand);
   setOperationAction(ISD::STACKRESTORE, MVT::Other, Expand);
   setOperationAction(ISD::SHL, MVT::i32, Legal);
-  setOperationAction(ISD::SHL, MVT::i8, Legal);
+  setOperationAction(ISD::SHL, MVT::i8, Custom);
   setOperationAction(ISD::SRL, MVT::i32, Legal);
   setOperationAction(ISD::SRL, MVT::i8, Legal);
   setOperationAction(ISD::SRA, MVT::i32, Legal);
@@ -115,6 +115,50 @@ const char *TC32TargetLowering::getTargetNodeName(unsigned Opcode) const {
   default:
     return nullptr;
   }
+}
+
+SDValue TC32TargetLowering::LowerOperation(SDValue Op,
+                                           SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+
+  switch (Op.getOpcode()) {
+  case ISD::SHL: {
+    if (Op.getValueType() != MVT::i8)
+      break;
+
+    SDValue LHS = Op.getOperand(0);
+    SDValue RHS = Op.getOperand(1);
+
+    SDValue LHS32 = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, LHS);
+    auto ConstI8 = [&](unsigned Value) {
+      return DAG.getConstant(Value & 0xffu, DL, MVT::i8);
+    };
+    auto ConstI32 = [&](unsigned Value) {
+      return DAG.getConstant(Value, DL, MVT::i32);
+    };
+
+    if (auto *RC = dyn_cast<ConstantSDNode>(RHS)) {
+      unsigned Shift = RC->getZExtValue();
+      if (Shift >= 8)
+        return ConstI8(0);
+      SDValue Shifted32 = DAG.getNode(ISD::SHL, DL, MVT::i32, LHS32, ConstI32(Shift));
+      return DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, Shifted32);
+    }
+
+    SDValue Res = ConstI8(0);
+    for (int I = 7; I >= 0; --I) {
+      SDValue Shifted32 = DAG.getNode(ISD::SHL, DL, MVT::i32, LHS32, ConstI32(I));
+      SDValue Shifted8 = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, Shifted32);
+      Res = DAG.getNode(ISD::SELECT_CC, DL, MVT::i8, RHS, ConstI8(I), Shifted8,
+                        Res, DAG.getCondCode(ISD::SETEQ));
+    }
+    return Res;
+  }
+  default:
+    break;
+  }
+
+  return SDValue();
 }
 
 SDValue TC32TargetLowering::LowerFormalArguments(
