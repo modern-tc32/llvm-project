@@ -49,6 +49,7 @@ def TJL : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
   let Size = 4;
   let isCall = 1;
   let Defs = [R0, R1, R2, R3, R14];
+  let Uses = [R0, R1, R2, R3];
 }
 
 def TCMPri0 : TC32Inst<(outs), (ins LoGR32:$src), "tcmp\t$src, #0">;

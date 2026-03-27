@@ -15,11 +15,19 @@ namespace llvm {
 
 class LibcallLoweringInfo;
 
+class TC32SelectionDAGInfo : public SelectionDAGTargetInfo {
+public:
+  bool disableGenericCombines(CodeGenOptLevel OptLevel) const override {
+    (void)OptLevel;
+    return true;
+  }
+};
+
 class TC32Subtarget : public TC32GenSubtargetInfo {
   TC32InstrInfo InstrInfo;
   TC32TargetLowering TLInfo;
   TC32FrameLowering FrameLowering;
-  SelectionDAGTargetInfo TSInfo;
+  TC32SelectionDAGInfo TSInfo;
 
 public:
   TC32Subtarget(const Triple &TT, const std::string &CPU,

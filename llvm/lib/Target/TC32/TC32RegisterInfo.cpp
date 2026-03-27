@@ -16,13 +16,17 @@ using namespace llvm;
 TC32RegisterInfo::TC32RegisterInfo() : TC32GenRegisterInfo(TC32::R15) {}
 
 const MCPhysReg *TC32RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
-  static const MCPhysReg CalleeSavedRegs[] = {0};
+  static const MCPhysReg CalleeSavedRegs[] = {
+      TC32::R4,
+      TC32::R5,
+      0};
   (void)MF;
   return CalleeSavedRegs;
 }
 
 BitVector TC32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
+  Reserved.set(TC32::R6);
   if (MF.getSubtarget().getFrameLowering()->hasFP(MF))
     Reserved.set(TC32::R7);
   Reserved.set(TC32::R13);

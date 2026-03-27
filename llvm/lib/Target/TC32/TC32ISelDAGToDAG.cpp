@@ -169,6 +169,21 @@ public:
 
   SDValue selectSetCCValue(SDLoc DL, ISD::CondCode CCVal, SDValue LHS,
                            SDValue RHS) {
+    SDValue OrigLHS = LHS;
+    SDValue OrigRHS = RHS;
+
+    auto isConst = [](SDValue V, int64_t &Value) {
+      if (const auto *CN = dyn_cast<ConstantSDNode>(V)) {
+        Value = CN->getSExtValue();
+        return true;
+      }
+      return false;
+    };
+
+    int64_t LV = 0, RV = 0;
+    bool HasLConst = isConst(OrigLHS, LV);
+    bool HasRConst = isConst(OrigRHS, RV);
+
     auto toI32 = [&](SDValue V) -> SDValue {
       if (V.getValueType() == MVT::i32)
         return V;
@@ -185,18 +200,6 @@ public:
       return SDValue();
 
     normalizeUnsignedCompare(DL, CCVal, LHS, RHS);
-
-    auto isConst = [](SDValue V, int64_t &Value) {
-      if (const auto *CN = dyn_cast<ConstantSDNode>(V)) {
-        Value = CN->getSExtValue();
-        return true;
-      }
-      return false;
-    };
-
-    int64_t LV, RV;
-    bool HasLConst = isConst(LHS, LV);
-    bool HasRConst = isConst(RHS, RV);
 
     auto emitEqZero = [&](SDValue Value) -> SDValue {
       MachineSDNode *Neg =
@@ -239,7 +242,7 @@ public:
 
       return CCVal == ISD::SETEQ ? emitEqZero(Diff) : emitNeZero(Diff);
     }
-    case ISD::SETLT:
+    case ISD::SETLT: {
       if (HasRConst && RV == 0)
         return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, LHS), 0);
       if (HasRConst && RV == 1) {
@@ -254,21 +257,19 @@ public:
         SDValue Neg = SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, RHS), 0);
         return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, Neg), 0);
       }
-      if (!HasLConst && !HasRConst) {
-        SDValue GE = SDValue();
-        SDValue SignL =
-            SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, LHS), 0);
-        SDValue SignR =
-            SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
-        MachineSDNode *Cmp =
-            CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
-        GE = SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
-                                            SDValue(Cmp, 0)),
-                     0);
-        return emitEqZero(GE);
-      }
-      return SDValue();
-    case ISD::SETGE:
+      SDValue GE = SDValue();
+      SDValue SignL =
+          SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, LHS), 0);
+      SDValue SignR =
+          SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
+      MachineSDNode *Cmp =
+          CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
+      GE = SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
+                                          SDValue(Cmp, 0)),
+                   0);
+      return emitEqZero(GE);
+    }
+    case ISD::SETGE: {
       if (HasRConst && RV == 1)
         return selectSetCCValue(DL, ISD::SETGT, LHS,
                                 CurDAG->getConstant(0, DL, MVT::i32));
@@ -278,19 +279,17 @@ public:
       }
       if (HasLConst && LV == 0)
         return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
-      if (!HasLConst && !HasRConst) {
-        SDValue SignL =
-            SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, LHS), 0);
-        SDValue SignR =
-            SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
-        MachineSDNode *Cmp =
-            CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
-        return SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL,
-                                              SignR, SDValue(Cmp, 0)),
-                       0);
-      }
-      return SDValue();
-    case ISD::SETGT:
+      SDValue SignL =
+          SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, LHS), 0);
+      SDValue SignR =
+          SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
+      MachineSDNode *Cmp =
+          CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
+      return SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL,
+                                            SignR, SDValue(Cmp, 0)),
+                     0);
+    }
+    case ISD::SETGT: {
       if (HasRConst && RV == 0) {
         SDValue NonZero = emitNeZero(LHS);
         SDValue Sign =
@@ -306,21 +305,19 @@ public:
       }
       if (HasLConst && LV == -1)
         return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
-      if (!HasLConst && !HasRConst) {
-        SDValue LE = SDValue();
-        SDValue SignL =
-            SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, LHS), 0);
-        SDValue SignR =
-            SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, RHS), 0);
-        MachineSDNode *Cmp =
-            CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, RHS, LHS);
-        LE = SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
-                                            SDValue(Cmp, 0)),
-                     0);
-        return emitEqZero(LE);
-      }
-      return SDValue();
-    case ISD::SETLE:
+      SDValue LE = SDValue();
+      SDValue SignL =
+          SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, LHS), 0);
+      SDValue SignR =
+          SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, RHS), 0);
+      MachineSDNode *Cmp =
+          CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, RHS, LHS);
+      LE = SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
+                                          SDValue(Cmp, 0)),
+                   0);
+      return emitEqZero(LE);
+    }
+    case ISD::SETLE: {
       if (HasRConst && RV == 0) {
         SDValue Positive = selectSetCCValue(DL, ISD::SETGT, LHS, RHS);
         if (!Positive)
@@ -333,18 +330,16 @@ public:
         SDValue Neg = SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, RHS), 0);
         return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, Neg), 0);
       }
-      if (!HasLConst && !HasRConst) {
-        SDValue SignL =
-            SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, LHS), 0);
-        SDValue SignR =
-            SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, RHS), 0);
-        MachineSDNode *Cmp =
-            CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, RHS, LHS);
-        return SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL,
-                                              SignR, SDValue(Cmp, 0)),
-                       0);
-      }
-      return SDValue();
+      SDValue SignL =
+          SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, LHS), 0);
+      SDValue SignR =
+          SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, RHS), 0);
+      MachineSDNode *Cmp =
+          CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, RHS, LHS);
+      return SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL,
+                                            SignR, SDValue(Cmp, 0)),
+                     0);
+    }
     default:
       return SDValue();
     }
@@ -570,8 +565,14 @@ public:
       SDValue Chain = Node->getOperand(0);
       SDValue Cond = Node->getOperand(1);
       SDValue Dest = Node->getOperand(2);
-      if (Cond.getOpcode() != ISD::SETCC)
-        break;
+      if (Cond.getOpcode() != ISD::SETCC) {
+        Cond = ensureValueInRegister(Cond, DL);
+        MachineSDNode *Cmp =
+            CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, Cond);
+        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TJNE, DL, MVT::Other,
+                                                 Dest, Chain, SDValue(Cmp, 0)));
+        return;
+      }
 
       auto *CC = dyn_cast<CondCodeSDNode>(Cond.getOperand(2));
       if (!CC)
@@ -722,6 +723,18 @@ public:
                                                  Zero, Bit));
         return;
       }
+      if (Node->getValueType(0) == MVT::i32 &&
+          cast<VTSDNode>(Node->getOperand(1))->getVT() == MVT::i16) {
+        SDValue Shl = SDValue(CurDAG->getMachineNode(
+                                  TC32::TSHFTLi5, DL, MVT::i32,
+                                  Node->getOperand(0),
+                                  CurDAG->getTargetConstant(16, DL, MVT::i32)),
+                              0);
+        ReplaceNode(Node, CurDAG->getMachineNode(
+                              TC32::TASRi5, DL, MVT::i32, Shl,
+                              CurDAG->getTargetConstant(16, DL, MVT::i32)));
+        return;
+      }
       break;
     }
     case ISD::SELECT_CC: {
@@ -738,6 +751,69 @@ public:
       SDValue FalseVal = Node->getOperand(3);
 
       SDValue BoolVal = selectSetCCValue(DL, CC->get(), LHS, RHS);
+      if (!BoolVal)
+        break;
+
+      auto materializeValue = [&](SDValue V) -> SDValue {
+        if (auto *CN = dyn_cast<ConstantSDNode>(V)) {
+          return materializeConstant(CurDAG, DL,
+                                     static_cast<uint32_t>(CN->getZExtValue()));
+        }
+        if (V.getValueType() == MVT::i8)
+          return SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, V), 0);
+        return V;
+      };
+
+      TrueVal = materializeValue(TrueVal);
+      FalseVal = materializeValue(FalseVal);
+
+      SDValue Zero = SDValue(CurDAG->getMachineNode(
+                                 TC32::TMOVi8, DL, MVT::i32,
+                                 CurDAG->getTargetConstant(0, DL, MVT::i32)),
+                             0);
+      SDValue Mask =
+          SDValue(CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32, Zero, BoolVal), 0);
+      SDValue Diff =
+          SDValue(CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, TrueVal, FalseVal), 0);
+      SDValue Bits =
+          SDValue(CurDAG->getMachineNode(TC32::TANDrr, DL, MVT::i32, Diff, Mask), 0);
+      SDValue Res =
+          SDValue(CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, FalseVal, Bits), 0);
+      if (VT == MVT::i8)
+        Res = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i8, Res), 0);
+      ReplaceNode(Node, Res.getNode());
+      return;
+    }
+    case ISD::SELECT: {
+      EVT VT = Node->getValueType(0);
+      if (VT != MVT::i32 && VT != MVT::i8)
+        break;
+
+      SDValue Cond = Node->getOperand(0);
+      SDValue TrueVal = Node->getOperand(1);
+      SDValue FalseVal = Node->getOperand(2);
+
+      SDValue BoolVal;
+      if (Cond.getOpcode() == ISD::SETCC) {
+        auto *CC = dyn_cast<CondCodeSDNode>(Cond.getOperand(2));
+        if (!CC)
+          break;
+        BoolVal =
+            selectSetCCValue(DL, CC->get(), Cond.getOperand(0), Cond.getOperand(1));
+      } else {
+        if (Cond.getValueType() == MVT::i1)
+          Cond = CurDAG->getNode(ISD::ZERO_EXTEND, DL, MVT::i32, Cond);
+        else if (Cond.getValueType() == MVT::i8)
+          Cond = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Cond), 0);
+        else
+          Cond = ensureValueInRegister(Cond, DL);
+
+        MachineSDNode *Dec =
+            CurDAG->getMachineNode(TC32::TSUBri1, DL, {MVT::i32, MVT::Glue}, {Cond});
+        BoolVal = SDValue(CurDAG->getMachineNode(TC32::TSUBCrr, DL, MVT::i32, Cond,
+                                                 SDValue(Dec, 0), SDValue(Dec, 1)),
+                          0);
+      }
       if (!BoolVal)
         break;
 
@@ -1156,6 +1232,11 @@ public:
       errs() << "Unhandled TC32 ISel node opcode " << Node->getOpcode() << "\n";
       Node->print(errs(), CurDAG);
       errs() << '\n';
+      if (Node->getOpcode() == ISD::BUILD_VECTOR) {
+        errs() << "Full BUILD_VECTOR context:\n";
+        Node->printrFull(errs(), CurDAG);
+        errs() << '\n';
+      }
       report_fatal_error("TC32 instruction selection is only implemented for empty void returns");
     }
 
