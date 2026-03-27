@@ -1354,6 +1354,24 @@ public:
       }
       if (Node->getValueType(0) == MVT::i32 && LD->getMemoryVT() == MVT::i32 &&
           LD->getBasePtr().getValueType() == MVT::i32) {
+        if (matchFrameIndexPlusConst(LD->getBasePtr(), FI, Imm) &&
+            Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {
+          SDValue FIBase = CurDAG->getTargetFrameIndex(FI, MVT::i32);
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADru3, DL,
+                                                   {MVT::i32, MVT::Other},
+                                                   {FIBase,
+                                                    CurDAG->getTargetConstant(Imm, DL, MVT::i32),
+                                                    LD->getChain()}));
+          return;
+        }
+        if (LD->getBasePtr().getOpcode() == ISD::FrameIndex) {
+          int DirectFI = cast<FrameIndexSDNode>(LD->getBasePtr())->getIndex();
+          SDValue FIBase = CurDAG->getTargetFrameIndex(DirectFI, MVT::i32);
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADrr, DL,
+                                                   {MVT::i32, MVT::Other},
+                                                   {FIBase, LD->getChain()}));
+          return;
+        }
         if (matchBasePlusConst(LD->getBasePtr(), Base, Imm) &&
             Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {
           ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADru3, DL,
@@ -1368,29 +1386,6 @@ public:
                                                  {MVT::i32, MVT::Other},
                                                  {Base, LD->getChain()}));
         return;
-      }
-      if (Node->getValueType(0) == MVT::i32 &&
-          matchFrameIndexPlusConst(LD->getBasePtr(), FI, Imm)) {
-        const MachineFrameInfo &MFI = CurDAG->getMachineFunction().getFrameInfo();
-        bool Fixed = MFI.isFixedObjectIndex(FI);
-        int Offset = MFI.getObjectOffset(FI);
-        int StackSize = MFI.getStackSize();
-        int FrameImm = (Fixed ? Offset : Offset + StackSize) + Imm;
-        unsigned Opc = Fixed ? TC32::TLOADspu8 : TC32::TLOADfpu8;
-        if (CurDAG->getSubtarget().getFrameLowering()->hasFP(
-                CurDAG->getMachineFunction()) &&
-            Fixed) {
-          FrameImm += StackSize + 8;
-          Opc = TC32::TLOADfpu8;
-        }
-        if (FrameImm >= 0 && FrameImm <= (Opc == TC32::TLOADspu8 ? 1020 : 252) &&
-            (FrameImm & 3) == 0) {
-          SDValue ImmVal = CurDAG->getTargetConstant(FrameImm, DL, MVT::i32);
-          ReplaceNode(Node, CurDAG->getMachineNode(Opc, DL,
-                                                   {MVT::i32, MVT::Other},
-                                                   {ImmVal, LD->getChain()}));
-          return;
-        }
       }
       break;
     }
@@ -1502,6 +1497,23 @@ public:
       if (ST->getValue().getValueType() == MVT::i32 &&
           ST->getMemoryVT() == MVT::i32 &&
           ST->getBasePtr().getValueType() == MVT::i32) {
+        if (matchFrameIndexPlusConst(ST->getBasePtr(), FI, Imm) &&
+            Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {
+          SDValue FIBase = CurDAG->getTargetFrameIndex(FI, MVT::i32);
+          SmallVector<SDValue, 4> Ops = {ST->getValue(), FIBase,
+                                         CurDAG->getTargetConstant(Imm, DL, MVT::i32),
+                                         ST->getChain()};
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSTOREru3, DL, MVT::Other, Ops));
+          return;
+        }
+        if (ST->getBasePtr().getOpcode() == ISD::FrameIndex) {
+          int DirectFI = cast<FrameIndexSDNode>(ST->getBasePtr())->getIndex();
+          SDValue FIBase = CurDAG->getTargetFrameIndex(DirectFI, MVT::i32);
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSTORErr, DL, MVT::Other,
+                                                   ST->getValue(), FIBase,
+                                                   ST->getChain()));
+          return;
+        }
         if (matchBasePlusConst(ST->getBasePtr(), Base, Imm) &&
             Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {
           SmallVector<SDValue, 4> Ops = {ST->getValue(), Base,
@@ -1514,29 +1526,6 @@ public:
                                                  ST->getValue(), ST->getBasePtr(),
                                                  ST->getChain()));
         return;
-      }
-      if (ST->getValue().getValueType() == MVT::i32 &&
-          matchFrameIndexPlusConst(ST->getBasePtr(), FI, Imm)) {
-        const MachineFrameInfo &MFI = CurDAG->getMachineFunction().getFrameInfo();
-        bool Fixed = MFI.isFixedObjectIndex(FI);
-        int Offset = MFI.getObjectOffset(FI);
-        int StackSize = MFI.getStackSize();
-        int FrameImm = (Fixed ? Offset : Offset + StackSize) + Imm;
-        unsigned Opc = Fixed ? TC32::TSTOREspu8 : TC32::TSTOREfpu8;
-        if (CurDAG->getSubtarget().getFrameLowering()->hasFP(
-                CurDAG->getMachineFunction()) &&
-            Fixed) {
-          FrameImm += StackSize + 8;
-          Opc = TC32::TSTOREfpu8;
-        }
-        if (FrameImm >= 0 && FrameImm <= (Opc == TC32::TSTOREspu8 ? 1020 : 252) &&
-            (FrameImm & 3) == 0) {
-          SDValue ImmVal = CurDAG->getTargetConstant(FrameImm, DL, MVT::i32);
-          ReplaceNode(Node, CurDAG->getMachineNode(Opc, DL, MVT::Other,
-                                                   ST->getValue(), ImmVal,
-                                                   ST->getChain()));
-          return;
-        }
       }
       break;
     }
