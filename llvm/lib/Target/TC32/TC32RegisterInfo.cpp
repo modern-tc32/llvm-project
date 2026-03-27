@@ -5,7 +5,6 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
-#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
@@ -56,9 +55,19 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
   bool Fixed = MFI.isFixedObjectIndex(FI);
   int Offset = MFI.getObjectOffset(FI);
   int StackSize = MFI.getStackSize();
+  int ExtraImm = 0;
+
+  switch (MI.getOpcode()) {
+  case TC32::TLOADru3:
+  case TC32::TSTOREru3:
+    ExtraImm = MI.getOperand(FIOperandNum + 1).getImm();
+    break;
+  default:
+    break;
+  }
 
   unsigned BaseReg = Fixed ? TC32::R13 : TC32::R7;
-  int FrameImm = Fixed ? Offset : Offset + StackSize;
+  int FrameImm = (Fixed ? Offset : Offset + StackSize) + ExtraImm;
   if (TFI->hasFP(MF) && Fixed) {
     BaseReg = TC32::R7;
     FrameImm += StackSize + 8;
@@ -91,6 +100,40 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
         (FrameImm & 3) == 0) {
       MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTOREfpu8));
       MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      return false;
+    }
+    break;
+  }
+  case TC32::TLOADru3: {
+    if (BaseReg == TC32::R13 && FrameImm >= 0 && FrameImm <= 1020 &&
+        (FrameImm & 3) == 0) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TLOADspu8));
+      MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      MI.removeOperand(FIOperandNum + 1);
+      return false;
+    }
+    if (BaseReg == TC32::R7 && FrameImm >= 0 && FrameImm <= 252 &&
+        (FrameImm & 3) == 0) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TLOADfpu8));
+      MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      MI.removeOperand(FIOperandNum + 1);
+      return false;
+    }
+    break;
+  }
+  case TC32::TSTOREru3: {
+    if (BaseReg == TC32::R13 && FrameImm >= 0 && FrameImm <= 1020 &&
+        (FrameImm & 3) == 0) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTOREspu8));
+      MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      MI.removeOperand(FIOperandNum + 1);
+      return false;
+    }
+    if (BaseReg == TC32::R7 && FrameImm >= 0 && FrameImm <= 252 &&
+        (FrameImm & 3) == 0) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTOREfpu8));
+      MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      MI.removeOperand(FIOperandNum + 1);
       return false;
     }
     break;
