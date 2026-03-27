@@ -69,6 +69,15 @@ private:
   void encodeAluGroup(uint8_t *loc, const Relocation &rel, uint64_t val,
                       int group, bool check) const;
 };
+
+static void writeTC32Call(Ctx &ctx, uint8_t *loc, uint64_t val,
+                          const Relocation &rel) {
+  checkInt(ctx, loc, val, 23, rel);
+  uint32_t encImm = static_cast<uint32_t>(val >> 1) & 0x3fffff;
+  write16(ctx, loc, 0x9000 | ((encImm >> 11) & 0x07ff));
+  write16(ctx, loc + 2, 0x9800 | (encImm & 0x07ff));
+}
+
 enum class CodeState { Data = 0, Thumb = 2, Arm = 4 };
 
 struct CmseSGVeneer {
@@ -113,7 +122,7 @@ ARM::ARM(Ctx &ctx) : TargetInfo(ctx) {
   pltEntrySize = 16;
   ipltEntrySize = 16;
   trapInstr = {0xd4, 0xd4, 0xd4, 0xd4};
-  needsThunks = true;
+  needsThunks = ctx.arg.emachine != EM_TC32;
   defaultMaxPageSize = 65536;
 }
 
@@ -498,6 +507,23 @@ void ARM::addPltSymbols(InputSection &isec, uint64_t off) const {
 bool ARM::needsThunk(RelExpr expr, RelType type, const InputFile *file,
                      uint64_t branchAddr, const Symbol &s,
                      int64_t a) const {
+  if (ctx.arg.emachine == EM_TC32) {
+    if (s.isUndefined() && !s.isInPlt(ctx))
+      return false;
+
+    uint64_t dst = (expr == R_PLT_PC) ? s.getPltVA(ctx) : s.getVA(ctx);
+    switch (type) {
+    case R_ARM_THM_CALL:
+    case R_ARM_THM_JUMP24:
+    case R_ARM_THM_JUMP19:
+    case R_ARM_THM_JUMP11:
+    case R_ARM_THM_JUMP8:
+      return !inBranchRange(type, branchAddr, dst + a);
+    default:
+      return false;
+    }
+  }
+
   // If s is an undefined weak symbol and does not have a PLT entry then it will
   // be resolved as a branch to the next instruction. If it is hidden, its
   // binding has been converted to local, so we just check isUndefined() here. A
@@ -795,6 +821,10 @@ void ARM::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
                 ((val >> 1) & 0x07ff)); // imm11
     break;
   case R_ARM_THM_CALL: {
+    if (ctx.arg.emachine == EM_TC32) {
+      writeTC32Call(ctx, loc, val, rel);
+      break;
+    }
     // R_ARM_THM_CALL is used for BL and BLX instructions, for symbols of type
     // STT_FUNC we choose whether to write a BL or BLX depending on the
     // value of bit 0 of Val. With bit 0 == 0 denoting ARM, if the symbol is
