@@ -49,7 +49,7 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i32, Expand);
   setOperationAction(ISD::STACKSAVE, MVT::Other, Expand);
   setOperationAction(ISD::STACKRESTORE, MVT::Other, Expand);
-  setOperationAction(ISD::SHL, MVT::i32, Expand);
+  setOperationAction(ISD::SHL, MVT::i32, Legal);
   setOperationAction(ISD::SHL, MVT::i8, Legal);
   setOperationAction(ISD::SRL, MVT::i32, Legal);
   setOperationAction(ISD::SRL, MVT::i8, Legal);
