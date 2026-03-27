@@ -98,6 +98,21 @@ static bool getFrameIndexReference(const SelectionDAG *DAG, int FI, int64_t Extr
   return Imm >= 0 && Imm <= 255;
 }
 
+static SDValue stripBoolCasts(SDValue V) {
+  while (true) {
+    switch (V.getOpcode()) {
+    case ISD::ZERO_EXTEND:
+    case ISD::SIGN_EXTEND:
+    case ISD::ANY_EXTEND:
+    case ISD::TRUNCATE:
+      V = V.getOperand(0);
+      continue;
+    default:
+      return V;
+    }
+  }
+}
+
 static SDValue materializeConstant(SelectionDAG *DAG, const SDLoc &DL,
                                    uint32_t Value) {
   auto getImm = [&](uint32_t Imm) {
@@ -563,7 +578,7 @@ public:
     }
     case ISD::BRCOND: {
       SDValue Chain = Node->getOperand(0);
-      SDValue Cond = Node->getOperand(1);
+      SDValue Cond = stripBoolCasts(Node->getOperand(1));
       SDValue Dest = Node->getOperand(2);
       if (Cond.getOpcode() != ISD::SETCC) {
         Cond = ensureValueInRegister(Cond, DL);
@@ -789,7 +804,7 @@ public:
       if (VT != MVT::i32 && VT != MVT::i8)
         break;
 
-      SDValue Cond = Node->getOperand(0);
+      SDValue Cond = stripBoolCasts(Node->getOperand(0));
       SDValue TrueVal = Node->getOperand(1);
       SDValue FalseVal = Node->getOperand(2);
 
