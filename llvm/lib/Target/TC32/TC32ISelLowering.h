@@ -23,6 +23,8 @@ public:
 
   const char *getTargetNodeName(unsigned Opcode) const override;
 
+  SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
+
   SDValue LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv,
                                bool IsVarArg,
                                const SmallVectorImpl<ISD::InputArg> &Ins,
