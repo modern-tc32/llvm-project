@@ -170,8 +170,8 @@ public:
     }
 
     SDValue Bias = materializeConstant(CurDAG, DL, 0x80000000u);
-    LHS = SDValue(CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, LHS, Bias), 0);
-    RHS = SDValue(CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, RHS, Bias), 0);
+    LHS = emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, LHS, Bias);
+    RHS = emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, RHS, Bias);
     CCVal = SignedCC;
     return true;
   }
@@ -180,6 +180,145 @@ public:
     if (const auto *CN = dyn_cast<ConstantSDNode>(Value))
       return materializeConstant(CurDAG, DL, static_cast<uint32_t>(CN->getZExtValue()));
     return Value;
+  }
+
+  SDValue emitTwoAddressRR(unsigned Opcode, const SDLoc &DL, EVT VT, SDValue LHS,
+                           SDValue RHS) {
+    LHS = ensureValueInRegister(LHS, DL);
+    RHS = ensureValueInRegister(RHS, DL);
+    SDValue Dst = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, VT, LHS), 0);
+    return SDValue(CurDAG->getMachineNode(Opcode, DL, VT, Dst, RHS), 0);
+  }
+
+  SDValue emitTwoAddressRRGlue(unsigned Opcode, const SDLoc &DL, EVT VT,
+                               SDValue LHS, SDValue RHS, SDValue Glue) {
+    LHS = ensureValueInRegister(LHS, DL);
+    RHS = ensureValueInRegister(RHS, DL);
+    SDValue Dst = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, VT, LHS), 0);
+    return SDValue(CurDAG->getMachineNode(Opcode, DL, VT, Dst, RHS, Glue), 0);
+  }
+
+  SDValue emitByteLoad(SDValue Ptr, SDValue Chain, unsigned Offset,
+                       const SDLoc &DL) {
+    SDValue Base;
+    int64_t Imm = 0;
+    if (matchBasePlusConst(Ptr, Base, Imm) && Imm + Offset >= 0 && Imm + Offset <= 7) {
+      return SDValue(CurDAG->getMachineNode(TC32::TLOADBru3, DL,
+                                            {MVT::i32, MVT::Other},
+                                            {Base,
+                                             CurDAG->getTargetConstant(Imm + Offset, DL,
+                                                                       MVT::i32),
+                                             Chain}),
+                     0);
+    }
+
+    if (Offset == 0) {
+      return SDValue(CurDAG->getMachineNode(TC32::TLOADBrr, DL,
+                                            {MVT::i32, MVT::Other},
+                                            {Ptr, Chain}),
+                     0);
+    }
+
+    return SDValue(CurDAG->getMachineNode(TC32::TLOADBru3, DL,
+                                          {MVT::i32, MVT::Other},
+                                          {Ptr, CurDAG->getTargetConstant(Offset, DL, MVT::i32),
+                                           Chain}),
+                   0);
+  }
+
+  SDValue emitByteStore(SDValue Value, SDValue Ptr, SDValue Chain, unsigned Offset,
+                        const SDLoc &DL) {
+    SDValue Base;
+    int64_t Imm = 0;
+    if (matchBasePlusConst(Ptr, Base, Imm) && Imm + Offset >= 0 && Imm + Offset <= 7) {
+      return SDValue(CurDAG->getMachineNode(TC32::TSTOREBru3, DL, MVT::Other,
+                                            {Value, Base,
+                                             CurDAG->getTargetConstant(Imm + Offset, DL,
+                                                                       MVT::i32),
+                                             Chain}),
+                     0);
+    }
+
+    if (Offset == 0) {
+      return SDValue(CurDAG->getMachineNode(TC32::TSTOREBrr, DL, MVT::Other,
+                                            {Value, Ptr, Chain}),
+                     0);
+    }
+
+    return SDValue(CurDAG->getMachineNode(TC32::TSTOREBru3, DL, MVT::Other,
+                                          {Value, Ptr,
+                                           CurDAG->getTargetConstant(Offset, DL, MVT::i32),
+                                           Chain}),
+                   0);
+  }
+
+  bool trySelectUnalignedI32Load(SDNode *Node, LoadSDNode *LD, const SDLoc &DL) {
+    if (Node->getValueType(0) != MVT::i32 || LD->getMemoryVT() != MVT::i32 ||
+        LD->getAlign().value() >= 4 || LD->getBasePtr().getValueType() != MVT::i32)
+      return false;
+
+    SDValue Ptr = LD->getBasePtr();
+    SDValue Load0 = emitByteLoad(Ptr, LD->getChain(), 0, DL);
+    SDValue Load1 = emitByteLoad(Ptr, Load0.getValue(1), 1, DL);
+    SDValue Load2 = emitByteLoad(Ptr, Load1.getValue(1), 2, DL);
+    SDValue Load3 = emitByteLoad(Ptr, Load2.getValue(1), 3, DL);
+
+    auto Imm = [&](unsigned Value) {
+      return CurDAG->getTargetConstant(Value, DL, MVT::i32);
+    };
+
+    SDValue Byte1Shifted = SDValue(
+        CurDAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, SDValue(Load1.getNode(), 0),
+                               Imm(8)),
+        0);
+    SDValue Byte2Shifted = SDValue(
+        CurDAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, SDValue(Load2.getNode(), 0),
+                               Imm(16)),
+        0);
+    SDValue Byte3Shifted = SDValue(
+        CurDAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, SDValue(Load3.getNode(), 0),
+                               Imm(24)),
+        0);
+
+    SDValue Acc = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32, SDValue(Load0.getNode(), 0),
+                                   Byte1Shifted);
+    Acc = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32, Acc, Byte2Shifted);
+    Acc = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32, Acc, Byte3Shifted);
+
+    CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 0), Acc);
+    CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 1), Load3.getValue(1));
+    CurDAG->RemoveDeadNode(Node);
+    return true;
+  }
+
+  bool trySelectUnalignedI32Store(StoreSDNode *ST, const SDLoc &DL) {
+    if (ST->getValue().getValueType() != MVT::i32 || ST->getMemoryVT() != MVT::i32 ||
+        ST->getAlign().value() >= 4 || ST->getBasePtr().getValueType() != MVT::i32)
+      return false;
+
+    auto Imm = [&](unsigned Value) {
+      return CurDAG->getTargetConstant(Value, DL, MVT::i32);
+    };
+
+    SDValue Value = ST->getValue();
+    SDValue Byte1 = SDValue(CurDAG->getMachineNode(TC32::TSHFTRi5, DL, MVT::i32, Value,
+                                                   Imm(8)),
+                            0);
+    SDValue Byte2 = SDValue(CurDAG->getMachineNode(TC32::TSHFTRi5, DL, MVT::i32, Value,
+                                                   Imm(16)),
+                            0);
+    SDValue Byte3 = SDValue(CurDAG->getMachineNode(TC32::TSHFTRi5, DL, MVT::i32, Value,
+                                                   Imm(24)),
+                            0);
+
+    SDValue Chain0 = emitByteStore(Value, ST->getBasePtr(), ST->getChain(), 0, DL);
+    SDValue Chain1 = emitByteStore(Byte1, ST->getBasePtr(), Chain0, 1, DL);
+    SDValue Chain2 = emitByteStore(Byte2, ST->getBasePtr(), Chain1, 2, DL);
+    SDValue Chain3 = emitByteStore(Byte3, ST->getBasePtr(), Chain2, 3, DL);
+
+    CurDAG->ReplaceAllUsesOfValueWith(SDValue(ST, 0), Chain3);
+    CurDAG->RemoveDeadNode(ST);
+    return true;
   }
 
   SDValue selectSetCCValue(SDLoc DL, ISD::CondCode CCVal, SDValue LHS,
@@ -219,17 +358,15 @@ public:
     auto emitEqZero = [&](SDValue Value) -> SDValue {
       MachineSDNode *Neg =
           CurDAG->getMachineNode(TC32::TNEGrr, DL, {MVT::i32, MVT::Glue}, {Value});
-      return SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, Value,
-                                            SDValue(Neg, 0), SDValue(Neg, 1)),
-                     0);
+      return emitTwoAddressRRGlue(TC32::TADDCrr, DL, MVT::i32, Value,
+                                  SDValue(Neg, 0), SDValue(Neg, 1));
     };
 
     auto emitNeZero = [&](SDValue Value) -> SDValue {
       MachineSDNode *Dec =
           CurDAG->getMachineNode(TC32::TSUBri1, DL, {MVT::i32, MVT::Glue}, {Value});
-      return SDValue(CurDAG->getMachineNode(TC32::TSUBCrr, DL, MVT::i32, Value,
-                                            SDValue(Dec, 0), SDValue(Dec, 1)),
-                     0);
+      return emitTwoAddressRRGlue(TC32::TSUBCrr, DL, MVT::i32, Value,
+                                  SDValue(Dec, 0), SDValue(Dec, 1));
     };
 
     switch (CCVal) {
@@ -279,9 +416,8 @@ public:
           SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
       MachineSDNode *Cmp =
           CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
-      GE = SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
-                                          SDValue(Cmp, 0)),
-                   0);
+      GE = emitTwoAddressRRGlue(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
+                                SDValue(Cmp, 0));
       return emitEqZero(GE);
     }
     case ISD::SETGE: {
@@ -300,9 +436,8 @@ public:
           SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
       MachineSDNode *Cmp =
           CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
-      return SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL,
-                                            SignR, SDValue(Cmp, 0)),
-                     0);
+      return emitTwoAddressRRGlue(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
+                                  SDValue(Cmp, 0));
     }
     case ISD::SETGT: {
       if (HasRConst && RV == 0) {
@@ -311,8 +446,7 @@ public:
             SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, LHS), 0);
         SDValue NonNeg =
             SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, Sign), 0);
-        return SDValue(
-            CurDAG->getMachineNode(TC32::TANDrr, DL, MVT::i32, NonZero, NonNeg), 0);
+        return emitTwoAddressRR(TC32::TANDrr, DL, MVT::i32, NonZero, NonNeg);
       }
       if (HasRConst && RV == -1) {
         SDValue Neg = SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, LHS), 0);
@@ -327,9 +461,8 @@ public:
           SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, RHS), 0);
       MachineSDNode *Cmp =
           CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, RHS, LHS);
-      LE = SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
-                                          SDValue(Cmp, 0)),
-                   0);
+      LE = emitTwoAddressRRGlue(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
+                                SDValue(Cmp, 0));
       return emitEqZero(LE);
     }
     case ISD::SETLE: {
@@ -351,9 +484,8 @@ public:
           SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, RHS), 0);
       MachineSDNode *Cmp =
           CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, RHS, LHS);
-      return SDValue(CurDAG->getMachineNode(TC32::TADDCrr, DL, MVT::i32, SignL,
-                                            SignR, SDValue(Cmp, 0)),
-                     0);
+      return emitTwoAddressRRGlue(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
+                                  SDValue(Cmp, 0));
     }
     default:
       return SDValue();
@@ -384,6 +516,9 @@ public:
     }
 
     if (auto *LD = dyn_cast<LoadSDNode>(Node)) {
+      if (trySelectUnalignedI32Load(Node, LD, DL))
+        return;
+
       SDValue Base;
       int64_t Imm;
       if (Node->getValueType(0) == MVT::i32 && LD->getMemoryVT() == MVT::i8 &&
@@ -731,9 +866,8 @@ public:
                                    TC32::TMOVi8, DL, MVT::i32,
                                    CurDAG->getTargetConstant(0, DL, MVT::i32)),
                                0);
-        SDValue Bit = SDValue(CurDAG->getMachineNode(TC32::TANDrr, DL, MVT::i32,
-                                                     Node->getOperand(0), One),
-                              0);
+        SDValue Bit =
+            emitTwoAddressRR(TC32::TANDrr, DL, MVT::i32, Node->getOperand(0), One);
         ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32,
                                                  Zero, Bit));
         return;
@@ -788,12 +922,9 @@ public:
                              0);
       SDValue Mask =
           SDValue(CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32, Zero, BoolVal), 0);
-      SDValue Diff =
-          SDValue(CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, TrueVal, FalseVal), 0);
-      SDValue Bits =
-          SDValue(CurDAG->getMachineNode(TC32::TANDrr, DL, MVT::i32, Diff, Mask), 0);
-      SDValue Res =
-          SDValue(CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, FalseVal, Bits), 0);
+      SDValue Diff = emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, TrueVal, FalseVal);
+      SDValue Bits = emitTwoAddressRR(TC32::TANDrr, DL, MVT::i32, Diff, Mask);
+      SDValue Res = emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, FalseVal, Bits);
       if (VT == MVT::i8)
         Res = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i8, Res), 0);
       ReplaceNode(Node, Res.getNode());
@@ -825,9 +956,8 @@ public:
 
         MachineSDNode *Dec =
             CurDAG->getMachineNode(TC32::TSUBri1, DL, {MVT::i32, MVT::Glue}, {Cond});
-        BoolVal = SDValue(CurDAG->getMachineNode(TC32::TSUBCrr, DL, MVT::i32, Cond,
-                                                 SDValue(Dec, 0), SDValue(Dec, 1)),
-                          0);
+        BoolVal = emitTwoAddressRRGlue(TC32::TSUBCrr, DL, MVT::i32, Cond,
+                                       SDValue(Dec, 0), SDValue(Dec, 1));
       }
       if (!BoolVal)
         break;
@@ -851,12 +981,9 @@ public:
                              0);
       SDValue Mask =
           SDValue(CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32, Zero, BoolVal), 0);
-      SDValue Diff =
-          SDValue(CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, TrueVal, FalseVal), 0);
-      SDValue Bits =
-          SDValue(CurDAG->getMachineNode(TC32::TANDrr, DL, MVT::i32, Diff, Mask), 0);
-      SDValue Res =
-          SDValue(CurDAG->getMachineNode(TC32::TXORrr, DL, MVT::i32, FalseVal, Bits), 0);
+      SDValue Diff = emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, TrueVal, FalseVal);
+      SDValue Bits = emitTwoAddressRR(TC32::TANDrr, DL, MVT::i32, Diff, Mask);
+      SDValue Res = emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, FalseVal, Bits);
       if (VT == MVT::i8)
         Res = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i8, Res), 0);
       ReplaceNode(Node, Res.getNode());
@@ -922,10 +1049,7 @@ public:
 
         foldNestedConstAnd(LHS, RHS);
         foldNestedConstAnd(RHS, LHS);
-        LHS = ensureValueInRegister(LHS, DL);
-        RHS = ensureValueInRegister(RHS, DL);
-
-        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TANDrr, DL, VT, LHS, RHS));
+        ReplaceNode(Node, emitTwoAddressRR(TC32::TANDrr, DL, VT, LHS, RHS).getNode());
         return;
       }
       break;
@@ -933,9 +1057,9 @@ public:
     case ISD::OR: {
       EVT VT = Node->getValueType(0);
       if (VT == MVT::i32 || VT == MVT::i8) {
-        SDValue LHS = ensureValueInRegister(Node->getOperand(0), DL);
-        SDValue RHS = ensureValueInRegister(Node->getOperand(1), DL);
-        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TORrr, DL, VT, LHS, RHS));
+        SDValue LHS = Node->getOperand(0);
+        SDValue RHS = Node->getOperand(1);
+        ReplaceNode(Node, emitTwoAddressRR(TC32::TORrr, DL, VT, LHS, RHS).getNode());
         return;
       }
       break;
@@ -943,9 +1067,9 @@ public:
     case ISD::MUL: {
       EVT VT = Node->getValueType(0);
       if (VT == MVT::i32 || VT == MVT::i8) {
-        SDValue LHS = ensureValueInRegister(Node->getOperand(0), DL);
-        SDValue RHS = ensureValueInRegister(Node->getOperand(1), DL);
-        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TMULrr, DL, VT, LHS, RHS));
+        SDValue LHS = Node->getOperand(0);
+        SDValue RHS = Node->getOperand(1);
+        ReplaceNode(Node, emitTwoAddressRR(TC32::TMULrr, DL, VT, LHS, RHS).getNode());
         return;
       }
       break;
@@ -960,9 +1084,7 @@ public:
           ReplaceNode(Node, CurDAG->getMachineNode(TC32::TMOVNrr, DL, VT, LHS));
           return;
         }
-        LHS = ensureValueInRegister(LHS, DL);
-        RHS = ensureValueInRegister(RHS, DL);
-        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TXORrr, DL, VT, LHS, RHS));
+        ReplaceNode(Node, emitTwoAddressRR(TC32::TXORrr, DL, VT, LHS, RHS).getNode());
         return;
       }
       break;
@@ -1113,6 +1235,9 @@ public:
     }
     case ISD::STORE: {
       auto *ST = cast<StoreSDNode>(Node);
+      if (trySelectUnalignedI32Store(ST, DL))
+        return;
+
       SDValue Base;
       int64_t Imm;
       int FI;
