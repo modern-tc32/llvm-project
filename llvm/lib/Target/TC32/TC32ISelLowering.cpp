@@ -84,12 +84,12 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setBuiltinLibcall(RTLIB::MEMMOVE, "memmove");
   setBuiltinLibcall(RTLIB::MEMCMP, "memcmp");
   setBuiltinLibcall(RTLIB::BCMP, "bcmp");
-  MaxStoresPerMemset = 0;
-  MaxStoresPerMemsetOptSize = 0;
-  MaxStoresPerMemcpy = 0;
-  MaxStoresPerMemcpyOptSize = 0;
-  MaxStoresPerMemmove = 0;
-  MaxStoresPerMemmoveOptSize = 0;
+  MaxStoresPerMemset = 8;
+  MaxStoresPerMemsetOptSize = 8;
+  MaxStoresPerMemcpy = 8;
+  MaxStoresPerMemcpyOptSize = 8;
+  MaxStoresPerMemmove = 8;
+  MaxStoresPerMemmoveOptSize = 8;
   MaxLoadsPerMemcmp = 0;
   MaxLoadsPerMemcmpOptSize = 0;
   setOperationAction(ISD::AssertSext, MVT::i32, Legal);

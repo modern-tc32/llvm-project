@@ -6,6 +6,8 @@
 #include "llvm/CodeGen/AsmPrinter.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Module.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCSymbol.h"
@@ -35,6 +37,20 @@ public:
       : AsmPrinter(TM, std::move(Streamer), ID) {}
 
   StringRef getPassName() const override { return "TC32 Assembly Printer"; }
+
+  bool doInitialization(Module &M) override {
+    const DataLayout &DL = M.getDataLayout();
+    for (GlobalVariable &GV : M.globals()) {
+      if (GV.isDeclaration())
+        continue;
+      if (GV.getAlign().valueOrOne() >= Align(4))
+        continue;
+      if (DL.getTypeAllocSize(GV.getValueType()) < 4)
+        continue;
+      GV.setAlignment(Align(4));
+    }
+    return AsmPrinter::doInitialization(M);
+  }
 
   bool runOnMachineFunction(MachineFunction &MF) override {
     SetupMachineFunction(MF);

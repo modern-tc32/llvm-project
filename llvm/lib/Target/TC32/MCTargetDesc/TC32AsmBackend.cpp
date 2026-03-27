@@ -99,7 +99,7 @@ public:
     }
 
     if (Fixup.getKind() == TC32::fixup_tc32_branch8) {
-      if (Value == 0)
+      if (!IsResolved)
         return;
       if ((Value & 1) != 0)
         report_fatal_error("TC32 branch target must be 2-byte aligned");
@@ -117,7 +117,7 @@ public:
     }
 
     if (Fixup.getKind() == TC32::fixup_tc32_jump11) {
-      if (Value == 0)
+      if (!IsResolved)
         return;
       if ((Value & 1) != 0)
         report_fatal_error("TC32 jump target must be 2-byte aligned");
@@ -135,6 +135,8 @@ public:
     }
 
     if (Fixup.getKind() == TC32::fixup_tc32_ldr_pcrel_u8) {
+      if (!IsResolved)
+        return;
       uint64_t PC = Asm->getFragmentOffset(F) + Fixup.getOffset() + 4;
       uint64_t Base = alignDown(PC, uint64_t(4));
       if (Value < Base)
@@ -158,7 +160,7 @@ public:
       return;
     }
 
-    if (Value == 0)
+    if (!IsResolved)
       return;
 
     if ((Value & 1) != 0)
