@@ -94,7 +94,7 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
 
     const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
     DebugLoc DL = MI.getDebugLoc();
-    if (BaseReg == TC32::R13) {
+    if (BaseReg == TC32::R13 && (EffectiveImm & 3) == 0 && EffectiveImm <= 252) {
       BuildMI(MBB, II, DL, TII->get(TC32::TADDdstspu8), TC32::R6).addImm(EffectiveImm);
     } else {
       BuildMI(MBB, II, DL, TII->get(TC32::TMOVrr), TC32::R6).addReg(BaseReg);
@@ -113,7 +113,7 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
     DebugLoc DL = FrameMI.getDebugLoc();
     MachineBasicBlock::iterator InsertPt = FrameMI;
 
-    if (BaseReg == TC32::R13 && FrameImm <= 255) {
+    if (BaseReg == TC32::R13 && FrameImm <= 252 && (FrameImm & 3) == 0) {
       BuildMI(MBB, InsertPt, DL, TII->get(TC32::TADDdstspu8), DestReg)
           .addImm(FrameImm);
       return true;

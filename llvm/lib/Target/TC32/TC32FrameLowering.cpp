@@ -25,6 +25,10 @@ void TC32FrameLowering::emitPrologue(MachineFunction &MF,
     DL = I->getDebugLoc();
 
   const bool UseFP = hasFP(MF);
+  const bool SaveLR = !UseFP && MF.getFrameInfo().hasCalls();
+  assert((!SaveLR || isR7Reserved(MF)) &&
+         "TC32 non-FP LR save requires reserved r7");
+  const unsigned SaveLRScratch = TC32::R7;
 
   if (MF.getFunction().isVarArg())
     BuildMI(MBB, I, DL,
@@ -34,9 +38,22 @@ void TC32FrameLowering::emitPrologue(MachineFunction &MF,
     BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_R7_LR));
 
   int StackSize = MF.getFrameInfo().getStackSize();
+  if (SaveLR)
+    StackSize += 4;
   if (StackSize > 0)
     BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TSUBspu8))
-        .addImm(StackSize);
+        .addImm(StackSize)
+        .setMIFlag(MachineInstr::FrameSetup);
+
+  if (SaveLR) {
+    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TMOVrr),
+            SaveLRScratch)
+        .addReg(TC32::R14);
+    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TSTOREspu8))
+        .addReg(SaveLRScratch)
+        .addImm(StackSize - 4)
+        .setMIFlag(MachineInstr::FrameSetup);
+  }
 
   if (UseFP) {
     BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TADDdstspu8),
@@ -53,6 +70,10 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
     DL = I->getDebugLoc();
 
   const bool UseFP = hasFP(MF);
+  const bool SaveLR = !UseFP && MF.getFrameInfo().hasCalls();
+  assert((!SaveLR || isR7Reserved(MF)) &&
+         "TC32 non-FP LR restore requires reserved r7");
+  const unsigned SaveLRScratch = TC32::R7;
   const bool ReturnsR0 =
       I != MBB.end() && I->getOpcode() == TC32::TRET_R0;
 
@@ -63,6 +84,15 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
   }
 
   int StackSize = MF.getFrameInfo().getStackSize();
+  if (SaveLR) {
+    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TLOADspu8),
+            SaveLRScratch)
+        .addImm(StackSize);
+    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TMOVrr),
+            TC32::R14)
+        .addReg(SaveLRScratch);
+    StackSize += 4;
+  }
   if (StackSize > 0)
     BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TADDspu8))
         .addImm(StackSize);
