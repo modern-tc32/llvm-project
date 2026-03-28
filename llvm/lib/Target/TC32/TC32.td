@@ -3,7 +3,10 @@ include "llvm/Target/Target.td"
 class Proc<string Name, list<SubtargetFeature> Features>
     : Processor<Name, NoItineraries, Features>;
 
-def : Proc<"generic", []>;
+def FeatureReserveR7 : SubtargetFeature<"reserve-r7", "ReserveR7", "true",
+                                        "Treat r7 as an ABI-reserved register">;
+
+def : Proc<"generic", [FeatureReserveR7]>;
 
 include "TC32RegisterInfo.td"
 include "TC32InstrInfo.td"

@@ -13,6 +13,7 @@ protected:
 
 public:
   explicit TC32FrameLowering(const TC32Subtarget &STI);
+  bool isR7Reserved(const MachineFunction &MF) const;
 
   void emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;

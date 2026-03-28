@@ -1,5 +1,6 @@
 ; RUN: llc -mtriple=tc32 -O2 < %s | FileCheck %s
 ; RUN: llc -mtriple=tc32 -O2 -filetype=obj -o /dev/null %s
+; RUN: llc -mtriple=tc32 -mattr=-reserve-r7 -O2 < %s | FileCheck %s --check-prefix=UNRESERVED
 
 define ptr @mempool_init_like(ptr %pool, ptr %mem, i32 %itemsize, i32 %itemcount) local_unnamed_addr {
 entry:
@@ -42,6 +43,8 @@ ret:
 
 ; CHECK-LABEL: mempool_init_like:
 ; CHECK: tsub	sp, #20
-; CHECK: tstorer	r7, [sp, #4]
-; CHECK: tloadr	r7, [sp, #4]
 ; CHECK-NOT: tpush	{r7, lr}
+; CHECK-NOT: r7
+; UNRESERVED-LABEL: mempool_init_like:
+; UNRESERVED: tstorer	r7, [sp, #4]
+; UNRESERVED: tloadr	r7, [sp, #4]

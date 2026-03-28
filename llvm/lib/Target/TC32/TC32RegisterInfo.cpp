@@ -1,6 +1,7 @@
 #include "TC32RegisterInfo.h"
 #include "MCTargetDesc/TC32MCTargetDesc.h"
 #include "TC32FrameLowering.h"
+#include "TC32Subtarget.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -15,19 +16,15 @@ using namespace llvm;
 TC32RegisterInfo::TC32RegisterInfo() : TC32GenRegisterInfo(TC32::R15) {}
 
 const MCPhysReg *TC32RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
-  static const MCPhysReg CalleeSavedRegsNoFP[] = {
+  static const MCPhysReg CalleeSavedRegsNoFP[] = {TC32::R4, TC32::R5, TC32::R6, 0};
+  static const MCPhysReg CalleeSavedRegsNoReservedR7[] = {
       TC32::R4,
       TC32::R5,
       TC32::R6,
       TC32::R7,
       0};
-  static const MCPhysReg CalleeSavedRegsWithFP[] = {
-      TC32::R4,
-      TC32::R5,
-      TC32::R6,
-      0};
-  if (MF && MF->getSubtarget().getFrameLowering()->hasFP(*MF))
-    return CalleeSavedRegsWithFP;
+  if (MF && !MF->getSubtarget<TC32Subtarget>().isR7Reserved(*MF))
+    return CalleeSavedRegsNoReservedR7;
   return CalleeSavedRegsNoFP;
 }
 
@@ -35,13 +32,13 @@ BitVector TC32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   Reserved.set(TC32::CPSR);
   Reserved.set(TC32::R6);
+  if (MF.getSubtarget<TC32Subtarget>().isR7Reserved(MF))
+    Reserved.set(TC32::R7);
   Reserved.set(TC32::R8);
   Reserved.set(TC32::R9);
   Reserved.set(TC32::R10);
   Reserved.set(TC32::R11);
   Reserved.set(TC32::R12);
-  if (MF.getSubtarget().getFrameLowering()->hasFP(MF))
-    Reserved.set(TC32::R7);
   Reserved.set(TC32::R13);
   Reserved.set(TC32::R14);
   Reserved.set(TC32::R15);

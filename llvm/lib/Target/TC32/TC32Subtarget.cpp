@@ -1,8 +1,10 @@
 #include "TC32Subtarget.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/LibcallLoweringInfo.h"
 
 using namespace llvm;
 
+#define GET_SUBTARGETINFO_ENUM
 #define GET_SUBTARGETINFO_TARGET_DESC
 #define GET_SUBTARGETINFO_CTOR
 #include "TC32GenSubtargetInfo.inc"
@@ -39,4 +41,13 @@ void TC32Subtarget::initLibcallLoweringInfo(LibcallLoweringInfo &Info) const {
   setBuiltinLibcall(RTLIB::MEMMOVE, "memmove");
   setBuiltinLibcall(RTLIB::MEMCMP, "memcmp");
   setBuiltinLibcall(RTLIB::BCMP, "bcmp");
+}
+
+bool TC32Subtarget::isR7Reserved(const MachineFunction &MF) const {
+  // TC32 firmware uses r7 as a special low-level register in practice.
+  // Keep the policy explicit at the subtarget level so frame lowering and
+  // register allocation make the same decision, similar to ARM's split
+  // reserved-frame-pointer logic.
+  (void)MF;
+  return ReserveR7;
 }
