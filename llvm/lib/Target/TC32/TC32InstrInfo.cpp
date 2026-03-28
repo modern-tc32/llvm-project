@@ -40,7 +40,8 @@ bool TC32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
       FrameImm += StackSize + 8;
     }
 
-    if (BaseReg == TC32::R13 && FrameImm >= 0 && FrameImm <= 255) {
+    if (BaseReg == TC32::R13 && FrameImm >= 0 && FrameImm <= 252 &&
+        (FrameImm & 3) == 0) {
       BuildMI(MBB, MI, MI.getDebugLoc(), get(TC32::TADDdstspu8), DstReg)
           .addImm(FrameImm);
     } else {
