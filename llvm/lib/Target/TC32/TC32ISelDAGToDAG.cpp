@@ -956,34 +956,8 @@ public:
     }
     case ISD::FrameIndex: {
       int FI = cast<FrameIndexSDNode>(Node)->getIndex();
-      unsigned BaseReg;
-      int Imm;
-      if (!getFrameIndexReference(CurDAG, FI, 0, BaseReg, Imm))
-        report_fatal_error("TC32 frame index address does not fit in immediate range");
-
-      if (BaseReg == TC32::R13) {
-        ReplaceNode(Node, CurDAG->getMachineNode(
-                              TC32::TADDdstspu8, DL, MVT::i32,
-                              CurDAG->getTargetConstant(Imm, DL, MVT::i32)));
-        return;
-      }
-
-      SDValue Base = CurDAG->getRegister(BaseReg, MVT::i32);
-      if (Imm == 0) {
-        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Base));
-        return;
-      }
-      if (Imm <= 7) {
-        ReplaceNode(Node, CurDAG->getMachineNode(
-                              TC32::TADDSrru8, DL, MVT::i32, Base,
-                              CurDAG->getTargetConstant(Imm, DL, MVT::i32)));
-        return;
-      }
-
-      SDValue Tmp = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Base), 0);
-      ReplaceNode(Node, CurDAG->getMachineNode(
-                            TC32::TADDSri8, DL, MVT::i32, Tmp,
-                            CurDAG->getTargetConstant(Imm, DL, MVT::i32)));
+      SDValue TFI = CurDAG->getTargetFrameIndex(FI, MVT::i32);
+      ReplaceNode(Node, CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, TFI));
       return;
     }
     case ISD::GlobalAddress: {
