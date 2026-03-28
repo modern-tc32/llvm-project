@@ -31,6 +31,7 @@ public:
                             Register DestReg, int FrameIndex,
                             const TargetRegisterClass *RC, Register VReg,
                             unsigned SubReg, MachineInstr::MIFlag Flags) const override;
+  bool expandPostRAPseudo(MachineInstr &MI) const override;
 
   unsigned getInstSizeInBytes(const MachineInstr &MI) const override;
 };

@@ -1,10 +1,14 @@
 #include "TC32ISelLowering.h"
+#include "TC32InstrInfo.h"
 #include "MCTargetDesc/TC32MCTargetDesc.h"
 #include "TC32Subtarget.h"
 #include "llvm/CodeGen/CallingConvLower.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/TargetOpcodes.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -52,9 +56,9 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SHL, MVT::i32, Legal);
   setOperationAction(ISD::SHL, MVT::i8, Custom);
   setOperationAction(ISD::SRL, MVT::i32, Legal);
-  setOperationAction(ISD::SRL, MVT::i8, Legal);
+  setOperationAction(ISD::SRL, MVT::i8, Custom);
   setOperationAction(ISD::SRA, MVT::i32, Legal);
-  setOperationAction(ISD::SRA, MVT::i8, Legal);
+  setOperationAction(ISD::SRA, MVT::i8, Custom);
   setOperationAction(ISD::SDIV, MVT::i32, LibCall);
   setOperationAction(ISD::UDIV, MVT::i32, LibCall);
   setOperationAction(ISD::SREM, MVT::i32, LibCall);
@@ -103,6 +107,8 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::BRCOND, MVT::Other, Legal);
   setOperationAction(ISD::BR_CC, MVT::i32, Legal);
   setOperationAction(ISD::BR_CC, MVT::i8, Legal);
+  setOperationAction(ISD::FrameIndex, MVT::i32, Custom);
+  setOperationAction(ISD::VASTART, MVT::Other, Custom);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i8, MVT::i1, Promote);
   setLoadExtAction(ISD::EXTLOAD, MVT::i8, MVT::i1, Promote);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MVT::i8, Legal);
@@ -135,6 +141,8 @@ static SDValue normalizeIncomingScalarArgI32(SelectionDAG &DAG, const SDLoc &DL,
 
 const char *TC32TargetLowering::getTargetNodeName(unsigned Opcode) const {
   switch (Opcode) {
+  case TC32ISD::FRAMEADDR:
+    return "TC32ISD::FRAMEADDR";
   case TC32ISD::CALL:
     return "TC32ISD::CALL";
   case TC32ISD::RET_FLAG:
@@ -144,42 +152,163 @@ const char *TC32TargetLowering::getTargetNodeName(unsigned Opcode) const {
   }
 }
 
+static SDValue lowerI8Shift(SDValue Op, SelectionDAG &DAG) {
+  SDLoc DL(Op);
+  const unsigned Opcode = Op.getOpcode();
+  SDValue LHS = Op.getOperand(0);
+  SDValue RHS = Op.getOperand(1);
+
+  auto ConstI8 = [&](unsigned Value) {
+    return DAG.getConstant(Value & 0xffu, DL, MVT::i8);
+  };
+  auto ConstI32 = [&](unsigned Value) {
+    return DAG.getConstant(Value, DL, MVT::i32);
+  };
+
+  SDValue LHS32 = Opcode == ISD::SRA
+                      ? DAG.getNode(ISD::SIGN_EXTEND, DL, MVT::i32, LHS)
+                      : DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, LHS);
+  auto emitShift = [&](unsigned Shift) {
+    SDValue Shifted32 = DAG.getNode(Opcode, DL, MVT::i32, LHS32, ConstI32(Shift));
+    return DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, Shifted32);
+  };
+
+  if (auto *RC = dyn_cast<ConstantSDNode>(RHS)) {
+    unsigned Shift = RC->getZExtValue();
+    if (Shift >= 8) {
+      if (Opcode == ISD::SRA)
+        return emitShift(7);
+      return ConstI8(0);
+    }
+    return emitShift(Shift);
+  }
+
+  SDValue Default = Opcode == ISD::SRA ? emitShift(7) : ConstI8(0);
+  SDValue Res = Default;
+  for (int I = 7; I >= 0; --I) {
+    SDValue Shifted8 = emitShift(I);
+    Res = DAG.getNode(ISD::SELECT_CC, DL, MVT::i8, RHS, ConstI8(I), Shifted8,
+                      Res, DAG.getCondCode(ISD::SETEQ));
+  }
+  return Res;
+}
+
+MachineBasicBlock *
+TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
+                                                MachineBasicBlock *MBB) const {
+  unsigned ShiftOpc;
+  switch (MI.getOpcode()) {
+  case TC32::TVARSHL:
+    ShiftOpc = TC32::TSHFTLi5;
+    break;
+  case TC32::TVARSRL:
+    ShiftOpc = TC32::TSHFTRi5;
+    break;
+  case TC32::TVARSRA:
+    ShiftOpc = TC32::TASRi5;
+    break;
+  default:
+    llvm_unreachable("unexpected custom inserter opcode");
+  }
+
+  MachineFunction *MF = MBB->getParent();
+  MachineRegisterInfo &MRI = MF->getRegInfo();
+  const TargetInstrInfo &TII = *MF->getSubtarget().getInstrInfo();
+  const TargetRegisterClass *RC = &TC32::LoGR32RegClass;
+  const DebugLoc DL = MI.getDebugLoc();
+
+  Register Dst = MI.getOperand(0).getReg();
+  Register Src = MI.getOperand(1).getReg();
+  Register Amt = MI.getOperand(2).getReg();
+
+  MachineBasicBlock *OrigMBB = MBB;
+  MachineBasicBlock *LoopMBB = MF->CreateMachineBasicBlock(OrigMBB->getBasicBlock());
+  MachineBasicBlock *DoneMBB = MF->CreateMachineBasicBlock(OrigMBB->getBasicBlock());
+
+  auto InsertPos = std::next(MachineFunction::iterator(OrigMBB));
+  MF->insert(InsertPos, LoopMBB);
+  MF->insert(std::next(MachineFunction::iterator(LoopMBB)), DoneMBB);
+
+  MachineBasicBlock::iterator MII(MI);
+  MachineBasicBlock::iterator NextMII = std::next(MII);
+  DoneMBB->splice(DoneMBB->begin(), OrigMBB, NextMII, OrigMBB->end());
+  DoneMBB->transferSuccessorsAndUpdatePHIs(OrigMBB);
+
+  OrigMBB->addSuccessor(DoneMBB);
+  OrigMBB->addSuccessor(LoopMBB);
+  LoopMBB->addSuccessor(LoopMBB);
+  LoopMBB->addSuccessor(DoneMBB);
+
+  Register LoopVal = MRI.createVirtualRegister(RC);
+  Register LoopCnt = MRI.createVirtualRegister(RC);
+  Register ShiftedVal = MRI.createVirtualRegister(RC);
+  Register DecCnt = MRI.createVirtualRegister(RC);
+
+  BuildMI(*OrigMBB, MII, DL, TII.get(TC32::TCMPri0)).addReg(Amt);
+  BuildMI(*OrigMBB, MII, DL, TII.get(TC32::TJEQ)).addMBB(DoneMBB);
+  BuildMI(*OrigMBB, MII, DL, TII.get(TC32::TJ)).addMBB(LoopMBB);
+
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(TargetOpcode::PHI), LoopVal)
+      .addReg(Src)
+      .addMBB(OrigMBB)
+      .addReg(ShiftedVal)
+      .addMBB(LoopMBB);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(TargetOpcode::PHI), LoopCnt)
+      .addReg(Amt)
+      .addMBB(OrigMBB)
+      .addReg(DecCnt)
+      .addMBB(LoopMBB);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(ShiftOpc), ShiftedVal)
+      .addReg(LoopVal)
+      .addImm(1);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(TC32::TSUBri1), DecCnt)
+      .addReg(LoopCnt);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(TC32::TCMPri0)).addReg(DecCnt);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(TC32::TJNE)).addMBB(LoopMBB);
+  BuildMI(*LoopMBB, LoopMBB->end(), DL, TII.get(TC32::TJ)).addMBB(DoneMBB);
+
+  BuildMI(*DoneMBB, DoneMBB->begin(), DL, TII.get(TargetOpcode::PHI), Dst)
+      .addReg(Src)
+      .addMBB(OrigMBB)
+      .addReg(ShiftedVal)
+      .addMBB(LoopMBB);
+
+  MI.eraseFromParent();
+  return DoneMBB;
+}
+
 SDValue TC32TargetLowering::LowerOperation(SDValue Op,
                                            SelectionDAG &DAG) const {
   SDLoc DL(Op);
 
   switch (Op.getOpcode()) {
+  case ISD::FrameIndex: {
+    int FI = cast<FrameIndexSDNode>(Op)->getIndex();
+    return DAG.getNode(TC32ISD::FRAMEADDR, DL, MVT::i32,
+                       DAG.getConstant(FI, DL, MVT::i32),
+                       DAG.getConstant(0, DL, MVT::i32));
+  }
+  case ISD::VASTART: {
+    MachineFunction &MF = DAG.getMachineFunction();
+    const unsigned NumFixedArgs = MF.getFunction().arg_size();
+    const EVT PtrVT = getPointerTy(DAG.getDataLayout());
+    const int FI =
+        MF.getFrameInfo().CreateFixedObject(4, static_cast<int>(NumFixedArgs * 4), true);
+    SDValue FR = DAG.getFrameIndex(FI, PtrVT);
+    const Value *SV = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
+    return DAG.getStore(Op.getOperand(0), DL, FR, Op.getOperand(1),
+                        MachinePointerInfo(SV));
+  }
   case ISD::SHL: {
-    if (Op.getValueType() != MVT::i8)
-      break;
-
-    SDValue LHS = Op.getOperand(0);
-    SDValue RHS = Op.getOperand(1);
-
-    SDValue LHS32 = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, LHS);
-    auto ConstI8 = [&](unsigned Value) {
-      return DAG.getConstant(Value & 0xffu, DL, MVT::i8);
-    };
-    auto ConstI32 = [&](unsigned Value) {
-      return DAG.getConstant(Value, DL, MVT::i32);
-    };
-
-    if (auto *RC = dyn_cast<ConstantSDNode>(RHS)) {
-      unsigned Shift = RC->getZExtValue();
-      if (Shift >= 8)
-        return ConstI8(0);
-      SDValue Shifted32 = DAG.getNode(ISD::SHL, DL, MVT::i32, LHS32, ConstI32(Shift));
-      return DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, Shifted32);
-    }
-
-    SDValue Res = ConstI8(0);
-    for (int I = 7; I >= 0; --I) {
-      SDValue Shifted32 = DAG.getNode(ISD::SHL, DL, MVT::i32, LHS32, ConstI32(I));
-      SDValue Shifted8 = DAG.getNode(ISD::TRUNCATE, DL, MVT::i8, Shifted32);
-      Res = DAG.getNode(ISD::SELECT_CC, DL, MVT::i8, RHS, ConstI8(I), Shifted8,
-                        Res, DAG.getCondCode(ISD::SETEQ));
-    }
-    return Res;
+    if (Op.getValueType() == MVT::i8)
+      return lowerI8Shift(Op, DAG);
+    break;
+  }
+  case ISD::SRL:
+  case ISD::SRA: {
+    if (Op.getValueType() == MVT::i8)
+      return lowerI8Shift(Op, DAG);
+    break;
   }
   default:
     break;
@@ -194,8 +323,6 @@ SDValue TC32TargetLowering::LowerFormalArguments(
     SelectionDAG &DAG, SmallVectorImpl<SDValue> &InVals) const {
   (void)CallConv;
   static const MCPhysReg ArgRegs[] = {TC32::R0, TC32::R1, TC32::R2, TC32::R3};
-  if (IsVarArg)
-    report_fatal_error("TC32 varargs are not implemented yet");
 
   MachineFunction &MF = DAG.getMachineFunction();
   for (unsigned I = 0; I < Ins.size(); ++I) {
@@ -213,8 +340,9 @@ SDValue TC32TargetLowering::LowerFormalArguments(
         InVals.push_back(Arg);
       Chain = Arg.getValue(1);
     } else {
-      int FI = MF.getFrameInfo().CreateFixedObject(4, (I - std::size(ArgRegs)) * 4,
-                                                   /*IsImmutable=*/true);
+      int FI = MF.getFrameInfo().CreateFixedObject(
+          4, (IsVarArg ? 16 : 0) + (I - std::size(ArgRegs)) * 4,
+          /*IsImmutable=*/true);
       SDValue FIN = DAG.getFrameIndex(FI, MVT::i32);
       SDValue Load =
           DAG.getLoad(MVT::i32, dl, Chain, FIN, MachinePointerInfo::getFixedStack(MF, FI));
@@ -352,11 +480,8 @@ bool TC32TargetLowering::CanLowerReturn(
     const Type *RetTy) const {
   (void)CallConv;
   (void)MF;
-  (void)IsVarArg;
   (void)Context;
   (void)RetTy;
-  if (IsVarArg)
-    return false;
   if (Outs.size() > 1)
     return false;
   return Outs.empty() || Outs[0].VT == MVT::i32 || Outs[0].VT == MVT::i16 ||
@@ -369,8 +494,7 @@ SDValue TC32TargetLowering::LowerReturn(
     const SmallVectorImpl<SDValue> &OutVals, const SDLoc &dl,
     SelectionDAG &DAG) const {
   (void)CallConv;
-  if (IsVarArg)
-    report_fatal_error("TC32 varargs are not implemented yet");
+  (void)IsVarArg;
 
   SDValue Glue;
   if (!Outs.empty()) {

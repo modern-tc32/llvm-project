@@ -18,6 +18,7 @@ const MCPhysReg *TC32RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF)
   static const MCPhysReg CalleeSavedRegs[] = {
       TC32::R4,
       TC32::R5,
+      TC32::R6,
       0};
   (void)MF;
   return CalleeSavedRegs;
@@ -99,24 +100,24 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
     return true;
   };
 
-  auto materializeFrameAddrInPlace = [&](Register DestReg) -> bool {
+  auto materializeFrameAddr = [&](MachineInstr &FrameMI, Register DestReg) -> bool {
     if (FrameImm < 0)
       return false;
 
     const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
-    DebugLoc DL = MI.getDebugLoc();
+    DebugLoc DL = FrameMI.getDebugLoc();
+    MachineBasicBlock::iterator InsertPt = FrameMI;
 
     if (BaseReg == TC32::R13 && FrameImm <= 255) {
-      MI.setDesc(TII->get(TC32::TADDdstspu8));
-      MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      BuildMI(MBB, InsertPt, DL, TII->get(TC32::TADDdstspu8), DestReg)
+          .addImm(FrameImm);
       return true;
     }
 
-    MI.setDesc(TII->get(TC32::TMOVrr));
-    MI.getOperand(FIOperandNum).ChangeToRegister(BaseReg, false);
+    BuildMI(MBB, InsertPt, DL, TII->get(TC32::TMOVrr), DestReg).addReg(BaseReg);
 
     int Remaining = FrameImm;
-    MachineBasicBlock::iterator InsertPt = std::next(II);
+    InsertPt = std::next(InsertPt);
     while (Remaining > 255) {
       BuildMI(MBB, InsertPt, DL, TII->get(TC32::TADDSri8), DestReg)
           .addReg(DestReg)
@@ -134,8 +135,10 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
   switch (MI.getOpcode()) {
   case TC32::TMOVrr: {
     Register DestReg = MI.getOperand(0).getReg();
-    if (materializeFrameAddrInPlace(DestReg))
-      return false;
+    if (materializeFrameAddr(MI, DestReg)) {
+      MI.eraseFromParent();
+      return true;
+    }
     break;
   }
   case TC32::TLOADBrr: {

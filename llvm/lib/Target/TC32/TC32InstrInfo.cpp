@@ -18,6 +18,55 @@ TC32InstrInfo::TC32InstrInfo(const TC32Subtarget &STI)
     : TC32GenInstrInfo(STI, RI, TC32::ADJCALLSTACKDOWN, TC32::ADJCALLSTACKUP),
       RI() {}
 
+bool TC32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
+  switch (MI.getOpcode()) {
+  case TC32::TFRAMEADDR: {
+    assert(MI.getOperand(0).isReg() && "unexpected TFRAMEADDR def");
+    Register DstReg = MI.getOperand(0).getReg();
+    MachineBasicBlock &MBB = *MI.getParent();
+    MachineFunction &MF = *MBB.getParent();
+    const MachineFrameInfo &MFI = MF.getFrameInfo();
+    const TargetFrameLowering *TFI = MF.getSubtarget().getFrameLowering();
+
+    int FI = MI.getOperand(1).getImm();
+    int ExtraImm = MI.getOperand(2).getImm();
+    bool Fixed = MFI.isFixedObjectIndex(FI);
+    int Offset = MFI.getObjectOffset(FI);
+    int StackSize = MFI.getStackSize();
+    unsigned BaseReg = Fixed ? TC32::R13 : TC32::R7;
+    int FrameImm = (Fixed ? Offset : Offset + StackSize) + ExtraImm;
+    if (TFI->hasFP(MF) && Fixed) {
+      BaseReg = TC32::R7;
+      FrameImm += StackSize + 8;
+    }
+
+    if (BaseReg == TC32::R13 && FrameImm >= 0 && FrameImm <= 255) {
+      BuildMI(MBB, MI, MI.getDebugLoc(), get(TC32::TADDdstspu8), DstReg)
+          .addImm(FrameImm);
+    } else {
+      BuildMI(MBB, MI, MI.getDebugLoc(), get(TC32::TMOVrr), DstReg).addReg(BaseReg);
+      int Remaining = FrameImm;
+      while (Remaining > 255) {
+        BuildMI(MBB, MI, MI.getDebugLoc(), get(TC32::TADDSri8), DstReg)
+            .addReg(DstReg)
+            .addImm(255);
+        Remaining -= 255;
+      }
+      if (Remaining > 0) {
+        BuildMI(MBB, MI, MI.getDebugLoc(), get(TC32::TADDSri8), DstReg)
+            .addReg(DstReg)
+            .addImm(Remaining);
+      }
+    }
+
+    MI.eraseFromParent();
+    return true;
+  }
+  default:
+    return false;
+  }
+}
+
 void TC32InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                 MachineBasicBlock::iterator I,
                                 const DebugLoc &DL, Register DestReg,

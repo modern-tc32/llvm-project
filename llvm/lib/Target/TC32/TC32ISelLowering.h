@@ -11,6 +11,7 @@ class TC32Subtarget;
 namespace TC32ISD {
 enum NodeType : unsigned {
   FIRST_NUMBER = ISD::BUILTIN_OP_END,
+  FRAMEADDR,
   CALL,
   RET_FLAG
 };
@@ -22,6 +23,9 @@ public:
                               const TC32Subtarget &STI);
 
   const char *getTargetNodeName(unsigned Opcode) const override;
+
+  MachineBasicBlock *EmitInstrWithCustomInserter(MachineInstr &MI,
+                                                 MachineBasicBlock *MBB) const override;
 
   SDValue LowerOperation(SDValue Op, SelectionDAG &DAG) const override;
 
