@@ -18,6 +18,9 @@
 
 using namespace llvm;
 
+#define GET_REGINFO_ENUM
+#include "TC32GenRegisterInfo.inc"
+
 #define GET_INSTRINFO_ENUM
 #include "TC32GenInstrInfo.inc"
 
@@ -70,8 +73,12 @@ public:
       switch (Opc) {
       case TC32::TJEQ:
       case TC32::TJNE:
+      case TC32::TJCS:
+      case TC32::TJCC:
       case TC32::TJGE:
       case TC32::TJLT:
+      case TC32::TJHI:
+      case TC32::TJLS:
       case TC32::TJGT:
       case TC32::TJLE:
         return true;
@@ -84,8 +91,12 @@ public:
       switch (Opc) {
       case TC32::TJEQ: return TC32::TJNE;
       case TC32::TJNE: return TC32::TJEQ;
+      case TC32::TJCS: return TC32::TJCC;
+      case TC32::TJCC: return TC32::TJCS;
       case TC32::TJGE: return TC32::TJLT;
       case TC32::TJLT: return TC32::TJGE;
+      case TC32::TJHI: return TC32::TJLS;
+      case TC32::TJLS: return TC32::TJHI;
       case TC32::TJGT: return TC32::TJLE;
       case TC32::TJLE: return TC32::TJGT;
       default: llvm_unreachable("not a TC32 conditional branch");
@@ -122,6 +133,13 @@ public:
       DenseMap<const MachineInstr *, uint64_t> InstOffsets;
       computeOffsets(BlockOffsets, InstOffsets);
 
+      auto canReachWithJump11 = [&](uint64_t FromOffset, uint64_t ToOffset) {
+        int64_t JumpDelta =
+            static_cast<int64_t>(ToOffset) - static_cast<int64_t>(FromOffset);
+        int64_t JumpImm = (JumpDelta - 4) >> 1;
+        return isInt<11>(JumpImm);
+      };
+
       for (MachineBasicBlock &MBB : MF) {
         MachineInstr *CondBr = nullptr;
         MachineInstr *UncondBr = nullptr;
@@ -130,16 +148,37 @@ public:
           if (MI.isDebugInstr())
             continue;
           unsigned Opc = MI.getOpcode();
-          if (!CondBr && isCondBranch(Opc)) {
-            CondBr = &MI;
-            continue;
-          }
-          if (!UncondBr && Opc == TC32::TJ) {
+        if (!CondBr && isCondBranch(Opc)) {
+          CondBr = &MI;
+          continue;
+        }
+        if (!UncondBr && Opc == TC32::TJ) {
             UncondBr = &MI;
             continue;
           }
           if (!MI.isTerminator())
             break;
+        }
+
+        if (UncondBr && UncondBr->getParent() == &MBB) {
+          auto *JumpTarget = UncondBr->getOperand(0).getMBB();
+          uint64_t JumpOff = InstOffsets.lookup(UncondBr);
+          uint64_t JumpTargetOff = BlockOffsets.lookup(JumpTarget);
+          int64_t JumpDelta =
+              static_cast<int64_t>(JumpTargetOff) - static_cast<int64_t>(JumpOff);
+          int64_t JumpImm = (JumpDelta - 4) >> 1;
+          if (!isInt<11>(JumpImm)) {
+            auto InsertPt = UncondBr->getIterator();
+            BuildMI(MBB, InsertPt, UncondBr->getDebugLoc(),
+                    TII->get(TC32::TLOADaddr), TC32::R6)
+                .addMBB(JumpTarget);
+            BuildMI(MBB, InsertPt, UncondBr->getDebugLoc(), TII->get(TC32::TJEXr))
+                .addReg(TC32::R6);
+            UncondBr->eraseFromParent();
+            LocalChange = true;
+            Changed = true;
+            break;
+          }
         }
 
         if (!CondBr)
@@ -171,12 +210,6 @@ public:
           AddedSize += TII->get(TC32::TJ).getSize();
         if (TrueOffset > BrOffset)
           TrueOffset += AddedSize;
-        int64_t JumpDelta =
-            static_cast<int64_t>(TrueOffset) - static_cast<int64_t>(JumpOffset);
-        int64_t JumpImm = (JumpDelta - 4) >> 1;
-        if (!isInt<11>(JumpImm))
-          continue;
-
         MachineBasicBlock *ShimMBB =
             MF.CreateMachineBasicBlock(MBB.getBasicBlock());
         MF.insert(std::next(MBB.getIterator()), ShimMBB);
@@ -185,16 +218,38 @@ public:
         CondBr->setDesc(TII->get(invertCondBranch(OldOpc)));
         CondBr->getOperand(0).setMBB(ShimMBB);
 
-        if (UncondBr && UncondBr->getParent() == &MBB) {
-          UncondBr->getOperand(0).setMBB(TrueMBB);
+        if (canReachWithJump11(JumpOffset, TrueOffset)) {
+          if (UncondBr && UncondBr->getParent() == &MBB) {
+            UncondBr->getOperand(0).setMBB(TrueMBB);
+          } else {
+            BuildMI(MBB, std::next(CondBr->getIterator()), CondBr->getDebugLoc(),
+                    TII->get(TC32::TJ))
+                .addMBB(TrueMBB);
+          }
         } else {
-          BuildMI(MBB, std::next(CondBr->getIterator()), CondBr->getDebugLoc(),
-                  TII->get(TC32::TJ))
+          if (UncondBr && UncondBr->getParent() == &MBB)
+            UncondBr->eraseFromParent();
+          auto InsertPt = std::next(CondBr->getIterator());
+          BuildMI(MBB, InsertPt, CondBr->getDebugLoc(), TII->get(TC32::TLOADaddr), TC32::R6)
               .addMBB(TrueMBB);
+          BuildMI(MBB, InsertPt, CondBr->getDebugLoc(), TII->get(TC32::TJEXr))
+              .addReg(TC32::R6);
         }
 
-        BuildMI(*ShimMBB, ShimMBB->end(), CondBr->getDebugLoc(), TII->get(TC32::TJ))
-            .addMBB(FalseMBB);
+        uint64_t ShimOffset = BlockOffsets.lookup(&MBB) + AddedSize;
+        uint64_t FalseOffset = BlockOffsets.lookup(FalseMBB);
+        if (FalseOffset > BlockOffsets.lookup(&MBB))
+          FalseOffset += AddedSize;
+        if (canReachWithJump11(ShimOffset, FalseOffset)) {
+          BuildMI(*ShimMBB, ShimMBB->end(), CondBr->getDebugLoc(), TII->get(TC32::TJ))
+              .addMBB(FalseMBB);
+        } else {
+          BuildMI(*ShimMBB, ShimMBB->end(), CondBr->getDebugLoc(),
+                  TII->get(TC32::TLOADaddr), TC32::R6)
+              .addMBB(FalseMBB);
+          BuildMI(*ShimMBB, ShimMBB->end(), CondBr->getDebugLoc(), TII->get(TC32::TJEXr))
+              .addReg(TC32::R6);
+        }
 
         SmallVector<MachineBasicBlock *, 4> OldSuccs(MBB.successors());
         for (MachineBasicBlock *Succ : OldSuccs)
@@ -227,6 +282,11 @@ public:
   void addIRPasses() override {
     addPass(createAtomicExpandLegacyPass());
     TargetPassConfig::addIRPasses();
+  }
+
+  FunctionPass *createTargetRegisterAllocator(bool Optimized) override {
+    (void)Optimized;
+    return createBasicRegisterAllocator();
   }
 
   bool addInstSelector() override {

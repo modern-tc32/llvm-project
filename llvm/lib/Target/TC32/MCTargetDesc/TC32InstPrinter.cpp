@@ -17,8 +17,20 @@ void TC32InstPrinter::printInst(const MCInst *MI, uint64_t Address,
                                 StringRef Annot, const MCSubtargetInfo &STI,
                                 raw_ostream &O) {
   switch (MI->getOpcode()) {
+  case TC32::TPUSH_R0_R1_R2_R3:
+    O << "tpush\t{r0, r1, r2, r3}";
+    printAnnotation(O, Annot);
+    return;
   case TC32::TPUSH_R7_LR:
     O << "tpush\t{r7, lr}";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TPOP_R7:
+    O << "tpop\t{r7}";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TPOP_R3:
+    O << "tpop\t{r3}";
     printAnnotation(O, Annot);
     return;
   case TC32::TPOP_R7_PC:
@@ -69,6 +81,11 @@ void TC32InstPrinter::printInst(const MCInst *MI, uint64_t Address,
     return;
   case TC32::TRET_R0:
     O << "tmov\tpc, lr";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TJEXr:
+    O << "tjex\t";
+    printOperand(MI, 0, O);
     printAnnotation(O, Annot);
     return;
   case TC32::TLOADrr:

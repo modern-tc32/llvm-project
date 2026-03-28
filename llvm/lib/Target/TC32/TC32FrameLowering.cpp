@@ -22,6 +22,10 @@ void TC32FrameLowering::emitPrologue(MachineFunction &MF,
   if (I != MBB.end())
     DL = I->getDebugLoc();
 
+  if (MF.getFunction().isVarArg())
+    BuildMI(MBB, I, DL,
+            MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_R0_R1_R2_R3));
+
   BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_R7_LR));
 
   int StackSize = MF.getFrameInfo().getStackSize();
@@ -57,7 +61,17 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
       (I->getOpcode() == TC32::TRET || I->getOpcode() == TC32::TRET_R0))
     I = MBB.erase(I);
 
-  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R7_PC));
+  if (!MF.getFunction().isVarArg()) {
+    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R7_PC));
+    return;
+  }
+
+  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R7));
+  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R3));
+  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TADDspu8))
+      .addImm(16);
+  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TJEXr))
+      .addReg(TC32::R3);
 }
 
 bool TC32FrameLowering::hasReservedCallFrame(const MachineFunction &MF) const {

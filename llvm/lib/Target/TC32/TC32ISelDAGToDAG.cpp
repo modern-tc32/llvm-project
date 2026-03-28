@@ -32,7 +32,7 @@ static bool matchBasePlusConst(SDValue Ptr, SDValue &Base, int64_t &Imm) {
 
 static bool matchFrameIndexPlusConst(SDValue Ptr, int &FI, int64_t &Imm) {
   Imm = 0;
-  if (Ptr.getOpcode() == ISD::FrameIndex) {
+  if (Ptr.getOpcode() == ISD::FrameIndex || Ptr.getOpcode() == ISD::TargetFrameIndex) {
     FI = cast<FrameIndexSDNode>(Ptr)->getIndex();
     return true;
   }
@@ -40,7 +40,8 @@ static bool matchFrameIndexPlusConst(SDValue Ptr, int &FI, int64_t &Imm) {
     return false;
 
   auto match = [&](SDValue MaybeFI, SDValue MaybeConst) {
-    if (MaybeFI.getOpcode() != ISD::FrameIndex)
+    if (MaybeFI.getOpcode() != ISD::FrameIndex &&
+        MaybeFI.getOpcode() != ISD::TargetFrameIndex)
       return false;
     auto *CN = dyn_cast<ConstantSDNode>(MaybeConst);
     if (!CN)
@@ -202,6 +203,16 @@ public:
   explicit TC32DAGToDAGISel(TC32TargetMachine &TM, CodeGenOptLevel OptLevel)
       : SelectionDAGISel(TM, OptLevel) {}
 
+  bool SelectFrameAddr(SDValue N, SDValue &Base, SDValue &Off) {
+    int FI = 0;
+    int64_t Imm = 0;
+    if (!matchFrameIndexPlusConst(N, FI, Imm))
+      return false;
+    Base = CurDAG->getTargetFrameIndex(FI, MVT::i32);
+    Off = CurDAG->getTargetConstant(Imm, SDLoc(N), MVT::i32);
+    return true;
+  }
+
   bool normalizeUnsignedCompare(const SDLoc &DL, ISD::CondCode &CCVal,
                                 SDValue &LHS, SDValue &RHS) {
     ISD::CondCode SignedCC;
@@ -227,6 +238,33 @@ public:
     RHS = emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, RHS, Bias);
     CCVal = SignedCC;
     return true;
+  }
+
+  static unsigned getBranchOpcodeForCond(ISD::CondCode CCVal) {
+    switch (CCVal) {
+    case ISD::SETEQ:
+      return TC32::TJEQ;
+    case ISD::SETNE:
+      return TC32::TJNE;
+    case ISD::SETUGE:
+      return TC32::TJCS;
+    case ISD::SETULT:
+      return TC32::TJCC;
+    case ISD::SETUGT:
+      return TC32::TJHI;
+    case ISD::SETULE:
+      return TC32::TJLS;
+    case ISD::SETGE:
+      return TC32::TJGE;
+    case ISD::SETLT:
+      return TC32::TJLT;
+    case ISD::SETGT:
+      return TC32::TJGT;
+    case ISD::SETLE:
+      return TC32::TJLE;
+    default:
+      return 0;
+    }
   }
 
   SDValue ensureValueInRegister(SDValue Value, const SDLoc &DL) {
@@ -796,31 +834,7 @@ public:
       ISD::CondCode CCVal = CC->get();
 
       prepareCompareOperands(DL, CCVal, LHS, RHS);
-      normalizeUnsignedCompare(DL, CCVal, LHS, RHS);
-
-      unsigned BrOpc = 0;
-      switch (CCVal) {
-      case ISD::SETEQ:
-        BrOpc = TC32::TJEQ;
-        break;
-      case ISD::SETNE:
-        BrOpc = TC32::TJNE;
-        break;
-      case ISD::SETGE:
-        BrOpc = TC32::TJGE;
-        break;
-      case ISD::SETLT:
-        BrOpc = TC32::TJLT;
-        break;
-      case ISD::SETGT:
-        BrOpc = TC32::TJGT;
-        break;
-      case ISD::SETLE:
-        BrOpc = TC32::TJLE;
-        break;
-      default:
-        break;
-      }
+      unsigned BrOpc = getBranchOpcodeForCond(CCVal);
       if (BrOpc == 0)
         break;
 
@@ -884,31 +898,7 @@ public:
         CCVal = ISD::getSetCCInverse(CCVal, Cond.getOperand(0).getValueType());
 
       prepareCompareOperands(DL, CCVal, LHS, RHS);
-      normalizeUnsignedCompare(DL, CCVal, LHS, RHS);
-
-      unsigned BrOpc = 0;
-      switch (CCVal) {
-      case ISD::SETEQ:
-        BrOpc = TC32::TJEQ;
-        break;
-      case ISD::SETNE:
-        BrOpc = TC32::TJNE;
-        break;
-      case ISD::SETGE:
-        BrOpc = TC32::TJGE;
-        break;
-      case ISD::SETLT:
-        BrOpc = TC32::TJLT;
-        break;
-      case ISD::SETGT:
-        BrOpc = TC32::TJGT;
-        break;
-      case ISD::SETLE:
-        BrOpc = TC32::TJLE;
-        break;
-      default:
-        break;
-      }
+      unsigned BrOpc = getBranchOpcodeForCond(CCVal);
       if (BrOpc == 0)
         break;
 
@@ -954,10 +944,15 @@ public:
       }
       break;
     }
-    case ISD::FrameIndex: {
-      int FI = cast<FrameIndexSDNode>(Node)->getIndex();
-      SDValue TFI = CurDAG->getTargetFrameIndex(FI, MVT::i32);
-      ReplaceNode(Node, CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, TFI));
+    case TC32ISD::FRAMEADDR: {
+      auto *FIN = dyn_cast<ConstantSDNode>(Node->getOperand(0));
+      auto *OffN = dyn_cast<ConstantSDNode>(Node->getOperand(1));
+      if (!FIN || !OffN)
+        break;
+      SDValue FI = CurDAG->getTargetConstant(FIN->getSExtValue(), DL, MVT::i32);
+      SDValue Off = CurDAG->getTargetConstant(OffN->getSExtValue(), DL, MVT::i32);
+      ReplaceNode(Node, CurDAG->getMachineNode(TC32::TFRAMEADDR, DL, MVT::i32, FI,
+                                               Off));
       return;
     }
     case ISD::GlobalAddress: {
@@ -1244,6 +1239,12 @@ public:
                                                        RC->getZExtValue(), DL, MVT::i32)));
           return;
         }
+        if (VT == MVT::i32) {
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TVARSHL, DL, VT,
+                                                   Node->getOperand(0),
+                                                   ensureValueInRegister(Node->getOperand(1), DL)));
+          return;
+        }
       }
       break;
     }
@@ -1263,6 +1264,12 @@ public:
                                                        RC->getZExtValue(), DL, MVT::i32)));
           return;
         }
+        if (VT == MVT::i32) {
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TVARSRL, DL, VT,
+                                                   Node->getOperand(0),
+                                                   ensureValueInRegister(Node->getOperand(1), DL)));
+          return;
+        }
       }
       break;
     }
@@ -1280,6 +1287,12 @@ public:
                                                    Node->getOperand(0),
                                                    CurDAG->getTargetConstant(
                                                        RC->getZExtValue(), DL, MVT::i32)));
+          return;
+        }
+        if (VT == MVT::i32) {
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TVARSRA, DL, VT,
+                                                   Node->getOperand(0),
+                                                   ensureValueInRegister(Node->getOperand(1), DL)));
           return;
         }
       }
@@ -1523,11 +1536,6 @@ public:
       }
       report_fatal_error("TC32 instruction selection is only implemented for empty void returns");
     }
-
-    errs() << "Unhandled TC32 ISel node opcode " << Node->getOpcode() << "\n";
-    Node->print(errs(), CurDAG);
-    errs() << '\n';
-    report_fatal_error("TC32 instruction selection does not handle this node yet");
   }
 };
 

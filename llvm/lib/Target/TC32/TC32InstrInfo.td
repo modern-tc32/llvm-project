@@ -32,9 +32,35 @@ def ADJCALLSTACKUP : Pseudo<(outs), (ins i32imm:$amt1, i32imm:$amt2),
                             "#ADJCALLSTACKUP $amt1, $amt2">;
 }
 
+def TFRAMEADDR : Pseudo<(outs LoGR32:$dst), (ins i32imm:$fi, i32imm:$offset),
+                        "#TFRAMEADDR $dst, $fi, $offset">;
+
+def TVARSHL : Pseudo<(outs LoGR32:$dst), (ins LoGR32:$src, LoGR32:$amt),
+                     "#TVARSHL $dst, $src, $amt",
+                     [(set i32:$dst, (shl i32:$src, i32:$amt))]> {
+  let usesCustomInserter = 1;
+}
+
+def TVARSRL : Pseudo<(outs LoGR32:$dst), (ins LoGR32:$src, LoGR32:$amt),
+                     "#TVARSRL $dst, $src, $amt",
+                     [(set i32:$dst, (srl i32:$src, i32:$amt))]> {
+  let usesCustomInserter = 1;
+}
+
+def TVARSRA : Pseudo<(outs LoGR32:$dst), (ins LoGR32:$src, LoGR32:$amt),
+                     "#TVARSRA $dst, $src, $amt",
+                     [(set i32:$dst, (sra i32:$src, i32:$amt))]> {
+  let usesCustomInserter = 1;
+}
+
 def TPUSH_R7_LR : TC32Inst<(outs), (ins), "tpush\t{r7, lr}"> {
   let Defs = [R13];
   let Uses = [R7, R13, R14];
+}
+
+def TPUSH_R0_R1_R2_R3 : TC32Inst<(outs), (ins), "tpush\t{r0, r1, r2, r3}"> {
+  let Defs = [R13];
+  let Uses = [R0, R1, R2, R3, R13];
 }
 
 def TPOP_R7_PC : TC32Inst<(outs), (ins), "tpop\t{r7, pc}"> {
@@ -43,6 +69,16 @@ def TPOP_R7_PC : TC32Inst<(outs), (ins), "tpop\t{r7, pc}"> {
   let isReturn = 1;
   let isTerminator = 1;
   let isBarrier = 1;
+}
+
+def TPOP_R7 : TC32Inst<(outs), (ins), "tpop\t{r7}"> {
+  let Defs = [R7, R13];
+  let Uses = [R13];
+}
+
+def TPOP_R3 : TC32Inst<(outs), (ins), "tpop\t{r3}"> {
+  let Defs = [R3, R13];
+  let Uses = [R13];
 }
 
 def TJL : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
@@ -67,12 +103,32 @@ def TJNE : TC32Inst<(outs), (ins brtarget:$dst), "tjne\t$dst"> {
   let isTerminator = 1;
 }
 
+def TJCS : TC32Inst<(outs), (ins brtarget:$dst), "tjcs\t$dst"> {
+  let isBranch = 1;
+  let isTerminator = 1;
+}
+
+def TJCC : TC32Inst<(outs), (ins brtarget:$dst), "tjcc\t$dst"> {
+  let isBranch = 1;
+  let isTerminator = 1;
+}
+
 def TJGE : TC32Inst<(outs), (ins brtarget:$dst), "tjge\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
 }
 
 def TJLT : TC32Inst<(outs), (ins brtarget:$dst), "tjlt\t$dst"> {
+  let isBranch = 1;
+  let isTerminator = 1;
+}
+
+def TJHI : TC32Inst<(outs), (ins brtarget:$dst), "tjhi\t$dst"> {
+  let isBranch = 1;
+  let isTerminator = 1;
+}
+
+def TJLS : TC32Inst<(outs), (ins brtarget:$dst), "tjls\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
 }
@@ -107,6 +163,13 @@ def TRET_R0 : TC32Inst<(outs), (ins), "tmov\tpc, lr"> {
   let isTerminator = 1;
   let isBarrier = 1;
   let Uses = [R0, R14];
+}
+
+def TJEXr : TC32Inst<(outs), (ins GR32:$src), "tjex\t$src"> {
+  let Defs = [R15];
+  let isReturn = 1;
+  let isTerminator = 1;
+  let isBarrier = 1;
 }
 
 def TMOVrr : TC32Inst<(outs GR32:$dst), (ins GR32:$src), "tmov\t$dst, $src">;

@@ -349,8 +349,17 @@ public:
 
     uint16_t Bits = 0;
     switch (MI.getOpcode()) {
+    case TC32::TPUSH_R0_R1_R2_R3:
+      Bits = 0x640F;
+      break;
     case TC32::TPUSH_R7_LR:
       Bits = 0x6580;
+      break;
+    case TC32::TPOP_R7:
+      Bits = 0x6C80;
+      break;
+    case TC32::TPOP_R3:
+      Bits = 0x6C08;
       break;
     case TC32::TPOP_R7_PC:
       Bits = 0x6D80;
@@ -375,8 +384,12 @@ public:
       break;
     case TC32::TJEQ:
     case TC32::TJNE:
+    case TC32::TJCS:
+    case TC32::TJCC:
     case TC32::TJGE:
     case TC32::TJLT:
+    case TC32::TJHI:
+    case TC32::TJLS:
     case TC32::TJGT:
     case TC32::TJLE:
     case TC32::TJ: {
@@ -390,8 +403,12 @@ public:
       switch (MI.getOpcode()) {
       case TC32::TJEQ: Bits = 0xC000; break;
       case TC32::TJNE: Bits = 0xC100; break;
+      case TC32::TJCS: Bits = 0xC200; break;
+      case TC32::TJCC: Bits = 0xC300; break;
       case TC32::TJGE: Bits = 0xCA00; break;
       case TC32::TJLT: Bits = 0xCB00; break;
+      case TC32::TJHI: Bits = 0xC800; break;
+      case TC32::TJLS: Bits = 0xC900; break;
       case TC32::TJGT: Bits = 0xCC00; break;
       case TC32::TJLE: Bits = 0xCD00; break;
       case TC32::TJ:   Bits = 0x8000; break;
@@ -402,6 +419,10 @@ public:
     case TC32::TRET:
     case TC32::TRET_R0:
       Bits = 0x06F7;
+      break;
+    case TC32::TJEXr:
+      Bits = static_cast<uint16_t>(0x0700u |
+                                   (getRegEncoding(MI.getOperand(0).getReg()) << 4));
       break;
     case TC32::TMOVrr:
       Bits = encodeTMOVrr(MI);
