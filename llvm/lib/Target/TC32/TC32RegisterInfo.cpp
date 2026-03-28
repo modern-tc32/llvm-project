@@ -99,7 +99,45 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
     return true;
   };
 
+  auto materializeFrameAddrInPlace = [&](Register DestReg) -> bool {
+    if (FrameImm < 0)
+      return false;
+
+    const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+    DebugLoc DL = MI.getDebugLoc();
+
+    if (BaseReg == TC32::R13 && FrameImm <= 255) {
+      MI.setDesc(TII->get(TC32::TADDdstspu8));
+      MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      return true;
+    }
+
+    MI.setDesc(TII->get(TC32::TMOVrr));
+    MI.getOperand(FIOperandNum).ChangeToRegister(BaseReg, false);
+
+    int Remaining = FrameImm;
+    MachineBasicBlock::iterator InsertPt = std::next(II);
+    while (Remaining > 255) {
+      BuildMI(MBB, InsertPt, DL, TII->get(TC32::TADDSri8), DestReg)
+          .addReg(DestReg)
+          .addImm(255);
+      Remaining -= 255;
+    }
+    if (Remaining > 0) {
+      BuildMI(MBB, InsertPt, DL, TII->get(TC32::TADDSri8), DestReg)
+          .addReg(DestReg)
+          .addImm(Remaining);
+    }
+    return true;
+  };
+
   switch (MI.getOpcode()) {
+  case TC32::TMOVrr: {
+    Register DestReg = MI.getOperand(0).getReg();
+    if (materializeFrameAddrInPlace(DestReg))
+      return false;
+    break;
+  }
   case TC32::TLOADBrr: {
     if (FrameImm >= 0 && FrameImm <= 7) {
       MI.setDesc(MF.getSubtarget().getInstrInfo()->get(
