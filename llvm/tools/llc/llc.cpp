@@ -31,6 +31,7 @@
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/LLVMRemarkStreamer.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
@@ -65,6 +66,13 @@
 #include <memory>
 #include <optional>
 using namespace llvm;
+
+static std::optional<bool> getModuleFlagBool(const Module &M, StringRef Key) {
+  if (const auto *CI =
+          mdconst::extract_or_null<ConstantInt>(M.getModuleFlag(Key)))
+    return CI->getZExtValue() != 0;
+  return std::nullopt;
+}
 
 static codegen::RegisterCodeGenFlags CGF;
 static codegen::RegisterMTuneFlag MTF;

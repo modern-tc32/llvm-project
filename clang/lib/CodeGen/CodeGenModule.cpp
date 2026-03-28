@@ -1141,6 +1141,12 @@ void CodeGenModule::Release() {
   if (CodeGenOpts.Dwarf64)
     getModule().addModuleFlag(llvm::Module::Max, "DWARF64", 1);
 
+  if (CodeGenOpts.FunctionSections)
+    getModule().addModuleFlag(llvm::Module::Error, "function-sections", 1);
+
+  if (CodeGenOpts.DataSections)
+    getModule().addModuleFlag(llvm::Module::Error, "data-sections", 1);
+
   if (Context.getLangOpts().SemanticInterposition)
     // Require various optimization to respect semantic interposition.
     getModule().setSemanticInterposition(true);
