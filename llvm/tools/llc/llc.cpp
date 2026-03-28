@@ -31,6 +31,7 @@
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
 #include "llvm/IR/LLVMRemarkStreamer.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
@@ -65,6 +66,13 @@
 #include <memory>
 #include <optional>
 using namespace llvm;
+
+static std::optional<bool> getModuleFlagBool(const Module &M, StringRef Key) {
+  if (const auto *CI =
+          mdconst::extract_or_null<ConstantInt>(M.getModuleFlag(Key)))
+    return CI->getZExtValue() != 0;
+  return std::nullopt;
+}
 
 static codegen::RegisterCodeGenFlags CGF;
 static codegen::RegisterSaveStatsFlag SSF;
@@ -644,6 +652,12 @@ static int compileModule(char **argv, SmallVectorImpl<PassPlugin> &PluginList,
       Target->setCodeModel(*CM_IR);
     if (std::optional<uint64_t> LDT = codegen::getExplicitLargeDataThreshold())
       Target->setLargeDataThreshold(*LDT);
+    if (!codegen::getExplicitFunctionSections())
+      if (std::optional<bool> FS = getModuleFlagBool(*M, "function-sections"))
+        Target->Options.FunctionSections = *FS;
+    if (!codegen::getExplicitDataSections())
+      if (std::optional<bool> DS = getModuleFlagBool(*M, "data-sections"))
+        Target->Options.DataSections = *DS;
   } else {
     TheTriple = Triple(Triple::normalize(TargetTriple));
     if (TheTriple.getTriple().empty())
