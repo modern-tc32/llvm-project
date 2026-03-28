@@ -90,7 +90,10 @@ static bool getFrameIndexReference(const SelectionDAG *DAG, int FI, int64_t Extr
   int Offset = MFI.getObjectOffset(FI);
   int StackSize = MFI.getStackSize();
 
-  BaseReg = Fixed ? TC32::R13 : TC32::R7;
+  BaseReg = DAG->getSubtarget().getFrameLowering()->hasFP(
+                DAG->getMachineFunction())
+                ? TC32::R7
+                : TC32::R13;
   Imm = (Fixed ? Offset : Offset + StackSize) + ExtraImm;
   if (DAG->getSubtarget().getFrameLowering()->hasFP(DAG->getMachineFunction()) &&
       Fixed) {
@@ -165,6 +168,82 @@ static SDValue stripBoolCond(SDValue V, bool &Invert) {
       return V;
     }
   }
+}
+
+static bool decodeBooleanSelectCC(SDValue V, SDValue &LHS, SDValue &RHS,
+                                  ISD::CondCode &CCVal, bool &Invert) {
+  V = stripBoolCasts(V);
+
+  while (true) {
+    switch (V.getOpcode()) {
+    case ISD::ZERO_EXTEND:
+    case ISD::SIGN_EXTEND:
+    case ISD::ANY_EXTEND:
+    case ISD::TRUNCATE:
+      V = V.getOperand(0);
+      continue;
+    case ISD::XOR:
+      if (matchConstInt(V.getOperand(0), 1)) {
+        Invert = !Invert;
+        V = V.getOperand(1);
+        continue;
+      }
+      if (matchConstInt(V.getOperand(1), 1)) {
+        Invert = !Invert;
+        V = V.getOperand(0);
+        continue;
+      }
+      return false;
+    case ISD::AND:
+      if (matchConstInt(V.getOperand(0), 1)) {
+        V = V.getOperand(1);
+        continue;
+      }
+      if (matchConstInt(V.getOperand(1), 1)) {
+        V = V.getOperand(0);
+        continue;
+      }
+      return false;
+    default:
+      break;
+    }
+    break;
+  }
+
+  if (V.getOpcode() == ISD::SETCC) {
+    auto *CC = dyn_cast<CondCodeSDNode>(V.getOperand(2));
+    if (!CC)
+      return false;
+    LHS = V.getOperand(0);
+    RHS = V.getOperand(1);
+    CCVal = CC->get();
+    return true;
+  }
+
+  if (V.getOpcode() != ISD::SELECT_CC)
+    return false;
+
+  auto *CC = dyn_cast<CondCodeSDNode>(V.getOperand(4));
+  if (!CC)
+    return false;
+
+  SDValue TrueVal = V.getOperand(2);
+  SDValue FalseVal = V.getOperand(3);
+  if (matchConstInt(TrueVal, 1) && matchConstInt(FalseVal, 0)) {
+    LHS = V.getOperand(0);
+    RHS = V.getOperand(1);
+    CCVal = CC->get();
+    return true;
+  }
+  if (matchConstInt(TrueVal, 0) && matchConstInt(FalseVal, 1)) {
+    LHS = V.getOperand(0);
+    RHS = V.getOperand(1);
+    CCVal = CC->get();
+    Invert = !Invert;
+    return true;
+  }
+
+  return false;
 }
 
 static SDValue materializeConstant(SelectionDAG *DAG, const SDLoc &DL,
@@ -468,6 +547,30 @@ public:
     return true;
   }
 
+  bool trySelectExtI16Load(SDNode *Node, LoadSDNode *LD, const SDLoc &DL) {
+    if (Node->getValueType(0) != MVT::i32 || LD->getMemoryVT() != MVT::i16 ||
+        (LD->getExtensionType() != ISD::ZEXTLOAD &&
+         LD->getExtensionType() != ISD::EXTLOAD) ||
+        LD->getBasePtr().getValueType() != MVT::i32)
+      return false;
+
+    SDValue Ptr = LD->getBasePtr();
+    SDValue Load0 = emitByteLoad(Ptr, LD->getChain(), 0, DL);
+    SDValue Load1 = emitByteLoad(Ptr, Load0.getValue(1), 1, DL);
+
+    SDValue Byte1Shifted = SDValue(
+        CurDAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, SDValue(Load1.getNode(), 0),
+                               CurDAG->getTargetConstant(8, DL, MVT::i32)),
+        0);
+    SDValue Acc = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32, SDValue(Load0.getNode(), 0),
+                                   Byte1Shifted);
+
+    CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 0), Acc);
+    CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 1), Load1.getValue(1));
+    CurDAG->RemoveDeadNode(Node);
+    return true;
+  }
+
   bool trySelectUnalignedI32Store(StoreSDNode *ST, const SDLoc &DL) {
     if (ST->getValue().getValueType() != MVT::i32 || ST->getMemoryVT() != MVT::i32 ||
         ST->getAlign().value() >= 4 || ST->getBasePtr().getValueType() != MVT::i32)
@@ -500,162 +603,18 @@ public:
 
   SDValue selectSetCCValue(SDLoc DL, ISD::CondCode CCVal, SDValue LHS,
                            SDValue RHS) {
-    SDValue OrigLHS = LHS;
-    SDValue OrigRHS = RHS;
-
-    auto isConst = [](SDValue V, int64_t &Value) {
-      if (const auto *CN = dyn_cast<ConstantSDNode>(V)) {
-        Value = CN->getSExtValue();
-        return true;
-      }
-      return false;
-    };
-
-    int64_t LV = 0, RV = 0;
-    bool HasLConst = isConst(OrigLHS, LV);
-    bool HasRConst = isConst(OrigRHS, RV);
-
-    bool SignExtend = isSignedCompare(CCVal);
-    LHS = extendIntegerForCompare(LHS, DL, SignExtend);
-    RHS = extendIntegerForCompare(RHS, DL, SignExtend);
-    if (!LHS || !RHS)
-      return SDValue();
-
+    prepareCompareOperands(DL, CCVal, LHS, RHS);
     normalizeUnsignedCompare(DL, CCVal, LHS, RHS);
 
-    auto emitNeZero = [&](SDValue Value) -> SDValue {
-      SDValue Neg = SDValue(CurDAG->getMachineNode(TC32::TNEGrr, DL, MVT::i32, Value), 0);
-      SDValue NonZeroBits = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32, Value, Neg);
-      return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, NonZeroBits), 0);
-    };
-
-    auto emitEqZero = [&](SDValue Value) -> SDValue {
-      SDValue NonZero = emitNeZero(Value);
-      SDValue One = materializeConstant(CurDAG, DL, 1);
-      return emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, NonZero, One);
-    };
-
-    switch (CCVal) {
-    case ISD::SETEQ:
-    case ISD::SETNE: {
-      SDValue Diff;
-      if (HasLConst && LV == 0)
-        Diff = RHS;
-      else if (HasRConst && RV == 0)
-        Diff = LHS;
-      else if (!HasLConst && !HasRConst)
-        Diff = SDValue(CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32, LHS, RHS), 0);
-      else if (HasLConst)
-        Diff = SDValue(CurDAG->getMachineNode(
-                           TC32::TSUBrrr, DL, MVT::i32,
-                           materializeConstant(CurDAG, DL, static_cast<uint32_t>(LV)), RHS),
-                       0);
-      else if (HasRConst)
-        Diff = SDValue(CurDAG->getMachineNode(
-                           TC32::TSUBrrr, DL, MVT::i32, LHS,
-                           materializeConstant(CurDAG, DL, static_cast<uint32_t>(RV))),
-                       0);
-      else
-        return SDValue();
-
-      return CCVal == ISD::SETEQ ? emitEqZero(Diff) : emitNeZero(Diff);
-    }
-    case ISD::SETLT: {
-      if (HasRConst && RV == 0)
-        return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, LHS), 0);
-      if (HasRConst && RV == 1) {
-        SDValue NonZeroOrPositive = selectSetCCValue(
-            DL, ISD::SETGT, LHS,
-            CurDAG->getConstant(0, DL, MVT::i32));
-        if (!NonZeroOrPositive)
-          return SDValue();
-        return emitEqZero(NonZeroOrPositive);
-      }
-      if (HasLConst && LV == 0) {
-        SDValue Neg = SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, RHS), 0);
-        return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, Neg), 0);
-      }
-      SDValue GE = SDValue();
-      SDValue SignL =
-          SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, LHS), 0);
-      SDValue SignR =
-          SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
-      MachineSDNode *Cmp =
-          CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
-      GE = emitTwoAddressRRGlue(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
-                                SDValue(Cmp, 0));
-      return emitEqZero(GE);
-    }
-    case ISD::SETGE: {
-      if (HasRConst && RV == 1)
-        return selectSetCCValue(DL, ISD::SETGT, LHS,
-                                CurDAG->getConstant(0, DL, MVT::i32));
-      if (HasRConst && RV == 0) {
-        SDValue Neg = SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, LHS), 0);
-        return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, Neg), 0);
-      }
-      if (HasLConst && LV == 0)
-        return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
-      SDValue SignL =
-          SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, LHS), 0);
-      SDValue SignR =
-          SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
-      MachineSDNode *Cmp =
-          CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
-      return emitTwoAddressRRGlue(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
-                                  SDValue(Cmp, 0));
-    }
-    case ISD::SETGT: {
-      if (HasRConst && RV == 0) {
-        SDValue NonZero = emitNeZero(LHS);
-        SDValue Sign =
-            SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, LHS), 0);
-        SDValue NonNeg =
-            SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, Sign), 0);
-        return emitTwoAddressRR(TC32::TANDrr, DL, MVT::i32, NonZero, NonNeg);
-      }
-      if (HasRConst && RV == -1) {
-        SDValue Neg = SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, LHS), 0);
-        return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, Neg), 0);
-      }
-      if (HasLConst && LV == -1)
-        return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, RHS), 0);
-      SDValue LE = SDValue();
-      SDValue SignL =
-          SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, LHS), 0);
-      SDValue SignR =
-          SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, RHS), 0);
-      MachineSDNode *Cmp =
-          CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, RHS, LHS);
-      LE = emitTwoAddressRRGlue(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
-                                SDValue(Cmp, 0));
-      return emitEqZero(LE);
-    }
-    case ISD::SETLE: {
-      if (HasRConst && RV == 0) {
-        SDValue Positive = selectSetCCValue(DL, ISD::SETGT, LHS, RHS);
-        if (!Positive)
-          return SDValue();
-        return emitEqZero(Positive);
-      }
-      if (HasRConst && RV == -1)
-        return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, LHS), 0);
-      if (HasLConst && LV == -1) {
-        SDValue Neg = SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, RHS), 0);
-        return SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, Neg), 0);
-      }
-      SDValue SignL =
-          SDValue(CurDAG->getMachineNode(TC32::TSHFTRi31, DL, MVT::i32, LHS), 0);
-      SDValue SignR =
-          SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, RHS), 0);
-      MachineSDNode *Cmp =
-          CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, RHS, LHS);
-      return emitTwoAddressRRGlue(TC32::TADDCrr, DL, MVT::i32, SignL, SignR,
-                                  SDValue(Cmp, 0));
-    }
-    default:
+    unsigned BrOpc = getBranchOpcodeForCond(CCVal);
+    if (!BrOpc)
       return SDValue();
-    }
+
+    SDValue FalseVal = materializeConstant(CurDAG, DL, 0);
+    SDValue TrueVal = materializeConstant(CurDAG, DL, 1);
+    SDValue Ops[] = {FalseVal, TrueVal, LHS, RHS,
+                     CurDAG->getTargetConstant(BrOpc, DL, MVT::i32)};
+    return SDValue(CurDAG->getMachineNode(TC32::TSELECTCC, DL, MVT::i32, Ops), 0);
   }
 
   SDValue selectSetCC(SDNode *Node) {
@@ -683,6 +642,8 @@ public:
 
     if (auto *LD = dyn_cast<LoadSDNode>(Node)) {
       if (trySelectUnalignedI32Load(Node, LD, DL))
+        return;
+      if (trySelectExtI16Load(Node, LD, DL))
         return;
 
       SDValue Base;
@@ -712,25 +673,6 @@ public:
           return;
         }
         ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADBrr, DL,
-                                                 {MVT::i32, MVT::Other},
-                                                 {LD->getBasePtr(),
-                                                  LD->getChain()}));
-        return;
-      }
-      if (Node->getValueType(0) == MVT::i32 && LD->getMemoryVT() == MVT::i16 &&
-          (LD->getExtensionType() == ISD::ZEXTLOAD ||
-           LD->getExtensionType() == ISD::EXTLOAD) &&
-          LD->getBasePtr().getValueType() == MVT::i32) {
-        if (matchBasePlusConst(LD->getBasePtr(), Base, Imm) &&
-            Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {
-          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADru3, DL,
-                                                   {MVT::i32, MVT::Other},
-                                                   {Base,
-                                                    CurDAG->getTargetConstant(Imm, DL, MVT::i32),
-                                                    LD->getChain()}));
-          return;
-        }
-        ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADrr, DL,
                                                  {MVT::i32, MVT::Other},
                                                  {LD->getBasePtr(),
                                                   LD->getChain()}));
@@ -870,6 +812,48 @@ public:
       SDValue Dest = Node->getOperand(2);
       bool Invert = false;
       SDValue Cond = stripBoolCasts(Node->getOperand(1));
+      SDValue LHS;
+      SDValue RHS;
+      ISD::CondCode CCVal;
+
+      if (decodeBooleanSelectCC(Node->getOperand(1), LHS, RHS, CCVal, Invert)) {
+        MachineSDNode *Cmp = nullptr;
+        if (Invert)
+          CCVal = ISD::getSetCCInverse(CCVal, LHS.getValueType());
+
+        prepareCompareOperands(DL, CCVal, LHS, RHS);
+        unsigned BrOpc = getBranchOpcodeForCond(CCVal);
+        if (BrOpc == 0)
+          break;
+
+        if (auto *RC = dyn_cast<ConstantSDNode>(RHS)) {
+          if (RC->isZero()) {
+            Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
+          } else if (RC->getSExtValue() == -1) {
+            switch (CCVal) {
+            case ISD::SETGT:
+              Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
+              BrOpc = TC32::TJGE;
+              break;
+            case ISD::SETLE:
+              Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
+              BrOpc = TC32::TJLT;
+              break;
+            default:
+              break;
+            }
+          }
+        } else if (auto *LC = dyn_cast<ConstantSDNode>(LHS); LC && LC->isZero()) {
+          Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, RHS);
+        }
+        if (!Cmp)
+          Cmp = CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
+
+        ReplaceNode(Node, CurDAG->getMachineNode(BrOpc, DL, MVT::Other, Dest,
+                                                 Chain, SDValue(Cmp, 0)));
+        return;
+      }
+
       bool RecoveredInvert = false;
       SDValue Recovered = stripBoolCond(Node->getOperand(1), RecoveredInvert);
       if (Recovered.getOpcode() == ISD::SETCC) {
@@ -890,10 +874,10 @@ public:
       if (!CC)
         break;
 
-      SDValue LHS = Cond.getOperand(0);
-      SDValue RHS = Cond.getOperand(1);
       MachineSDNode *Cmp = nullptr;
-      ISD::CondCode CCVal = CC->get();
+      LHS = Cond.getOperand(0);
+      RHS = Cond.getOperand(1);
+      CCVal = CC->get();
       if (Invert)
         CCVal = ISD::getSetCCInverse(CCVal, Cond.getOperand(0).getValueType());
 
@@ -969,11 +953,146 @@ public:
       return;
     }
     case ISD::SETCC: {
+      if (Node->hasOneUse()) {
+        SDNode *User = (*Node->use_begin()).getUser();
+        switch (User->getOpcode()) {
+        case ISD::SELECT:
+        case ISD::SELECT_CC:
+        case ISD::BRCOND:
+        case ISD::BR_CC:
+          break;
+        default:
+          User = nullptr;
+          break;
+        }
+        if (User)
+          break;
+      }
       if (SDValue Res = selectSetCC(Node)) {
         ReplaceNode(Node, Res.getNode());
         return;
       }
       break;
+    }
+    case ISD::SELECT_CC: {
+      EVT VT = Node->getValueType(0);
+      if (VT != MVT::i32 && VT != MVT::i8)
+        break;
+
+      auto *CC = dyn_cast<CondCodeSDNode>(Node->getOperand(4));
+      if (!CC)
+        break;
+
+      SDValue LHS = Node->getOperand(0);
+      SDValue RHS = Node->getOperand(1);
+      SDValue TrueVal = Node->getOperand(2);
+      SDValue FalseVal = Node->getOperand(3);
+      ISD::CondCode CCVal = CC->get();
+
+      prepareCompareOperands(DL, CCVal, LHS, RHS);
+      normalizeUnsignedCompare(DL, CCVal, LHS, RHS);
+
+      unsigned BrOpc = getBranchOpcodeForCond(CCVal);
+      if (!BrOpc)
+        break;
+
+      auto materializeValue = [&](SDValue V) -> SDValue {
+        if (auto *CN = dyn_cast<ConstantSDNode>(V))
+          return materializeConstant(CurDAG, DL,
+                                     static_cast<uint32_t>(CN->getZExtValue()));
+        if (V.getValueType() == MVT::i8)
+          return SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, V), 0);
+        return ensureValueInRegister(V, DL);
+      };
+
+      TrueVal = materializeValue(TrueVal);
+      FalseVal = materializeValue(FalseVal);
+
+      SDValue Ops[] = {FalseVal, TrueVal, LHS, RHS,
+                       CurDAG->getTargetConstant(BrOpc, DL, MVT::i32)};
+      SDValue Res32 =
+          SDValue(CurDAG->getMachineNode(TC32::TSELECTCC, DL, MVT::i32, Ops), 0);
+      if (VT == MVT::i8)
+        Res32 = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i8, Res32), 0);
+      ReplaceNode(Node, Res32.getNode());
+      return;
+    }
+    case ISD::SELECT: {
+      EVT VT = Node->getValueType(0);
+      if (VT != MVT::i32 && VT != MVT::i8)
+        break;
+
+      bool Invert = false;
+      SDValue Cond = stripBoolCasts(Node->getOperand(0));
+      SDValue LHS;
+      SDValue RHS;
+      ISD::CondCode CCVal = ISD::SETNE;
+      bool RecoveredInvert = false;
+      SDValue Recovered = stripBoolCond(Node->getOperand(0), RecoveredInvert);
+      if (decodeBooleanSelectCC(Node->getOperand(0), LHS, RHS, CCVal, Invert)) {
+        Cond = SDValue();
+      } else if (Recovered.getOpcode() == ISD::SETCC) {
+        Cond = Recovered;
+        Invert = RecoveredInvert;
+      }
+      SDValue TrueVal = Node->getOperand(1);
+      SDValue FalseVal = Node->getOperand(2);
+
+      unsigned BrOpc = 0;
+
+      if (LHS.getNode()) {
+        if (Invert)
+          CCVal = ISD::getSetCCInverse(CCVal, LHS.getValueType());
+        prepareCompareOperands(DL, CCVal, LHS, RHS);
+        normalizeUnsignedCompare(DL, CCVal, LHS, RHS);
+        BrOpc = getBranchOpcodeForCond(CCVal);
+      } else if (Cond.getOpcode() == ISD::SETCC) {
+        auto *CC = dyn_cast<CondCodeSDNode>(Cond.getOperand(2));
+        if (!CC)
+          break;
+        CCVal = CC->get();
+        if (Invert)
+          CCVal = ISD::getSetCCInverse(CCVal, Cond.getOperand(0).getValueType());
+        LHS = Cond.getOperand(0);
+        RHS = Cond.getOperand(1);
+        prepareCompareOperands(DL, CCVal, LHS, RHS);
+        normalizeUnsignedCompare(DL, CCVal, LHS, RHS);
+        BrOpc = getBranchOpcodeForCond(CCVal);
+      } else {
+        if (Cond.getValueType() == MVT::i1)
+          Cond = CurDAG->getNode(ISD::ZERO_EXTEND, DL, MVT::i32, Cond);
+        else if (Cond.getValueType() == MVT::i8)
+          Cond = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Cond), 0);
+        else
+          Cond = ensureValueInRegister(Cond, DL);
+        LHS = Cond;
+        RHS = materializeConstant(CurDAG, DL, 0);
+        BrOpc = Invert ? TC32::TJEQ : TC32::TJNE;
+      }
+
+      if (!BrOpc)
+        break;
+
+      auto materializeValue = [&](SDValue V) -> SDValue {
+        if (auto *CN = dyn_cast<ConstantSDNode>(V))
+          return materializeConstant(CurDAG, DL,
+                                     static_cast<uint32_t>(CN->getZExtValue()));
+        if (V.getValueType() == MVT::i8)
+          return SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, V), 0);
+        return ensureValueInRegister(V, DL);
+      };
+
+      TrueVal = materializeValue(TrueVal);
+      FalseVal = materializeValue(FalseVal);
+
+      SDValue Ops[] = {FalseVal, TrueVal, LHS, RHS,
+                       CurDAG->getTargetConstant(BrOpc, DL, MVT::i32)};
+      SDValue Res32 =
+          SDValue(CurDAG->getMachineNode(TC32::TSELECTCC, DL, MVT::i32, Ops), 0);
+      if (VT == MVT::i8)
+        Res32 = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i8, Res32), 0);
+      ReplaceNode(Node, Res32.getNode());
+      return;
     }
     case ISD::SIGN_EXTEND_INREG: {
       if (Node->getValueType(0) == MVT::i32 &&
@@ -1005,109 +1124,6 @@ public:
         return;
       }
       break;
-    }
-    case ISD::SELECT_CC: {
-      EVT VT = Node->getValueType(0);
-      if (VT != MVT::i32 && VT != MVT::i8)
-        break;
-      auto *CC = dyn_cast<CondCodeSDNode>(Node->getOperand(4));
-      if (!CC)
-        break;
-
-      SDValue LHS = Node->getOperand(0);
-      SDValue RHS = Node->getOperand(1);
-      SDValue TrueVal = Node->getOperand(2);
-      SDValue FalseVal = Node->getOperand(3);
-
-      SDValue BoolVal = selectSetCCValue(DL, CC->get(), LHS, RHS);
-      if (!BoolVal)
-        break;
-
-      auto materializeValue = [&](SDValue V) -> SDValue {
-        if (auto *CN = dyn_cast<ConstantSDNode>(V)) {
-          return materializeConstant(CurDAG, DL,
-                                     static_cast<uint32_t>(CN->getZExtValue()));
-        }
-        if (V.getValueType() == MVT::i8)
-          return SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, V), 0);
-        return V;
-      };
-
-      TrueVal = materializeValue(TrueVal);
-      FalseVal = materializeValue(FalseVal);
-
-      SDValue Zero = SDValue(CurDAG->getMachineNode(
-                                 TC32::TMOVi8, DL, MVT::i32,
-                                 CurDAG->getTargetConstant(0, DL, MVT::i32)),
-                             0);
-      SDValue Mask =
-          SDValue(CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32, Zero, BoolVal), 0);
-      SDValue Diff = emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, TrueVal, FalseVal);
-      SDValue Bits = emitTwoAddressRR(TC32::TANDrr, DL, MVT::i32, Diff, Mask);
-      SDValue Res = emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, FalseVal, Bits);
-      if (VT == MVT::i8)
-        Res = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i8, Res), 0);
-      ReplaceNode(Node, Res.getNode());
-      return;
-    }
-    case ISD::SELECT: {
-      EVT VT = Node->getValueType(0);
-      if (VT != MVT::i32 && VT != MVT::i8)
-        break;
-
-      SDValue Cond = stripBoolCasts(Node->getOperand(0));
-      SDValue TrueVal = Node->getOperand(1);
-      SDValue FalseVal = Node->getOperand(2);
-
-      SDValue BoolVal;
-      if (Cond.getOpcode() == ISD::SETCC) {
-        auto *CC = dyn_cast<CondCodeSDNode>(Cond.getOperand(2));
-        if (!CC)
-          break;
-        BoolVal =
-            selectSetCCValue(DL, CC->get(), Cond.getOperand(0), Cond.getOperand(1));
-      } else {
-        if (Cond.getValueType() == MVT::i1)
-          Cond = CurDAG->getNode(ISD::ZERO_EXTEND, DL, MVT::i32, Cond);
-        else if (Cond.getValueType() == MVT::i8)
-          Cond = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Cond), 0);
-        else
-          Cond = ensureValueInRegister(Cond, DL);
-
-        MachineSDNode *Dec =
-            CurDAG->getMachineNode(TC32::TSUBri1, DL, {MVT::i32, MVT::Glue}, {Cond});
-        BoolVal = emitTwoAddressRRGlue(TC32::TSUBCrr, DL, MVT::i32, Cond,
-                                       SDValue(Dec, 0), SDValue(Dec, 1));
-      }
-      if (!BoolVal)
-        break;
-
-      auto materializeValue = [&](SDValue V) -> SDValue {
-        if (auto *CN = dyn_cast<ConstantSDNode>(V)) {
-          return materializeConstant(CurDAG, DL,
-                                     static_cast<uint32_t>(CN->getZExtValue()));
-        }
-        if (V.getValueType() == MVT::i8)
-          return SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, V), 0);
-        return V;
-      };
-
-      TrueVal = materializeValue(TrueVal);
-      FalseVal = materializeValue(FalseVal);
-
-      SDValue Zero = SDValue(CurDAG->getMachineNode(
-                                 TC32::TMOVi8, DL, MVT::i32,
-                                 CurDAG->getTargetConstant(0, DL, MVT::i32)),
-                             0);
-      SDValue Mask =
-          SDValue(CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32, Zero, BoolVal), 0);
-      SDValue Diff = emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, TrueVal, FalseVal);
-      SDValue Bits = emitTwoAddressRR(TC32::TANDrr, DL, MVT::i32, Diff, Mask);
-      SDValue Res = emitTwoAddressRR(TC32::TXORrr, DL, MVT::i32, FalseVal, Bits);
-      if (VT == MVT::i8)
-        Res = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i8, Res), 0);
-      ReplaceNode(Node, Res.getNode());
-      return;
     }
     case ISD::ADD: {
       EVT VT = Node->getValueType(0);

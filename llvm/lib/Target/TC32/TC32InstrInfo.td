@@ -53,6 +53,13 @@ def TVARSRA : Pseudo<(outs LoGR32:$dst), (ins LoGR32:$src, LoGR32:$amt),
   let usesCustomInserter = 1;
 }
 
+def TSELECTCC : Pseudo<(outs LoGR32:$dst),
+                       (ins LoGR32:$falsev, LoGR32:$truev, LoGR32:$lhs,
+                            LoGR32:$rhs, i32imm:$brcc),
+                       "#TSELECTCC $dst, $falsev, $truev, $lhs, $rhs, $brcc"> {
+  let usesCustomInserter = 1;
+}
+
 def TPUSH_R7_LR : TC32Inst<(outs), (ins), "tpush\t{r7, lr}"> {
   let Defs = [R13];
   let Uses = [R7, R13, R14];
@@ -88,59 +95,75 @@ def TJL : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
   let Uses = [R0, R1, R2, R3];
 }
 
-def TCMPri0 : TC32Inst<(outs), (ins LoGR32:$src), "tcmp\t$src, #0">;
+def TCMPri0 : TC32Inst<(outs), (ins LoGR32:$src), "tcmp\t$src, #0"> {
+  let isCompare = 1;
+  let Defs = [CPSR];
+}
 
 def TCMPrr : TC32Inst<(outs), (ins LoGR32:$lhs, LoGR32:$rhs),
-                      "tcmp\t$lhs, $rhs">;
+                      "tcmp\t$lhs, $rhs"> {
+  let isCompare = 1;
+  let Defs = [CPSR];
+}
 
 def TJEQ : TC32Inst<(outs), (ins brtarget:$dst), "tjeq\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
+  let Uses = [CPSR];
 }
 
 def TJNE : TC32Inst<(outs), (ins brtarget:$dst), "tjne\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
+  let Uses = [CPSR];
 }
 
 def TJCS : TC32Inst<(outs), (ins brtarget:$dst), "tjcs\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
+  let Uses = [CPSR];
 }
 
 def TJCC : TC32Inst<(outs), (ins brtarget:$dst), "tjcc\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
+  let Uses = [CPSR];
 }
 
 def TJGE : TC32Inst<(outs), (ins brtarget:$dst), "tjge\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
+  let Uses = [CPSR];
 }
 
 def TJLT : TC32Inst<(outs), (ins brtarget:$dst), "tjlt\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
+  let Uses = [CPSR];
 }
 
 def TJHI : TC32Inst<(outs), (ins brtarget:$dst), "tjhi\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
+  let Uses = [CPSR];
 }
 
 def TJLS : TC32Inst<(outs), (ins brtarget:$dst), "tjls\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
+  let Uses = [CPSR];
 }
 
 def TJGT : TC32Inst<(outs), (ins brtarget:$dst), "tjgt\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
+  let Uses = [CPSR];
 }
 
 def TJLE : TC32Inst<(outs), (ins brtarget:$dst), "tjle\t$dst"> {
   let isBranch = 1;
   let isTerminator = 1;
+  let Uses = [CPSR];
 }
 
 def TJ : TC32Inst<(outs), (ins brtarget:$dst), "tj\t$dst"> {

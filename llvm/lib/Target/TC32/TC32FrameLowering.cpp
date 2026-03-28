@@ -14,43 +14,48 @@ TC32FrameLowering::TC32FrameLowering(const TC32Subtarget &STI)
 
 void TC32FrameLowering::emitPrologue(MachineFunction &MF,
                                      MachineBasicBlock &MBB) const {
-  if (!hasFP(MF))
-    return;
-
   MachineBasicBlock::iterator I = MBB.begin();
   DebugLoc DL;
   if (I != MBB.end())
     DL = I->getDebugLoc();
 
+  const bool UseFP = hasFP(MF);
+
   if (MF.getFunction().isVarArg())
     BuildMI(MBB, I, DL,
             MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_R0_R1_R2_R3));
 
-  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_R7_LR));
+  if (UseFP)
+    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_R7_LR));
 
   int StackSize = MF.getFrameInfo().getStackSize();
   if (StackSize > 0)
     BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TSUBspu8))
         .addImm(StackSize);
 
-  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TADDdstspu8),
-          TC32::R7)
-      .addImm(0);
+  if (UseFP) {
+    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TADDdstspu8),
+            TC32::R7)
+        .addImm(0);
+  }
 }
 
 void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
                                      MachineBasicBlock &MBB) const {
-  if (!hasFP(MF))
-    return;
-
   MachineBasicBlock::iterator I = MBB.getFirstTerminator();
   DebugLoc DL;
   if (I != MBB.end())
     DL = I->getDebugLoc();
 
-  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TMOVrr),
-          TC32::R13)
-      .addReg(TC32::R7);
+  const bool UseFP = hasFP(MF);
+  const bool ReturnsR0 =
+      I != MBB.end() && I->getOpcode() == TC32::TRET_R0;
+
+  if (UseFP) {
+    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TMOVrr),
+            TC32::R13)
+        .addReg(TC32::R7);
+  }
 
   int StackSize = MF.getFrameInfo().getStackSize();
   if (StackSize > 0)
@@ -61,8 +66,21 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
       (I->getOpcode() == TC32::TRET || I->getOpcode() == TC32::TRET_R0))
     I = MBB.erase(I);
 
+  if (!UseFP) {
+    auto MIB = BuildMI(MBB, I, DL,
+                       MF.getSubtarget().getInstrInfo()->get(ReturnsR0
+                                                                 ? TC32::TRET_R0
+                                                                 : TC32::TRET));
+    if (ReturnsR0)
+      MIB.addReg(TC32::R0, RegState::Implicit);
+    return;
+  }
+
   if (!MF.getFunction().isVarArg()) {
-    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R7_PC));
+    auto MIB =
+        BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R7_PC));
+    if (ReturnsR0)
+      MIB.addReg(TC32::R0, RegState::Implicit);
     return;
   }
 
@@ -70,8 +88,10 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
   BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R3));
   BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TADDspu8))
       .addImm(16);
-  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TJEXr))
-      .addReg(TC32::R3);
+  auto MIB = BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TJEXr))
+                 .addReg(TC32::R3);
+  if (ReturnsR0)
+    MIB.addReg(TC32::R0, RegState::Implicit);
 }
 
 bool TC32FrameLowering::hasReservedCallFrame(const MachineFunction &MF) const {
@@ -101,5 +121,6 @@ bool TC32FrameLowering::hasFPImpl(const MachineFunction &MF) const {
   const MachineFrameInfo &MFI = MF.getFrameInfo();
   if (MF.getTarget().Options.DisableFramePointerElim(MF))
     return true;
-  return MFI.hasStackObjects() || MFI.hasCalls();
+  return MFI.hasCalls() || MFI.hasVarSizedObjects() ||
+         MFI.isFrameAddressTaken() || MF.getFunction().isVarArg();
 }

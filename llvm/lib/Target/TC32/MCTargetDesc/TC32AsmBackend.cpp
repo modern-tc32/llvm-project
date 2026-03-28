@@ -107,7 +107,12 @@ public:
           static_cast<int64_t>(Value) - static_cast<int64_t>(Asm->getFragmentOffset(F) + Fixup.getOffset());
       int64_t Imm = (Delta - 4) >> 1;
       if (!isInt<8>(Imm))
-        report_fatal_error("TC32 8-bit branch out of range");
+        report_fatal_error(Twine("TC32 8-bit branch out of range: delta=") +
+                           Twine(Delta) + " imm=" + Twine(Imm) +
+                           " fixup-offset=" + Twine(Fixup.getOffset()) +
+                           (Target.getAddSym() ? Twine(" target=") +
+                                                     Twine(Target.getAddSym()->getName())
+                                               : Twine("")));
       uint16_t Encoded = static_cast<uint16_t>((Data[1] << 8) | Data[0]);
       Encoded = static_cast<uint16_t>((Encoded & 0xFF00u) |
                                       static_cast<uint8_t>(Imm));

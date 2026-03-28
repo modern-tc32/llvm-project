@@ -30,6 +30,8 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setMaxAtomicSizeInBitsSupported(0);
   setOperationAction(ISD::Constant, MVT::i32, Legal);
   setOperationAction(ISD::Constant, MVT::i8, Legal);
+  setOperationAction(ISD::LOAD, MVT::i32, Custom);
+  setOperationAction(ISD::STORE, MVT::i32, Custom);
   setOperationAction(ISD::ADD, MVT::i32, Legal);
   setOperationAction(ISD::ADD, MVT::i8, Legal);
   setOperationAction(ISD::SUB, MVT::i32, Legal);
@@ -98,10 +100,10 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   MaxLoadsPerMemcmpOptSize = 0;
   setOperationAction(ISD::AssertSext, MVT::i32, Legal);
   setOperationAction(ISD::AssertZext, MVT::i32, Legal);
-  setOperationAction(ISD::SETCC, MVT::i32, Legal);
-  setOperationAction(ISD::SETCC, MVT::i8, Legal);
-  setOperationAction(ISD::SELECT, MVT::i32, Legal);
-  setOperationAction(ISD::SELECT, MVT::i8, Legal);
+  setOperationAction(ISD::SETCC, MVT::i32, Custom);
+  setOperationAction(ISD::SETCC, MVT::i8, Custom);
+  setOperationAction(ISD::SELECT, MVT::i32, Custom);
+  setOperationAction(ISD::SELECT, MVT::i8, Custom);
   setOperationAction(ISD::SELECT_CC, MVT::i32, Legal);
   setOperationAction(ISD::SELECT_CC, MVT::i8, Legal);
   setOperationAction(ISD::BRCOND, MVT::Other, Legal);
@@ -193,9 +195,148 @@ static SDValue lowerI8Shift(SDValue Op, SelectionDAG &DAG) {
   return Res;
 }
 
+static SDValue lowerUnalignedI32Load(SDValue Op, SelectionDAG &DAG) {
+  auto *LD = cast<LoadSDNode>(Op);
+  if (LD->getMemoryVT() != MVT::i32 || LD->getAlign().value() >= 4 ||
+      LD->getAddressingMode() != ISD::UNINDEXED)
+    return SDValue();
+
+  SDLoc DL(Op);
+  SDValue Ptr = LD->getBasePtr();
+  SDValue Chain = LD->getChain();
+
+  auto loadByte = [&](SDValue CurChain, unsigned Offset) {
+    SDValue BytePtr = Ptr;
+    if (Offset)
+      BytePtr = DAG.getObjectPtrOffset(DL, Ptr, TypeSize::getFixed(Offset));
+    return DAG.getExtLoad(ISD::ZEXTLOAD, DL, MVT::i32, CurChain, BytePtr,
+                          LD->getPointerInfo().getWithOffset(Offset), MVT::i8,
+                          LD->getAlign(), LD->getMemOperand()->getFlags(),
+                          LD->getAAInfo());
+  };
+
+  SDValue B0 = loadByte(Chain, 0);
+  SDValue B1 = loadByte(B0.getValue(1), 1);
+  SDValue B2 = loadByte(B1.getValue(1), 2);
+  SDValue B3 = loadByte(B2.getValue(1), 3);
+
+  SDValue Result = B0;
+  Result = DAG.getNode(ISD::OR, DL, MVT::i32, Result,
+                       DAG.getNode(ISD::SHL, DL, MVT::i32, B1,
+                                   DAG.getConstant(8, DL, MVT::i32)));
+  Result = DAG.getNode(ISD::OR, DL, MVT::i32, Result,
+                       DAG.getNode(ISD::SHL, DL, MVT::i32, B2,
+                                   DAG.getConstant(16, DL, MVT::i32)));
+  Result = DAG.getNode(ISD::OR, DL, MVT::i32, Result,
+                       DAG.getNode(ISD::SHL, DL, MVT::i32, B3,
+                                   DAG.getConstant(24, DL, MVT::i32)));
+
+  if (LD->getValueType(0) != MVT::i32)
+    Result = DAG.getNode(ISD::ANY_EXTEND, DL, LD->getValueType(0), Result);
+
+  return DAG.getMergeValues({Result, B3.getValue(1)}, DL);
+}
+
+static SDValue lowerUnalignedI32Store(SDValue Op, SelectionDAG &DAG) {
+  auto *ST = cast<StoreSDNode>(Op);
+  if (ST->getMemoryVT() != MVT::i32 || ST->getAlign().value() >= 4 ||
+      ST->getAddressingMode() != ISD::UNINDEXED)
+    return SDValue();
+
+  SDLoc DL(Op);
+  SDValue Ptr = ST->getBasePtr();
+  SDValue Val = ST->getValue();
+  SDValue Chain = ST->getChain();
+
+  auto storeByte = [&](SDValue CurChain, SDValue ByteVal, unsigned Offset) {
+    SDValue BytePtr = Ptr;
+    if (Offset)
+      BytePtr = DAG.getObjectPtrOffset(DL, Ptr, TypeSize::getFixed(Offset));
+    return DAG.getTruncStore(CurChain, DL, ByteVal, BytePtr,
+                             ST->getPointerInfo().getWithOffset(Offset),
+                             MVT::i8, ST->getAlign(),
+                             ST->getMemOperand()->getFlags(), ST->getAAInfo());
+  };
+
+  SDValue B1 = DAG.getNode(ISD::SRL, DL, MVT::i32, Val,
+                           DAG.getConstant(8, DL, MVT::i32));
+  SDValue B2 = DAG.getNode(ISD::SRL, DL, MVT::i32, Val,
+                           DAG.getConstant(16, DL, MVT::i32));
+  SDValue B3 = DAG.getNode(ISD::SRL, DL, MVT::i32, Val,
+                           DAG.getConstant(24, DL, MVT::i32));
+
+  Chain = storeByte(Chain, Val, 0);
+  Chain = storeByte(Chain, B1, 1);
+  Chain = storeByte(Chain, B2, 2);
+  Chain = storeByte(Chain, B3, 3);
+  return Chain;
+}
+
 MachineBasicBlock *
 TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                 MachineBasicBlock *MBB) const {
+  MachineFunction *MF = MBB->getParent();
+  MachineRegisterInfo &MRI = MF->getRegInfo();
+  const TargetInstrInfo &TII = *MF->getSubtarget().getInstrInfo();
+  const TargetRegisterClass *RC = &TC32::LoGR32RegClass;
+  const DebugLoc DL = MI.getDebugLoc();
+
+  if (MI.getOpcode() == TC32::TSELECTCC) {
+    auto getBranchOpcode = [](int64_t BrCC) -> unsigned {
+      switch (BrCC) {
+      case TC32::TJEQ:
+      case TC32::TJNE:
+      case TC32::TJCS:
+      case TC32::TJCC:
+      case TC32::TJGE:
+      case TC32::TJLT:
+      case TC32::TJHI:
+      case TC32::TJLS:
+      case TC32::TJGT:
+      case TC32::TJLE:
+        return static_cast<unsigned>(BrCC);
+      default:
+        llvm_unreachable("unexpected tc32 branch opcode");
+      }
+    };
+
+    Register Dst = MI.getOperand(0).getReg();
+    Register FalseVal = MI.getOperand(1).getReg();
+    Register TrueVal = MI.getOperand(2).getReg();
+    Register LHS = MI.getOperand(3).getReg();
+    Register RHS = MI.getOperand(4).getReg();
+    unsigned BrOpc = getBranchOpcode(MI.getOperand(5).getImm());
+
+    MachineBasicBlock *ThisMBB = MBB;
+    MachineFunction::iterator It = ++ThisMBB->getIterator();
+    MachineBasicBlock *FalseMBB =
+        MF->CreateMachineBasicBlock(ThisMBB->getBasicBlock());
+    MachineBasicBlock *SinkMBB =
+        MF->CreateMachineBasicBlock(ThisMBB->getBasicBlock());
+    MF->insert(It, FalseMBB);
+    MF->insert(It, SinkMBB);
+
+    MachineBasicBlock::iterator MII(MI);
+    SinkMBB->splice(SinkMBB->begin(), ThisMBB, std::next(MII), ThisMBB->end());
+    SinkMBB->transferSuccessorsAndUpdatePHIs(ThisMBB);
+
+    ThisMBB->addSuccessor(FalseMBB);
+    ThisMBB->addSuccessor(SinkMBB);
+    FalseMBB->addSuccessor(SinkMBB);
+
+    BuildMI(*ThisMBB, MII, DL, TII.get(TC32::TCMPrr)).addReg(LHS).addReg(RHS);
+    BuildMI(*ThisMBB, MII, DL, TII.get(BrOpc)).addMBB(SinkMBB);
+
+    BuildMI(*SinkMBB, SinkMBB->begin(), DL, TII.get(TargetOpcode::PHI), Dst)
+        .addReg(FalseVal)
+        .addMBB(FalseMBB)
+        .addReg(TrueVal)
+        .addMBB(ThisMBB);
+
+    MI.eraseFromParent();
+    return SinkMBB;
+  }
+
   unsigned ShiftOpc;
   switch (MI.getOpcode()) {
   case TC32::TVARSHL:
@@ -210,12 +351,6 @@ TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   default:
     llvm_unreachable("unexpected custom inserter opcode");
   }
-
-  MachineFunction *MF = MBB->getParent();
-  MachineRegisterInfo &MRI = MF->getRegInfo();
-  const TargetInstrInfo &TII = *MF->getSubtarget().getInstrInfo();
-  const TargetRegisterClass *RC = &TC32::LoGR32RegClass;
-  const DebugLoc DL = MI.getDebugLoc();
 
   Register Dst = MI.getOperand(0).getReg();
   Register Src = MI.getOperand(1).getReg();
@@ -282,6 +417,45 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
   SDLoc DL(Op);
 
   switch (Op.getOpcode()) {
+  case ISD::LOAD:
+    return lowerUnalignedI32Load(Op, DAG);
+  case ISD::STORE:
+    return lowerUnalignedI32Store(Op, DAG);
+  case ISD::SELECT: {
+    EVT VT = Op.getValueType();
+    if (VT != MVT::i32 && VT != MVT::i8)
+      break;
+
+    SDValue Cond = Op.getOperand(0);
+    SDValue TrueVal = Op.getOperand(1);
+    SDValue FalseVal = Op.getOperand(2);
+
+    if (Cond.getOpcode() == ISD::SETCC) {
+      return DAG.getNode(ISD::SELECT_CC, DL, VT, Cond.getOperand(0),
+                         Cond.getOperand(1), TrueVal, FalseVal,
+                         Cond.getOperand(2));
+    }
+
+    EVT CondVT = Cond.getValueType();
+    if (CondVT == MVT::i1 || CondVT == MVT::i8 || CondVT == MVT::i32) {
+      SDValue Zero = DAG.getConstant(0, DL, CondVT);
+      return DAG.getNode(ISD::SELECT_CC, DL, VT, Cond, Zero, TrueVal,
+                         FalseVal, DAG.getCondCode(ISD::SETNE));
+    }
+    break;
+  }
+  case ISD::SETCC: {
+    EVT VT = Op.getValueType();
+    if (VT != MVT::i32 && VT != MVT::i8)
+      break;
+
+    SDValue LHS = Op.getOperand(0);
+    SDValue RHS = Op.getOperand(1);
+    SDValue CC = Op.getOperand(2);
+    SDValue One = DAG.getConstant(1, DL, VT);
+    SDValue Zero = DAG.getConstant(0, DL, VT);
+    return DAG.getNode(ISD::SELECT_CC, DL, VT, LHS, RHS, One, Zero, CC);
+  }
   case ISD::FrameIndex: {
     int FI = cast<FrameIndexSDNode>(Op)->getIndex();
     return DAG.getNode(TC32ISD::FRAMEADDR, DL, MVT::i32,

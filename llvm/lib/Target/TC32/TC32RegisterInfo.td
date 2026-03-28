@@ -5,6 +5,11 @@ class TC32Reg<bits<4> Enc, string Name, list<string> AltNames = []>
   let DwarfNumbers = [Enc];
 }
 
+class TC32SpecialReg<bits<4> Enc, string Name> : Register<Name> {
+  let Namespace = "TC32";
+  let HWEncoding{3-0} = Enc;
+}
+
 def R0  : TC32Reg<0,  "r0">;
 def R1  : TC32Reg<1,  "r1">;
 def R2  : TC32Reg<2,  "r2">;
@@ -21,6 +26,8 @@ def R12 : TC32Reg<12, "r12">;
 def R13 : TC32Reg<13, "r13", ["sp"]>;
 def R14 : TC32Reg<14, "r14", ["lr"]>;
 def R15 : TC32Reg<15, "r15", ["pc"]>;
+
+def CPSR : TC32SpecialReg<0, "cpsr">;
 
 let RegInfos = RegInfoByHwMode<[DefaultMode], [RegInfo<32, 32, 32>]> in
 def GR32 : RegisterClass<"TC32", [i32, i8], 32,
