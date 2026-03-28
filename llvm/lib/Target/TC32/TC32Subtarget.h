@@ -14,6 +14,7 @@
 namespace llvm {
 
 class LibcallLoweringInfo;
+class MachineFunction;
 
 class TC32SelectionDAGInfo : public SelectionDAGTargetInfo {
 public:
@@ -24,6 +25,7 @@ public:
 };
 
 class TC32Subtarget : public TC32GenSubtargetInfo {
+  bool ReserveR7 = true;
   TC32InstrInfo InstrInfo;
   TC32TargetLowering TLInfo;
   TC32FrameLowering FrameLowering;
@@ -36,6 +38,8 @@ public:
   TC32Subtarget &initializeSubtargetDependencies(StringRef CPU, StringRef FS);
   void ParseSubtargetFeatures(StringRef CPU, StringRef TuneCPU, StringRef FS);
   void initLibcallLoweringInfo(LibcallLoweringInfo &Info) const override;
+  bool reserveR7() const { return ReserveR7; }
+  bool isR7Reserved(const MachineFunction &MF) const;
 
   const TC32InstrInfo *getInstrInfo() const override { return &InstrInfo; }
   const TC32RegisterInfo *getRegisterInfo() const override {

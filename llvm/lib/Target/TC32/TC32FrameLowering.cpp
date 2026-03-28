@@ -1,5 +1,6 @@
 #include "TC32FrameLowering.h"
 #include "MCTargetDesc/TC32MCTargetDesc.h"
+#include "TC32Subtarget.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -10,6 +11,10 @@ using namespace llvm;
 TC32FrameLowering::TC32FrameLowering(const TC32Subtarget &STI)
     : TargetFrameLowering(StackGrowsDown, Align(4), 0, Align(4)) {
   (void)STI;
+}
+
+bool TC32FrameLowering::isR7Reserved(const MachineFunction &MF) const {
+  return MF.getSubtarget<TC32Subtarget>().isR7Reserved(MF);
 }
 
 void TC32FrameLowering::emitPrologue(MachineFunction &MF,
@@ -119,8 +124,10 @@ MachineBasicBlock::iterator TC32FrameLowering::eliminateCallFramePseudoInstr(
 
 bool TC32FrameLowering::hasFPImpl(const MachineFunction &MF) const {
   const MachineFrameInfo &MFI = MF.getFrameInfo();
-  if (MF.getTarget().Options.DisableFramePointerElim(MF))
-    return true;
-  return MFI.hasCalls() || MFI.hasVarSizedObjects() ||
-         MFI.isFrameAddressTaken() || MF.getFunction().isVarArg();
+  // TC32 does not have a general-purpose frame pointer register we can spend
+  // freely in normal code. Using r7 as a hard frame pointer breaks low-level
+  // code paths such as IRQ handling and HW init. Keep frame pointers only for
+  // cases that semantically require them.
+  return MFI.hasVarSizedObjects() || MFI.isFrameAddressTaken() ||
+         MF.getFunction().isVarArg();
 }
