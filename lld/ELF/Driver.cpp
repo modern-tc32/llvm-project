@@ -2570,13 +2570,48 @@ static void replaceCommonSymbols(Ctx &ctx) {
   for (ELFFileBase *file : ctx.objectFiles) {
     if (!file->hasCommonSyms)
       continue;
-    for (Symbol *sym : file->getGlobalSymbols()) {
-      auto *s = dyn_cast<CommonSymbol>(sym);
-      if (!s)
-        continue;
 
-      auto *bss = make<BssSection>(ctx, "COMMON", s->size, s->alignment);
+    SmallVector<CommonSymbol *, 0> commonSyms;
+    for (Symbol *sym : file->getGlobalSymbols())
+      if (auto *s = dyn_cast<CommonSymbol>(sym))
+        commonSyms.push_back(s);
+
+    if (ctx.arg.emachine == EM_TC32)
+      llvm::stable_sort(commonSyms, [](const CommonSymbol *a,
+                                      const CommonSymbol *b) {
+        if (a->alignment != b->alignment)
+          return a->alignment > b->alignment;
+        if (a->size != b->size)
+          return a->size > b->size;
+        return false;
+      });
+
+    for (CommonSymbol *s : commonSyms) {
+
+      StringRef secName = "COMMON";
+      if (ctx.arg.emachine == EM_TC32 &&
+          is_contained(
+              {"pmParam",         "system_clk_mHz",   "system_clk_type",
+               "tick_32k_calib",  "tick_32k_cur",     "tick_cur",
+               "pm_tim_recover",  "cpu_sleep_wakeup", "tl_multi_addr",
+               "pm_long_suspend", "g_RFRxPingpongEn", "g_RFMode",
+               "pm_curr_stack"},
+              s->getName()))
+        secName = ctx.saver.save(".tc32.common." + s->getName());
+
+      auto *bss = make<BssSection>(ctx, secName, s->size, s->alignment);
       bss->file = s->file;
+      // The tc32 vendor linker keeps COMMON storage from the startup-critical
+      // platform objects (pm.o/clock.o) as a unit. Without this, lld's section
+      // GC can drop individual COMMON symbols from those objects, which
+      // changes the startup .bss layout and breaks the firmware runtime.
+      //
+      // Keep this narrow. Retaining COMMON for all tc32 objects also drags in
+      // unrelated tentative definitions (for example random.o) and shifts the
+      // startup table again.
+      if (ctx.arg.emachine == EM_TC32 &&
+          secName != "COMMON")
+        bss->flags |= SHF_GNU_RETAIN;
       ctx.inputSections.push_back(bss);
       Defined(ctx, s->file, StringRef(), s->binding, s->stOther, s->type,
               /*value=*/0, s->size, bss)
