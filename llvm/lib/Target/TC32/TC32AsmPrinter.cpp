@@ -8,6 +8,7 @@
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Module.h"
+#include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCSymbol.h"
@@ -52,10 +53,12 @@ public:
     return AsmPrinter::doInitialization(M);
   }
 
-  bool runOnMachineFunction(MachineFunction &MF) override {
-    SetupMachineFunction(MF);
-    emitFunctionBody();
-    return false;
+  void emitFunctionEntryLabel() override {
+    if (TM.getTargetTriple().isOSBinFormatELF()) {
+      if (MCAssembler *Asm = OutStreamer->getAssemblerPtr())
+        Asm->setIsThumbFunc(CurrentFnSym);
+    }
+    AsmPrinter::emitFunctionEntryLabel();
   }
 
 private:

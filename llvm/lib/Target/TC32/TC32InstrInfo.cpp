@@ -33,7 +33,7 @@ bool TC32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     bool Fixed = MFI.isFixedObjectIndex(FI);
     int Offset = MFI.getObjectOffset(FI);
     int StackSize = MFI.getStackSize();
-    unsigned BaseReg = Fixed ? TC32::R13 : TC32::R7;
+    unsigned BaseReg = TFI->hasFP(MF) ? TC32::R7 : TC32::R13;
     int FrameImm = (Fixed ? Offset : Offset + StackSize) + ExtraImm;
     if (TFI->hasFP(MF) && Fixed) {
       BaseReg = TC32::R7;

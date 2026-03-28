@@ -15,17 +15,25 @@ using namespace llvm;
 TC32RegisterInfo::TC32RegisterInfo() : TC32GenRegisterInfo(TC32::R15) {}
 
 const MCPhysReg *TC32RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
-  static const MCPhysReg CalleeSavedRegs[] = {
+  static const MCPhysReg CalleeSavedRegsNoFP[] = {
+      TC32::R4,
+      TC32::R5,
+      TC32::R6,
+      TC32::R7,
+      0};
+  static const MCPhysReg CalleeSavedRegsWithFP[] = {
       TC32::R4,
       TC32::R5,
       TC32::R6,
       0};
-  (void)MF;
-  return CalleeSavedRegs;
+  if (MF && MF->getSubtarget().getFrameLowering()->hasFP(*MF))
+    return CalleeSavedRegsWithFP;
+  return CalleeSavedRegsNoFP;
 }
 
 BitVector TC32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
+  Reserved.set(TC32::CPSR);
   Reserved.set(TC32::R6);
   Reserved.set(TC32::R8);
   Reserved.set(TC32::R9);
@@ -76,7 +84,7 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
     break;
   }
 
-  unsigned BaseReg = Fixed ? TC32::R13 : TC32::R7;
+  unsigned BaseReg = TFI->hasFP(MF) ? TC32::R7 : TC32::R13;
   int FrameImm = (Fixed ? Offset : Offset + StackSize) + ExtraImm;
   if (TFI->hasFP(MF) && Fixed) {
     BaseReg = TC32::R7;
@@ -212,6 +220,10 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
       MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
       return false;
     }
+    if (materializeFrameAddr(MI, TC32::R6)) {
+      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
+      return false;
+    }
     break;
   }
   case TC32::TSTORErr: {
@@ -225,6 +237,10 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
         (FrameImm & 3) == 0) {
       MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTOREfpu8));
       MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      return false;
+    }
+    if (materializeFrameAddr(MI, TC32::R6)) {
+      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
       return false;
     }
     break;
@@ -244,6 +260,12 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
       MI.removeOperand(FIOperandNum + 1);
       return false;
     }
+    if (materializeFrameAddr(MI, TC32::R6)) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TLOADrr));
+      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
+      MI.removeOperand(FIOperandNum + 1);
+      return false;
+    }
     break;
   }
   case TC32::TSTOREru3: {
@@ -258,6 +280,12 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
         (FrameImm & 3) == 0) {
       MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTOREfpu8));
       MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
+      MI.removeOperand(FIOperandNum + 1);
+      return false;
+    }
+    if (materializeFrameAddr(MI, TC32::R6)) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTORErr));
+      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
       MI.removeOperand(FIOperandNum + 1);
       return false;
     }

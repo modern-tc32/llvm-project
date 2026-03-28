@@ -133,34 +133,50 @@ public:
       DenseMap<const MachineInstr *, uint64_t> InstOffsets;
       computeOffsets(BlockOffsets, InstOffsets);
 
-      auto canReachWithJump11 = [&](uint64_t FromOffset, uint64_t ToOffset) {
-        int64_t JumpDelta =
-            static_cast<int64_t>(ToOffset) - static_cast<int64_t>(FromOffset);
-        int64_t JumpImm = (JumpDelta - 4) >> 1;
-        return isInt<11>(JumpImm);
-      };
-
-      for (MachineBasicBlock &MBB : MF) {
+      for (auto MBBIt = MF.begin(), MBBEnd = MF.end(); MBBIt != MBBEnd;) {
+        MachineBasicBlock &MBB = *MBBIt++;
         MachineInstr *CondBr = nullptr;
         MachineInstr *UncondBr = nullptr;
+        MachineInstr *UncondBrAddr = nullptr;
 
         for (MachineInstr &MI : llvm::reverse(MBB)) {
           if (MI.isDebugInstr())
             continue;
           unsigned Opc = MI.getOpcode();
-        if (!CondBr && isCondBranch(Opc)) {
-          CondBr = &MI;
-          continue;
-        }
-        if (!UncondBr && Opc == TC32::TJ) {
+          if (!CondBr && isCondBranch(Opc)) {
+            CondBr = &MI;
+            continue;
+          }
+          if (!UncondBr && Opc == TC32::TJ) {
             UncondBr = &MI;
             continue;
           }
+          if (!UncondBr && Opc == TC32::TJEXr) {
+            auto It = MI.getIterator();
+            if (It != MBB.begin()) {
+              auto Prev = std::prev(It);
+              while (Prev->isDebugInstr()) {
+                if (Prev == MBB.begin())
+                  break;
+                Prev = std::prev(Prev);
+              }
+              if (!Prev->isDebugInstr() && Prev->getOpcode() == TC32::TLOADaddr &&
+                  Prev->getOperand(0).isReg() && MI.getOperand(0).isReg() &&
+                  Prev->getOperand(0).getReg() == MI.getOperand(0).getReg()) {
+                UncondBr = &MI;
+                UncondBrAddr = &*Prev;
+                continue;
+              }
+            }
+          }
+          if (UncondBrAddr == &MI)
+            continue;
           if (!MI.isTerminator())
             break;
         }
 
-        if (UncondBr && UncondBr->getParent() == &MBB) {
+        if (UncondBr && UncondBr->getParent() == &MBB &&
+            UncondBr->getOpcode() == TC32::TJ) {
           auto *JumpTarget = UncondBr->getOperand(0).getMBB();
           uint64_t JumpOff = InstOffsets.lookup(UncondBr);
           uint64_t JumpTargetOff = BlockOffsets.lookup(JumpTarget);
@@ -177,7 +193,7 @@ public:
             UncondBr->eraseFromParent();
             LocalChange = true;
             Changed = true;
-            break;
+            continue;
           }
         }
 
@@ -193,8 +209,12 @@ public:
           continue;
 
         MachineBasicBlock *FalseMBB = nullptr;
-        if (UncondBr && UncondBr->getParent() == &MBB)
-          FalseMBB = UncondBr->getOperand(0).getMBB();
+        if (UncondBr && UncondBr->getParent() == &MBB) {
+          if (UncondBr->getOpcode() == TC32::TJ)
+            FalseMBB = UncondBr->getOperand(0).getMBB();
+          else if (UncondBrAddr)
+            FalseMBB = UncondBrAddr->getOperand(1).getMBB();
+        }
         else {
           auto NextIt = std::next(MBB.getIterator());
           if (NextIt != MF.end())
@@ -203,13 +223,6 @@ public:
         if (!FalseMBB)
           continue;
 
-        uint64_t JumpOffset = BrOffset + getInstSize(*CondBr, BrOffset);
-        uint64_t TrueOffset = BlockOffsets.lookup(TrueMBB);
-        unsigned AddedSize = TII->get(TC32::TJ).getSize();
-        if (!UncondBr)
-          AddedSize += TII->get(TC32::TJ).getSize();
-        if (TrueOffset > BrOffset)
-          TrueOffset += AddedSize;
         MachineBasicBlock *ShimMBB =
             MF.CreateMachineBasicBlock(MBB.getBasicBlock());
         MF.insert(std::next(MBB.getIterator()), ShimMBB);
@@ -218,38 +231,20 @@ public:
         CondBr->setDesc(TII->get(invertCondBranch(OldOpc)));
         CondBr->getOperand(0).setMBB(ShimMBB);
 
-        if (canReachWithJump11(JumpOffset, TrueOffset)) {
-          if (UncondBr && UncondBr->getParent() == &MBB) {
+        if (UncondBr && UncondBr->getParent() == &MBB) {
+          if (UncondBr->getOpcode() == TC32::TJ)
             UncondBr->getOperand(0).setMBB(TrueMBB);
-          } else {
-            BuildMI(MBB, std::next(CondBr->getIterator()), CondBr->getDebugLoc(),
-                    TII->get(TC32::TJ))
-                .addMBB(TrueMBB);
-          }
+          else
+            UncondBrAddr->getOperand(1).setMBB(TrueMBB);
         } else {
-          if (UncondBr && UncondBr->getParent() == &MBB)
-            UncondBr->eraseFromParent();
-          auto InsertPt = std::next(CondBr->getIterator());
-          BuildMI(MBB, InsertPt, CondBr->getDebugLoc(), TII->get(TC32::TLOADaddr), TC32::R6)
+          BuildMI(MBB, std::next(CondBr->getIterator()), CondBr->getDebugLoc(),
+                  TII->get(TC32::TJ))
               .addMBB(TrueMBB);
-          BuildMI(MBB, InsertPt, CondBr->getDebugLoc(), TII->get(TC32::TJEXr))
-              .addReg(TC32::R6);
         }
 
-        uint64_t ShimOffset = BlockOffsets.lookup(&MBB) + AddedSize;
-        uint64_t FalseOffset = BlockOffsets.lookup(FalseMBB);
-        if (FalseOffset > BlockOffsets.lookup(&MBB))
-          FalseOffset += AddedSize;
-        if (canReachWithJump11(ShimOffset, FalseOffset)) {
-          BuildMI(*ShimMBB, ShimMBB->end(), CondBr->getDebugLoc(), TII->get(TC32::TJ))
-              .addMBB(FalseMBB);
-        } else {
-          BuildMI(*ShimMBB, ShimMBB->end(), CondBr->getDebugLoc(),
-                  TII->get(TC32::TLOADaddr), TC32::R6)
-              .addMBB(FalseMBB);
-          BuildMI(*ShimMBB, ShimMBB->end(), CondBr->getDebugLoc(), TII->get(TC32::TJEXr))
-              .addReg(TC32::R6);
-        }
+        BuildMI(*ShimMBB, ShimMBB->end(), CondBr->getDebugLoc(),
+                TII->get(TC32::TJ))
+            .addMBB(FalseMBB);
 
         SmallVector<MachineBasicBlock *, 4> OldSuccs(MBB.successors());
         for (MachineBasicBlock *Succ : OldSuccs)
@@ -260,7 +255,6 @@ public:
 
         LocalChange = true;
         Changed = true;
-        break;
       }
     } while (LocalChange);
 
