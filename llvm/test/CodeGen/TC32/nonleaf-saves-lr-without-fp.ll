@@ -10,11 +10,11 @@ entry:
 }
 
 ; CHECK-LABEL: nonleaf_nofp:
-; CHECK: tsub	sp, #8
+; CHECK: tsub	sp, #4
 ; CHECK: tmov	r7, r14
-; CHECK: tstorer	r7, [sp, #4]
+; CHECK: tstorer	r7, [sp, #0]
 ; CHECK: tjl	callee
-; CHECK: tloadr	r7, [sp, #4]
+; CHECK: tloadr	r7, [sp, #0]
 ; CHECK: tmov	r14, r7
-; CHECK: tadd	sp, #8
+; CHECK: tadd	sp, #4
 ; CHECK-NOT: tpush	{r7, lr}
