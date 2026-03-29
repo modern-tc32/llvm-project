@@ -277,9 +277,7 @@ static SDValue materializeConstant(SelectionDAG *DAG, const SDLoc &DL,
   };
 
   SmallVector<uint8_t, 4> Bytes = getMaterializationBytes(Value);
-  SmallVector<uint8_t, 4> NotBytes = getMaterializationBytes(~Value);
-  bool UseNot = (NotBytes.size() + 1) < Bytes.size();
-  ArrayRef<uint8_t> ChosenBytes = UseNot ? ArrayRef(NotBytes) : ArrayRef(Bytes);
+  ArrayRef<uint8_t> ChosenBytes = Bytes;
 
   SDValue Cur = constrainToLoRegClass(SDValue(
       DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(ChosenBytes[0])), 0));
@@ -289,9 +287,6 @@ static SDValue materializeConstant(SelectionDAG *DAG, const SDLoc &DL,
       Cur = SDValue(
           DAG->getMachineNode(TC32::TADDSri8, DL, MVT::i32, Cur, getImm(ChosenBytes[I])), 0);
   }
-  if (UseNot)
-    Cur = constrainToLoRegClass(
-        SDValue(DAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, Cur), 0));
   return Cur;
 }
 
@@ -1295,16 +1290,6 @@ public:
       if (VT == MVT::i32 || VT == MVT::i8) {
         SDValue LHS = Node->getOperand(0);
         SDValue RHS = Node->getOperand(1);
-        auto *RC = dyn_cast<ConstantSDNode>(RHS);
-        if (RC && RC->getSExtValue() == -1) {
-          ReplaceNode(
-              Node,
-              CurDAG->getMachineNode(
-                  TargetOpcode::COPY_TO_REGCLASS, DL, VT,
-                  SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, VT, LHS), 0),
-                  CurDAG->getTargetConstant(TC32::LoGR32RegClassID, DL, MVT::i32)));
-          return;
-        }
         ReplaceNode(Node, emitTwoAddressRR(TC32::TXORrr, DL, VT, LHS, RHS).getNode());
         return;
       }

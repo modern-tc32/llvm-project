@@ -23,16 +23,28 @@ entry:
   ret i32 %b
 }
 
+define i32 @allones() local_unnamed_addr {
+entry:
+  ret i32 -1
+}
+
 ; CHECK-LABEL: not_const:
 ; CHECK: tmovs	r1, #255
-; CHECK: tmovn	r0, r0
+; CHECK: txor	r0, r2
 ; CHECK: tadds	r0, r0, r1
+; CHECK-NOT: tmovn
 ; CHECK-LABEL: minus_four:
-; CHECK: tmovs	r1, #3
-; CHECK: tmovn	r1, r1
+; CHECK: tmovs	r1, #255
+; CHECK: tadds	r1, r1, #252
 ; CHECK: tadds	r0, r0, r1
+; CHECK-NOT: tmovn
 ; CHECK-LABEL: align4:
 ; CHECK: tmovs	r1, #3
 ; CHECK: tadds	r0, r0, r1
-; CHECK: tmovn	r1, r1
+; CHECK: tadds	r1, r1, #252
 ; CHECK: tand	r0, r1
+; CHECK-NOT: tmovn
+; CHECK-LABEL: allones:
+; CHECK: tmovs	r0, #255
+; CHECK: tadds	r0, r0, #255
+; CHECK-NOT: tmovn
