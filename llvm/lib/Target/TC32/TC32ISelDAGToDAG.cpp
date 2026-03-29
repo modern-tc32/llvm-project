@@ -274,18 +274,34 @@ static SDValue materializeConstant(SelectionDAG *DAG, const SDLoc &DL,
     return Bytes;
   };
 
-  SmallVector<uint8_t, 4> Bytes = getMaterializationBytes(Value);
-  ArrayRef<uint8_t> ChosenBytes = Bytes;
+  auto materializeShiftAddBytes = [&](ArrayRef<uint8_t> Bytes) {
+    SDValue Cur = constrainToLoRegClass(
+        SDValue(DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(Bytes[0])), 0));
+    for (unsigned I = 1; I < Bytes.size(); ++I) {
+      Cur = SDValue(DAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, Cur, getImm(8)), 0);
+      if (Bytes[I] != 0)
+        Cur = SDValue(
+            DAG->getMachineNode(TC32::TADDSri8, DL, MVT::i32, Cur, getImm(Bytes[I])), 0);
+    }
+    return Cur;
+  };
 
-  SDValue Cur = constrainToLoRegClass(SDValue(
-      DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(ChosenBytes[0])), 0));
-  for (unsigned I = 1; I < ChosenBytes.size(); ++I) {
-    Cur = SDValue(DAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, Cur, getImm(8)), 0);
-    if (ChosenBytes[I] != 0)
-      Cur = SDValue(
-          DAG->getMachineNode(TC32::TADDSri8, DL, MVT::i32, Cur, getImm(ChosenBytes[I])), 0);
-  }
-  return Cur;
+  auto materializeLiteralLoad = [&]() {
+    MachineFunction &MF = DAG->getMachineFunction();
+    LLVMContext &Ctx = MF.getFunction().getContext();
+    Constant *C = ConstantInt::get(Type::getInt32Ty(Ctx), Value);
+    SDValue CP = DAG->getTargetConstantPool(C, MVT::i32, Align(4));
+    return SDValue(DAG->getMachineNode(TC32::TLOADaddr, DL, MVT::i32, CP), 0);
+  };
+
+  SmallVector<uint8_t, 4> Bytes = getMaterializationBytes(Value);
+  if (Bytes[0] < 0x80)
+    return materializeShiftAddBytes(Bytes);
+
+  // Follow the ARM-style fallback policy for awkward constants: if the first
+  // significant byte would force a problematic immediate chain, use a literal
+  // load instead of synthesizing the value arithmetically.
+  return materializeLiteralLoad();
 }
 
 class TC32DAGToDAGISel : public SelectionDAGISel {
@@ -997,6 +1013,45 @@ public:
       SDValue Off = CurDAG->getTargetConstant(OffN->getSExtValue(), DL, MVT::i32);
       ReplaceNode(Node, CurDAG->getMachineNode(TC32::TFRAMEADDR, DL, MVT::i32, FI,
                                                Off));
+      return;
+    }
+    case TC32ISD::BRCOND: {
+      SDValue Chain = Node->getOperand(0);
+      SDValue Dest = Node->getOperand(1);
+      auto *BrOpcNode = dyn_cast<ConstantSDNode>(Node->getOperand(2));
+      if (!BrOpcNode)
+        break;
+
+      unsigned BrOpc = static_cast<unsigned>(BrOpcNode->getZExtValue());
+      SDValue LHS = Node->getOperand(3);
+      SDValue RHS = Node->getOperand(4);
+      MachineSDNode *Cmp = nullptr;
+
+      if (auto *RC = dyn_cast<ConstantSDNode>(RHS)) {
+        if (RC->isZero()) {
+          Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
+        } else if (RC->getSExtValue() == -1) {
+          switch (BrOpc) {
+          case TC32::TJGT:
+            Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
+            BrOpc = TC32::TJGE;
+            break;
+          case TC32::TJLE:
+            Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
+            BrOpc = TC32::TJLT;
+            break;
+          default:
+            break;
+          }
+        }
+      } else if (auto *LC = dyn_cast<ConstantSDNode>(LHS); LC && LC->isZero()) {
+        Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, RHS);
+      }
+      if (!Cmp)
+        Cmp = CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
+
+      ReplaceNode(Node, CurDAG->getMachineNode(BrOpc, DL, MVT::Other, Dest,
+                                               Chain, SDValue(Cmp, 0)));
       return;
     }
     case ISD::GlobalAddress: {

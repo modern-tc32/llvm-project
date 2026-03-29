@@ -6,6 +6,7 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/IR/Constants.h"
 
 using namespace llvm;
 
@@ -35,6 +36,14 @@ MCOperand TC32MCInstLower::lowerOperand(const MachineOperand &MO) const {
   case MachineOperand::MO_BlockAddress:
     return MCOperand::createExpr(MCSymbolRefExpr::create(
         Printer.GetBlockAddressSymbol(MO.getBlockAddress()), Ctx));
+  case MachineOperand::MO_ConstantPoolIndex: {
+    const MCExpr *Expr = MCSymbolRefExpr::create(Printer.GetCPISymbol(MO.getIndex()), Ctx);
+    if (int64_t Offset = MO.getOffset(); Offset != 0) {
+      Expr = MCBinaryExpr::createAdd(
+          Expr, MCConstantExpr::create(Offset, Ctx), Ctx);
+    }
+    return MCOperand::createExpr(Expr);
+  }
   }
 }
 

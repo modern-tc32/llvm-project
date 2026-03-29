@@ -4,8 +4,10 @@
 #include "TC32TargetMachine.h"
 #include "TargetInfo/TC32TargetInfo.h"
 #include "llvm/CodeGen/AsmPrinter.h"
+#include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCAssembler.h"
@@ -83,6 +85,26 @@ private:
 
   SmallVector<PendingAddrLiteral, 8> PendingAddrLiterals;
 
+  const MCExpr *getAddrLiteralValue(const MachineInstr *MI,
+                                    const MachineOperand &MO) {
+    if (MO.getType() == MachineOperand::MO_ConstantPoolIndex) {
+      const auto &Constants =
+          MI->getMF()->getConstantPool()->getConstants();
+      const MachineConstantPoolEntry &Entry = Constants[MO.getIndex()];
+      if (!Entry.isMachineConstantPoolEntry()) {
+        if (const auto *CI = dyn_cast<ConstantInt>(Entry.Val.ConstVal))
+          return MCConstantExpr::create(CI->getZExtValue() + MO.getOffset(),
+                                        OutContext);
+      }
+    }
+
+    TC32MCInstLower Lower(OutContext, *this);
+    MCOperand Value = Lower.lowerOperand(MO);
+    if (!Value.isExpr())
+      report_fatal_error("TC32 TLOADaddr expects expression operand");
+    return Value.getExpr();
+  }
+
   void emitInstruction(const MachineInstr *MI) override {
     if (MI->getOpcode() == TC32::TLOADaddr) {
       MCSymbol *PoolLabel = OutContext.createTempSymbol();
@@ -93,11 +115,8 @@ private:
       Load.addOperand(MCOperand::createExpr(MCSymbolRefExpr::create(PoolLabel, OutContext)));
       EmitToStreamer(*OutStreamer, Load);
 
-      TC32MCInstLower Lower(OutContext, *this);
-      MCOperand Value = Lower.lowerOperand(MI->getOperand(1));
-      if (!Value.isExpr())
-        report_fatal_error("TC32 TLOADaddr expects expression operand");
-      PendingAddrLiterals.push_back({PoolLabel, Value.getExpr()});
+      PendingAddrLiterals.push_back(
+          {PoolLabel, getAddrLiteralValue(MI, MI->getOperand(1))});
       return;
     }
 
