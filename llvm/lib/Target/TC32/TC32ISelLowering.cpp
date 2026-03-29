@@ -46,8 +46,11 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::OR, MVT::i8, Legal);
   setOperationAction(ISD::XOR, MVT::i32, Legal);
   setOperationAction(ISD::XOR, MVT::i8, Legal);
-  setOperationAction(ISD::MUL, MVT::i32, Legal);
-  setOperationAction(ISD::MUL, MVT::i8, Legal);
+  // TC32 multiply appears to have additional architectural constraints
+  // beyond the low result register that are not fully modeled yet.
+  // Lower it conservatively through the runtime helper for now.
+  setOperationAction(ISD::MUL, MVT::i32, Custom);
+  setOperationAction(ISD::MUL, MVT::i8, Promote);
   setOperationAction(ISD::MULHU, MVT::i32, Expand);
   setOperationAction(ISD::MULHS, MVT::i32, Expand);
   setOperationAction(ISD::UMUL_LOHI, MVT::i32, Expand);
@@ -86,6 +89,7 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   };
   setBuiltinLibcall(RTLIB::SDIV_I32, "__divsi3");
   setBuiltinLibcall(RTLIB::UDIV_I32, "__udivsi3");
+  setLibcallImpl(RTLIB::MUL_I32, RTLIB::impl___mulsi3);
   setBuiltinLibcall(RTLIB::SREM_I32, "__modsi3");
   setBuiltinLibcall(RTLIB::UREM_I32, "__umodsi3");
   setBuiltinLibcall(RTLIB::SHL_I32, "__ashlsi3");
@@ -151,6 +155,10 @@ const char *TC32TargetLowering::getTargetNodeName(unsigned Opcode) const {
     return "TC32ISD::FRAMEADDR";
   case TC32ISD::BRCOND:
     return "TC32ISD::BRCOND";
+  case TC32ISD::ULOAD:
+    return "TC32ISD::ULOAD";
+  case TC32ISD::USTORE:
+    return "TC32ISD::USTORE";
   case TC32ISD::CALL:
     return "TC32ISD::CALL";
   case TC32ISD::RET_FLAG:
@@ -199,83 +207,6 @@ static SDValue lowerI8Shift(SDValue Op, SelectionDAG &DAG) {
                       Res, DAG.getCondCode(ISD::SETEQ));
   }
   return Res;
-}
-
-static SDValue lowerUnalignedI32Load(SDValue Op, SelectionDAG &DAG) {
-  auto *LD = cast<LoadSDNode>(Op);
-  if (LD->getMemoryVT() != MVT::i32 || LD->getAlign().value() >= 4 ||
-      LD->getAddressingMode() != ISD::UNINDEXED)
-    return SDValue();
-
-  SDLoc DL(Op);
-  SDValue Ptr = LD->getBasePtr();
-  SDValue Chain = LD->getChain();
-
-  auto loadByte = [&](SDValue CurChain, unsigned Offset) {
-    SDValue BytePtr = Ptr;
-    if (Offset)
-      BytePtr = DAG.getObjectPtrOffset(DL, Ptr, TypeSize::getFixed(Offset));
-    return DAG.getExtLoad(ISD::ZEXTLOAD, DL, MVT::i32, CurChain, BytePtr,
-                          LD->getPointerInfo().getWithOffset(Offset), MVT::i8,
-                          LD->getAlign(), LD->getMemOperand()->getFlags(),
-                          LD->getAAInfo());
-  };
-
-  SDValue B0 = loadByte(Chain, 0);
-  SDValue B1 = loadByte(B0.getValue(1), 1);
-  SDValue B2 = loadByte(B1.getValue(1), 2);
-  SDValue B3 = loadByte(B2.getValue(1), 3);
-
-  SDValue Result = B0;
-  Result = DAG.getNode(ISD::OR, DL, MVT::i32, Result,
-                       DAG.getNode(ISD::SHL, DL, MVT::i32, B1,
-                                   DAG.getConstant(8, DL, MVT::i32)));
-  Result = DAG.getNode(ISD::OR, DL, MVT::i32, Result,
-                       DAG.getNode(ISD::SHL, DL, MVT::i32, B2,
-                                   DAG.getConstant(16, DL, MVT::i32)));
-  Result = DAG.getNode(ISD::OR, DL, MVT::i32, Result,
-                       DAG.getNode(ISD::SHL, DL, MVT::i32, B3,
-                                   DAG.getConstant(24, DL, MVT::i32)));
-
-  if (LD->getValueType(0) != MVT::i32)
-    Result = DAG.getNode(ISD::ANY_EXTEND, DL, LD->getValueType(0), Result);
-
-  return DAG.getMergeValues({Result, B3.getValue(1)}, DL);
-}
-
-static SDValue lowerUnalignedI32Store(SDValue Op, SelectionDAG &DAG) {
-  auto *ST = cast<StoreSDNode>(Op);
-  if (ST->getMemoryVT() != MVT::i32 || ST->getAlign().value() >= 4 ||
-      ST->getAddressingMode() != ISD::UNINDEXED)
-    return SDValue();
-
-  SDLoc DL(Op);
-  SDValue Ptr = ST->getBasePtr();
-  SDValue Val = ST->getValue();
-  SDValue Chain = ST->getChain();
-
-  auto storeByte = [&](SDValue CurChain, SDValue ByteVal, unsigned Offset) {
-    SDValue BytePtr = Ptr;
-    if (Offset)
-      BytePtr = DAG.getObjectPtrOffset(DL, Ptr, TypeSize::getFixed(Offset));
-    return DAG.getTruncStore(CurChain, DL, ByteVal, BytePtr,
-                             ST->getPointerInfo().getWithOffset(Offset),
-                             MVT::i8, ST->getAlign(),
-                             ST->getMemOperand()->getFlags(), ST->getAAInfo());
-  };
-
-  SDValue B1 = DAG.getNode(ISD::SRL, DL, MVT::i32, Val,
-                           DAG.getConstant(8, DL, MVT::i32));
-  SDValue B2 = DAG.getNode(ISD::SRL, DL, MVT::i32, Val,
-                           DAG.getConstant(16, DL, MVT::i32));
-  SDValue B3 = DAG.getNode(ISD::SRL, DL, MVT::i32, Val,
-                           DAG.getConstant(24, DL, MVT::i32));
-
-  Chain = storeByte(Chain, Val, 0);
-  Chain = storeByte(Chain, B1, 1);
-  Chain = storeByte(Chain, B2, 2);
-  Chain = storeByte(Chain, B3, 3);
-  return Chain;
 }
 
 static bool matchConstS32(SDValue V, int32_t Value) {
@@ -673,10 +604,39 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
   SDLoc DL(Op);
 
   switch (Op.getOpcode()) {
-  case ISD::LOAD:
-    return lowerUnalignedI32Load(Op, DAG);
-  case ISD::STORE:
-    return lowerUnalignedI32Store(Op, DAG);
+  case ISD::LOAD: {
+    auto *LD = cast<LoadSDNode>(Op);
+    if (LD->getMemoryVT() == MVT::i32 && LD->getAlign().value() < 4 &&
+        LD->getAddressingMode() == ISD::UNINDEXED &&
+        allowsMemoryAccess(*DAG.getContext(), DAG.getDataLayout(),
+                           LD->getMemoryVT(), LD->getAddressSpace(),
+                           LD->getAlign(), LD->getMemOperand()->getFlags())) {
+      return DAG.getNode(TC32ISD::ULOAD, DL,
+                         DAG.getVTList(MVT::i32, MVT::Other),
+                         LD->getBasePtr(), LD->getChain());
+    }
+    break;
+  }
+  case ISD::STORE: {
+    auto *ST = cast<StoreSDNode>(Op);
+    if (ST->getMemoryVT() == MVT::i32 && ST->getAlign().value() < 4 &&
+        ST->getAddressingMode() == ISD::UNINDEXED &&
+        allowsMemoryAccess(*DAG.getContext(), DAG.getDataLayout(),
+                           ST->getMemoryVT(), ST->getAddressSpace(),
+                           ST->getAlign(), ST->getMemOperand()->getFlags())) {
+      return DAG.getNode(TC32ISD::USTORE, DL, MVT::Other,
+                         ST->getChain(), ST->getBasePtr(), ST->getValue());
+    }
+    break;
+  }
+  case ISD::MUL: {
+    if (Op.getValueType() != MVT::i32)
+      break;
+    MakeLibCallOptions CallOptions;
+    return makeLibCall(DAG, RTLIB::MUL_I32, MVT::i32,
+                       {Op.getOperand(0), Op.getOperand(1)}, CallOptions, DL)
+        .first;
+  }
   case ISD::BRCOND:
     return LowerBRCOND(Op, DAG);
   case ISD::BR_CC:
@@ -774,6 +734,23 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
   return SDValue();
 }
 
+bool TC32TargetLowering::allowsMisalignedMemoryAccesses(
+    EVT VT, unsigned, Align, MachineMemOperand::Flags, unsigned *Fast) const {
+  if (!VT.isSimple())
+    return false;
+
+  switch (VT.getSimpleVT().SimpleTy) {
+  case MVT::i8:
+  case MVT::i16:
+  case MVT::i32:
+    if (Fast)
+      *Fast = 1;
+    return true;
+  default:
+    return false;
+  }
+}
+
 SDValue TC32TargetLowering::LowerFormalArguments(
     SDValue Chain, CallingConv::ID CallConv, bool IsVarArg,
     const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &dl,
@@ -855,8 +832,10 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   MachineFunction &MF = DAG.getMachineFunction();
   MF.getFrameInfo().setHasCalls(true);
+  const unsigned NumRegArgs =
+      IsIndirectCall ? 3u : static_cast<unsigned>(std::size(ArgRegs));
   unsigned StackArgBytes =
-      Outs.size() > std::size(ArgRegs) ? (Outs.size() - std::size(ArgRegs)) * 4 : 0;
+      Outs.size() > NumRegArgs ? (Outs.size() - NumRegArgs) * 4 : 0;
   Chain = DAG.getCALLSEQ_START(Chain, StackArgBytes, 0, DL);
 
   SmallVector<std::pair<Register, SDValue>, 8> RegsToPass;
@@ -873,14 +852,14 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
       ArgVal = DAG.getNode(ExtendOp, DL, MVT::i32, ArgVal);
     }
 
-    if (I < std::size(ArgRegs)) {
+    if (I < NumRegArgs) {
       RegsToPass.push_back({ArgRegs[I], ArgVal});
       continue;
     }
 
     if (!StackPtr.getNode())
       StackPtr = DAG.getCopyFromReg(Chain, DL, TC32::R13, PtrVT);
-    unsigned StackOffset = (I - std::size(ArgRegs)) * 4;
+    unsigned StackOffset = (I - NumRegArgs) * 4;
     SDValue Addr = StackPtr;
     if (StackOffset != 0)
       Addr = DAG.getNode(ISD::ADD, DL, PtrVT, StackPtr,
@@ -898,24 +877,28 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
     Glue = Chain.getValue(1);
   }
 
-  if (IsIndirectCall) {
-    Chain = DAG.getCopyToReg(Chain, DL, TC32::R12, Callee, Glue);
-    Glue = Chain.getValue(1);
-    Callee = DAG.getTargetExternalSymbol("__tc32_indirect_call_r12", PtrVT);
-  }
-
   SmallVector<SDValue, 8> Ops;
-  Ops.push_back(Callee);
   Ops.push_back(Chain);
-
   unsigned CallOpc = TC32::TJL;
-  switch (RegsToPass.size()) {
-  case 0: CallOpc = TC32::TJL; break;
-  case 1: CallOpc = TC32::TJL_R0; break;
-  case 2: CallOpc = TC32::TJL_R0_R1; break;
-  case 3: CallOpc = TC32::TJL_R0_R1_R2; break;
-  default: CallOpc = TC32::TJL_R0_R1_R2_R3; break;
+
+  if (IsIndirectCall) {
+    Chain = DAG.getCopyToReg(Chain, DL, TC32::R3, Callee, Glue);
+    Glue = Chain.getValue(1);
+    Ops[0] = Chain;
+    CallOpc = TC32::TINDCALL_R3;
+  } else {
+    Ops.insert(Ops.begin(), Callee);
+    switch (RegsToPass.size()) {
+    case 0: CallOpc = TC32::TJL; break;
+    case 1: CallOpc = TC32::TJL_R0; break;
+    case 2: CallOpc = TC32::TJL_R0_R1; break;
+    case 3: CallOpc = TC32::TJL_R0_R1_R2; break;
+    default: CallOpc = TC32::TJL_R0_R1_R2_R3; break;
+    }
   }
+
+  if (Glue.getNode())
+    Ops.push_back(Glue);
 
   MachineSDNode *Call =
       DAG.getMachineNode(CallOpc, DL, {MVT::Other, MVT::Glue}, Ops);
