@@ -8,6 +8,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/CodeGen/TargetOpcodes.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/Function.h"
@@ -107,8 +108,8 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SELECT_CC, MVT::i32, Legal);
   setOperationAction(ISD::SELECT_CC, MVT::i8, Legal);
   setOperationAction(ISD::BRCOND, MVT::Other, Legal);
-  setOperationAction(ISD::BR_CC, MVT::i32, Legal);
-  setOperationAction(ISD::BR_CC, MVT::i8, Legal);
+  setOperationAction(ISD::BR_CC, MVT::i32, Custom);
+  setOperationAction(ISD::BR_CC, MVT::i8, Custom);
   setOperationAction(ISD::FrameIndex, MVT::i32, Custom);
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i8, MVT::i1, Promote);
@@ -355,6 +356,28 @@ static SDValue stripBooleanCastsForSelect(SDValue V) {
   }
 }
 
+
+SDValue TC32TargetLowering::LowerBR_CC(SDValue Op,
+                                       SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue Chain = Op.getOperand(0);
+  auto *CCNode = cast<CondCodeSDNode>(Op.getOperand(1));
+  SDValue LHS = Op.getOperand(2);
+  SDValue RHS = Op.getOperand(3);
+  SDValue Dest = Op.getOperand(4);
+  ISD::CondCode CC = CCNode->get();
+
+  EVT CmpVT = LHS.getValueType();
+  if (CmpVT == MVT::i8 || CmpVT == MVT::i16) {
+    LHS = extendForCompare(DAG, DL, LHS, CC);
+    RHS = extendForCompare(DAG, DL, RHS, CC);
+  }
+
+  SDValue Cond = DAG.getSetCC(DL, MVT::i32, LHS, RHS, CC);
+  return DAG.getNode(ISD::BRCOND, DL, MVT::Other, Chain, Cond, Dest);
+}
+
+
 MachineBasicBlock *
 TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                 MachineBasicBlock *MBB) const {
@@ -504,6 +527,8 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
     return lowerUnalignedI32Load(Op, DAG);
   case ISD::STORE:
     return lowerUnalignedI32Store(Op, DAG);
+  case ISD::BR_CC:
+    return LowerBR_CC(Op, DAG);
   case ISD::SELECT: {
     EVT VT = Op.getValueType();
     if (VT != MVT::i32 && VT != MVT::i8)
@@ -551,6 +576,13 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
     SDValue LHS = Op.getOperand(0);
     SDValue RHS = Op.getOperand(1);
     SDValue CC = Op.getOperand(2);
+    if (LHS.getValueType() == MVT::i8 || LHS.getValueType() == MVT::i16) {
+      auto *CCNode = dyn_cast<CondCodeSDNode>(CC);
+      if (!CCNode)
+        break;
+      LHS = extendForCompare(DAG, DL, LHS, CCNode->get());
+      RHS = extendForCompare(DAG, DL, RHS, CCNode->get());
+    }
     SDValue One = DAG.getConstant(1, DL, VT);
     SDValue Zero = DAG.getConstant(0, DL, VT);
     return DAG.getNode(ISD::SELECT_CC, DL, VT, LHS, RHS, One, Zero, CC);

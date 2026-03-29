@@ -11,6 +11,12 @@
 
 using namespace llvm;
 
+static int getFixedObjectOffsetAdjustment(const MachineFunction &MF) {
+  const auto *TFL =
+      static_cast<const TC32FrameLowering *>(MF.getSubtarget().getFrameLowering());
+  return static_cast<int>(TFL->getFixedObjectBaseOffset(MF));
+}
+
 #define GET_REGINFO_TARGET_DESC
 #include "TC32GenRegisterInfo.inc"
 
@@ -118,9 +124,8 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
     assert(!MFI.hasVarSizedObjects() &&
            "cannot address TC32 scavenging slot from SP with var-sized objects");
     BaseReg = TC32::R13;
-  } else if (TFI->hasFP(MF) && Fixed) {
-    BaseReg = TC32::R7;
-    FrameImm += StackSize + 8;
+  } else if (Fixed) {
+    FrameImm += getFixedObjectOffsetAdjustment(MF);
   }
 
   auto getScratchReg = [&]() -> Register {

@@ -12,6 +12,12 @@ using namespace llvm;
 #define GET_INSTRINFO_CTOR_DTOR
 #include "TC32GenInstrInfo.inc"
 
+static int getFixedObjectOffsetAdjustment(const MachineFunction &MF) {
+  const auto *TFL =
+      static_cast<const TC32FrameLowering *>(MF.getSubtarget().getFrameLowering());
+  return static_cast<int>(TFL->getFixedObjectBaseOffset(MF));
+}
+
 static bool isLowPhysReg(Register Reg) {
   return Reg.isPhysical() && TC32::LoGR32RegClass.contains(Reg);
 }
@@ -45,9 +51,8 @@ bool TC32InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
     int StackSize = MFI.getStackSize();
     unsigned BaseReg = TFI->hasFP(MF) ? TC32::R7 : TC32::R13;
     int FrameImm = (Fixed ? Offset : Offset + StackSize) + ExtraImm;
-    if (TFI->hasFP(MF) && Fixed) {
-      BaseReg = TC32::R7;
-      FrameImm += StackSize + 8;
+    if (Fixed) {
+      FrameImm += getFixedObjectOffsetAdjustment(MF);
     }
 
     if (BaseReg == TC32::R13 && FrameImm >= 0 && FrameImm <= 252 &&

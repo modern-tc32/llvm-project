@@ -86,19 +86,17 @@ static bool matchSPPlusConst(SDValue Ptr, int64_t &Imm) {
 static bool getFrameIndexReference(const SelectionDAG *DAG, int FI, int64_t ExtraImm,
                                    unsigned &BaseReg, int &Imm) {
   const MachineFrameInfo &MFI = DAG->getMachineFunction().getFrameInfo();
+  const MachineFunction &MF = DAG->getMachineFunction();
   bool Fixed = MFI.isFixedObjectIndex(FI);
   int Offset = MFI.getObjectOffset(FI);
   int StackSize = MFI.getStackSize();
+  const auto *TFL = static_cast<const TC32FrameLowering *>(
+      DAG->getSubtarget().getFrameLowering());
 
-  BaseReg = DAG->getSubtarget().getFrameLowering()->hasFP(
-                DAG->getMachineFunction())
-                ? TC32::R7
-                : TC32::R13;
+  BaseReg = TFL->hasFP(MF) ? TC32::R7 : TC32::R13;
   Imm = (Fixed ? Offset : Offset + StackSize) + ExtraImm;
-  if (DAG->getSubtarget().getFrameLowering()->hasFP(DAG->getMachineFunction()) &&
-      Fixed) {
-    BaseReg = TC32::R7;
-    Imm += StackSize + 8;
+  if (Fixed) {
+    Imm += static_cast<int>(TFL->getFixedObjectBaseOffset(MF));
   }
   return Imm >= 0 && Imm <= 255;
 }

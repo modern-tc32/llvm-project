@@ -62,8 +62,6 @@ public:
   }
 
 private:
-public:
-
   void emitInstruction(const MachineInstr *MI) override {
     if (MI->getOpcode() == TC32::TLOADaddr) {
       MCSymbol *PoolLabel = OutContext.createTempSymbol();
