@@ -1,7 +1,9 @@
 #include "TC32TargetMachine.h"
+#include "TC32TargetTransformInfo.h"
 #include "TC32.h"
 #include "TC32InstrInfo.h"
 #include "TC32Subtarget.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "TargetInfo/TC32TargetInfo.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -108,9 +110,11 @@ public:
 
     auto getInstSize = [&](const MachineInstr &MI, uint64_t Offset) {
       if (MI.getOpcode() == TC32::TLOADaddr) {
-        uint64_t AfterLoadAndJump = Offset + 4;
-        uint64_t AlignPad = (4 - (AfterLoadAndJump & 0x3)) & 0x3;
-        return static_cast<unsigned>(4 + AlignPad + 4);
+        (void)Offset;
+        // TLOADaddr now lowers to a single PC-relative load. The literal words
+        // are emitted once at function end by the asm printer, so local branch
+        // layout within the function must treat this as a 2-byte instruction.
+        return 2u;
       }
       return TII->getInstSizeInBytes(MI);
     };
@@ -318,4 +322,9 @@ TargetPassConfig *TC32TargetMachine::createPassConfig(PassManagerBase &PM) {
 const TargetSubtargetInfo *TC32TargetMachine::getSubtargetImpl(const Function &F) const {
   (void)F;
   return Subtarget.get();
+}
+
+TargetTransformInfo
+TC32TargetMachine::getTargetTransformInfo(const Function &F) const {
+  return TargetTransformInfo(std::make_unique<TC32TTIImpl>(this, F));
 }

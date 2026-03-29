@@ -2,6 +2,7 @@
 #define LLVM_LIB_TARGET_TC32_TC32TARGETMACHINE_H
 
 #include "TC32Subtarget.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/CodeGen/CodeGenTargetMachineImpl.h"
 #include <memory>
 #include <optional>
@@ -21,6 +22,7 @@ public:
 
   TargetPassConfig *createPassConfig(PassManagerBase &PM) override;
   const TargetSubtargetInfo *getSubtargetImpl(const Function &F) const override;
+  TargetTransformInfo getTargetTransformInfo(const Function &F) const override;
 
   TargetLoweringObjectFile *getObjFileLowering() const override {
     return TLOF.get();

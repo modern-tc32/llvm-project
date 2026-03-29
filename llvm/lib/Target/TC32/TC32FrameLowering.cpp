@@ -19,15 +19,21 @@ bool TC32FrameLowering::isR7Reserved(const MachineFunction &MF) const {
   return MF.getSubtarget<TC32Subtarget>().isR7Reserved(MF);
 }
 
+bool TC32FrameLowering::usesPushLR(const MachineFunction &MF) const {
+  return MF.getFrameInfo().hasCalls();
+}
+
 bool TC32FrameLowering::usesPushR7LR(const MachineFunction &MF) const {
-  return hasFP(MF) || MF.getFrameInfo().hasCalls();
+  return hasFP(MF);
 }
 
 unsigned TC32FrameLowering::getFixedObjectBaseOffset(
     const MachineFunction &MF) const {
-  if (!usesPushR7LR(MF))
-    return 0;
-  return MF.getFrameInfo().getStackSize() + 8;
+  if (usesPushR7LR(MF))
+    return MF.getFrameInfo().getStackSize() + 8;
+  if (usesPushLR(MF))
+    return MF.getFrameInfo().getStackSize() + 4;
+  return 0;
 }
 
 void TC32FrameLowering::determineCalleeSaves(MachineFunction &MF,
@@ -61,6 +67,7 @@ void TC32FrameLowering::emitPrologue(MachineFunction &MF,
     DL = I->getDebugLoc();
 
   const bool UseFP = hasFP(MF);
+  const bool PushLR = usesPushLR(MF);
   const bool PushR7LR = usesPushR7LR(MF);
   assert((!PushR7LR || isR7Reserved(MF)) &&
          "TC32 push {r7,lr} requires reserved r7");
@@ -71,6 +78,8 @@ void TC32FrameLowering::emitPrologue(MachineFunction &MF,
 
   if (PushR7LR)
     BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_R7_LR));
+  else if (PushLR)
+    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_LR));
 
   int StackSize = MF.getFrameInfo().getStackSize();
   if (StackSize > 0)
@@ -93,6 +102,7 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
     DL = I->getDebugLoc();
 
   const bool UseFP = hasFP(MF);
+  const bool PushLR = usesPushLR(MF);
   const bool PushR7LR = usesPushR7LR(MF);
   assert((!PushR7LR || isR7Reserved(MF)) &&
          "TC32 pop {r7,pc} requires reserved r7");
@@ -114,11 +124,19 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
       (I->getOpcode() == TC32::TRET || I->getOpcode() == TC32::TRET_R0))
     I = MBB.erase(I);
 
-  if (!PushR7LR) {
+  if (!PushLR) {
     auto MIB = BuildMI(
         MBB, I, DL,
         MF.getSubtarget().getInstrInfo()->get(ReturnsR0 ? TC32::TRET_R0
                                                         : TC32::TRET));
+    if (ReturnsR0)
+      MIB.addReg(TC32::R0, RegState::Implicit);
+    return;
+  }
+
+  if (!PushR7LR) {
+    auto MIB =
+        BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_PC));
     if (ReturnsR0)
       MIB.addReg(TC32::R0, RegState::Implicit);
     return;

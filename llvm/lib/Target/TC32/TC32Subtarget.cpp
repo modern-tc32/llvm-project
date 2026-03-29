@@ -1,6 +1,7 @@
 #include "TC32Subtarget.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/LibcallLoweringInfo.h"
+#include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
 
@@ -52,6 +53,7 @@ bool TC32Subtarget::isR7Reserved(const MachineFunction &MF) const {
     return true;
 
   const MachineFrameInfo &MFI = MF.getFrameInfo();
-  return MFI.hasCalls() || MFI.hasVarSizedObjects() || MFI.isFrameAddressTaken() ||
+  return MFI.hasVarSizedObjects() || MFI.isFrameAddressTaken() ||
+         MF.getTarget().Options.DisableFramePointerElim(MF) ||
          MF.getFunction().isVarArg();
 }

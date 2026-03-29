@@ -21,6 +21,10 @@ void TC32InstPrinter::printInst(const MCInst *MI, uint64_t Address,
     O << "tpush\t{r0, r1, r2, r3}";
     printAnnotation(O, Annot);
     return;
+  case TC32::TPUSH_LR:
+    O << "tpush\t{lr}";
+    printAnnotation(O, Annot);
+    return;
   case TC32::TPUSH_R7_LR:
     O << "tpush\t{r7, lr}";
     printAnnotation(O, Annot);
@@ -31,6 +35,10 @@ void TC32InstPrinter::printInst(const MCInst *MI, uint64_t Address,
     return;
   case TC32::TPOP_R3:
     O << "tpop\t{r3}";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TPOP_PC:
+    O << "tpop\t{pc}";
     printAnnotation(O, Annot);
     return;
   case TC32::TPOP_R7_PC:

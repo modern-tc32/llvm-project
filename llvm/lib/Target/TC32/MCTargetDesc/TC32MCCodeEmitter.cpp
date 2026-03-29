@@ -352,6 +352,9 @@ public:
     case TC32::TPUSH_R0_R1_R2_R3:
       Bits = 0x640F;
       break;
+    case TC32::TPUSH_LR:
+      Bits = 0x6500;
+      break;
     case TC32::TPUSH_R7_LR:
       Bits = 0x6580;
       break;
@@ -360,6 +363,9 @@ public:
       break;
     case TC32::TPOP_R3:
       Bits = 0x6C08;
+      break;
+    case TC32::TPOP_PC:
+      Bits = 0x6D00;
       break;
     case TC32::TPOP_R7_PC:
       Bits = 0x6D80;
