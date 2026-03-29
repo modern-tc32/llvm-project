@@ -135,6 +135,13 @@ def TJL_R0_R1_R2_R3 : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
   let Uses = [R0, R1, R2, R3];
 }
 
+def TINDCALL_R3 : Pseudo<(outs), (ins), "#TINDCALL_R3"> {
+  let Size = 4;
+  let isCall = 1;
+  let Defs = [R0, R1, R2, R3, R14];
+  let Uses = [R0, R1, R2, R3];
+}
+
 def TCMPri0 : TC32Inst<(outs), (ins LoGR32:$src), "tcmp\t$src, #0"> {
   let isCompare = 1;
   let Defs = [CPSR];

@@ -533,45 +533,6 @@ public:
                    0);
   }
 
-  bool trySelectUnalignedI32Load(SDNode *Node, LoadSDNode *LD, const SDLoc &DL) {
-    if (Node->getValueType(0) != MVT::i32 || LD->getMemoryVT() != MVT::i32 ||
-        LD->getAlign().value() >= 4 || LD->getBasePtr().getValueType() != MVT::i32)
-      return false;
-
-    SDValue Ptr = LD->getBasePtr();
-    SDValue Load0 = emitByteLoad(Ptr, LD->getChain(), 0, DL);
-    SDValue Load1 = emitByteLoad(Ptr, Load0.getValue(1), 1, DL);
-    SDValue Load2 = emitByteLoad(Ptr, Load1.getValue(1), 2, DL);
-    SDValue Load3 = emitByteLoad(Ptr, Load2.getValue(1), 3, DL);
-
-    auto Imm = [&](unsigned Value) {
-      return CurDAG->getTargetConstant(Value, DL, MVT::i32);
-    };
-
-    SDValue Byte1Shifted = SDValue(
-        CurDAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, SDValue(Load1.getNode(), 0),
-                               Imm(8)),
-        0);
-    SDValue Byte2Shifted = SDValue(
-        CurDAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, SDValue(Load2.getNode(), 0),
-                               Imm(16)),
-        0);
-    SDValue Byte3Shifted = SDValue(
-        CurDAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, SDValue(Load3.getNode(), 0),
-                               Imm(24)),
-        0);
-
-    SDValue Acc = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32, SDValue(Load0.getNode(), 0),
-                                   Byte1Shifted);
-    Acc = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32, Acc, Byte2Shifted);
-    Acc = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32, Acc, Byte3Shifted);
-
-    CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 0), Acc);
-    CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 1), Load3.getValue(1));
-    CurDAG->RemoveDeadNode(Node);
-    return true;
-  }
-
   bool trySelectExtI16Load(SDNode *Node, LoadSDNode *LD, const SDLoc &DL) {
     if (Node->getValueType(0) != MVT::i32 || LD->getMemoryVT() != MVT::i16 ||
         (LD->getExtensionType() != ISD::ZEXTLOAD &&
@@ -593,36 +554,6 @@ public:
     CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 0), Acc);
     CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 1), Load1.getValue(1));
     CurDAG->RemoveDeadNode(Node);
-    return true;
-  }
-
-  bool trySelectUnalignedI32Store(StoreSDNode *ST, const SDLoc &DL) {
-    if (ST->getValue().getValueType() != MVT::i32 || ST->getMemoryVT() != MVT::i32 ||
-        ST->getAlign().value() >= 4 || ST->getBasePtr().getValueType() != MVT::i32)
-      return false;
-
-    auto Imm = [&](unsigned Value) {
-      return CurDAG->getTargetConstant(Value, DL, MVT::i32);
-    };
-
-    SDValue Value = ST->getValue();
-    SDValue Byte1 = SDValue(CurDAG->getMachineNode(TC32::TSHFTRi5, DL, MVT::i32, Value,
-                                                   Imm(8)),
-                            0);
-    SDValue Byte2 = SDValue(CurDAG->getMachineNode(TC32::TSHFTRi5, DL, MVT::i32, Value,
-                                                   Imm(16)),
-                            0);
-    SDValue Byte3 = SDValue(CurDAG->getMachineNode(TC32::TSHFTRi5, DL, MVT::i32, Value,
-                                                   Imm(24)),
-                            0);
-
-    SDValue Chain0 = emitByteStore(Value, ST->getBasePtr(), ST->getChain(), 0, DL);
-    SDValue Chain1 = emitByteStore(Byte1, ST->getBasePtr(), Chain0, 1, DL);
-    SDValue Chain2 = emitByteStore(Byte2, ST->getBasePtr(), Chain1, 2, DL);
-    SDValue Chain3 = emitByteStore(Byte3, ST->getBasePtr(), Chain2, 3, DL);
-
-    CurDAG->ReplaceAllUsesOfValueWith(SDValue(ST, 0), Chain3);
-    CurDAG->RemoveDeadNode(ST);
     return true;
   }
 
@@ -710,8 +641,6 @@ public:
     }
 
     if (auto *LD = dyn_cast<LoadSDNode>(Node)) {
-      if (trySelectUnalignedI32Load(Node, LD, DL))
-        return;
       if (trySelectExtI16Load(Node, LD, DL))
         return;
 
@@ -1052,6 +981,69 @@ public:
 
       ReplaceNode(Node, CurDAG->getMachineNode(BrOpc, DL, MVT::Other, Dest,
                                                Chain, SDValue(Cmp, 0)));
+      return;
+    }
+    case TC32ISD::ULOAD: {
+      SDValue BasePtr = Node->getOperand(0);
+      SDValue Chain = Node->getOperand(1);
+      SDValue Load0 = emitByteLoad(BasePtr, Chain, 0, DL);
+      SDValue Load1 = emitByteLoad(BasePtr, Load0.getValue(1), 1, DL);
+      SDValue Load2 = emitByteLoad(BasePtr, Load1.getValue(1), 2, DL);
+      SDValue Load3 = emitByteLoad(BasePtr, Load2.getValue(1), 3, DL);
+
+      SDValue Byte1Shifted = SDValue(
+          CurDAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32,
+                                 SDValue(Load1.getNode(), 0),
+                                 CurDAG->getTargetConstant(8, DL, MVT::i32)),
+          0);
+      SDValue Byte2Shifted = SDValue(
+          CurDAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32,
+                                 SDValue(Load2.getNode(), 0),
+                                 CurDAG->getTargetConstant(16, DL, MVT::i32)),
+          0);
+      SDValue Byte3Shifted = SDValue(
+          CurDAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32,
+                                 SDValue(Load3.getNode(), 0),
+                                 CurDAG->getTargetConstant(24, DL, MVT::i32)),
+          0);
+
+      SDValue Acc01 = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32,
+                                       SDValue(Load0.getNode(), 0),
+                                       Byte1Shifted);
+      SDValue Acc012 = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32,
+                                        Acc01, Byte2Shifted);
+      SDValue Acc0123 = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32,
+                                         Acc012, Byte3Shifted);
+
+      CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 0), Acc0123);
+      CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 1), Load3.getValue(1));
+      CurDAG->RemoveDeadNode(Node);
+      return;
+    }
+    case TC32ISD::USTORE: {
+      SDValue Chain = Node->getOperand(0);
+      SDValue BasePtr = Node->getOperand(1);
+      SDValue Value = Node->getOperand(2);
+      SDValue Byte0 = Value;
+      SDValue Byte1 = SDValue(
+          CurDAG->getMachineNode(TC32::TSHFTRi5, DL, MVT::i32, Value,
+                                 CurDAG->getTargetConstant(8, DL, MVT::i32)),
+          0);
+      SDValue Byte2 = SDValue(
+          CurDAG->getMachineNode(TC32::TSHFTRi5, DL, MVT::i32, Value,
+                                 CurDAG->getTargetConstant(16, DL, MVT::i32)),
+          0);
+      SDValue Byte3 = SDValue(
+          CurDAG->getMachineNode(TC32::TSHFTRi5, DL, MVT::i32, Value,
+                                 CurDAG->getTargetConstant(24, DL, MVT::i32)),
+          0);
+
+      SDValue Store0 = emitByteStore(Byte0, BasePtr, Chain, 0, DL);
+      SDValue Store1 = emitByteStore(Byte1, BasePtr, Store0, 1, DL);
+      SDValue Store2 = emitByteStore(Byte2, BasePtr, Store1, 2, DL);
+      SDValue Store3 = emitByteStore(Byte3, BasePtr, Store2, 3, DL);
+
+      ReplaceNode(Node, Store3.getNode());
       return;
     }
     case ISD::GlobalAddress: {
@@ -1443,6 +1435,7 @@ public:
       int64_t Imm;
       int FI;
       if (Node->getValueType(0) == MVT::i32 && LD->getMemoryVT() == MVT::i32 &&
+          LD->getAlign().value() >= 4 &&
           matchSPPlusConst(LD->getBasePtr(), Imm) &&
           Imm >= 0 && Imm <= 1020 && (Imm & 3) == 0) {
         ReplaceNode(Node, CurDAG->getMachineNode(
@@ -1479,6 +1472,7 @@ public:
         return;
       }
       if (Node->getValueType(0) == MVT::i32 && LD->getMemoryVT() == MVT::i32 &&
+          LD->getAlign().value() >= 4 &&
           LD->getBasePtr().getValueType() == MVT::i32) {
         if (matchFrameIndexPlusConst(LD->getBasePtr(), FI, Imm) &&
             Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {
@@ -1517,9 +1511,6 @@ public:
     }
     case ISD::STORE: {
       auto *ST = cast<StoreSDNode>(Node);
-      if (trySelectUnalignedI32Store(ST, DL))
-        return;
-
       SDValue Base;
       int64_t Imm;
       int FI;
@@ -1560,7 +1551,8 @@ public:
         return;
       }
       if (ST->getValue().getValueType() == MVT::i32 &&
-          ST->getMemoryVT() == MVT::i32 && matchSPPlusConst(ST->getBasePtr(), Imm) &&
+          ST->getMemoryVT() == MVT::i32 && ST->getAlign().value() >= 4 &&
+          matchSPPlusConst(ST->getBasePtr(), Imm) &&
           Imm >= 0 && Imm <= 1020 && (Imm & 3) == 0) {
         ReplaceNode(Node, CurDAG->getMachineNode(
                               TC32::TSTOREspu8, DL, MVT::Other, ST->getValue(),
@@ -1622,6 +1614,7 @@ public:
       }
       if (ST->getValue().getValueType() == MVT::i32 &&
           ST->getMemoryVT() == MVT::i32 &&
+          ST->getAlign().value() >= 4 &&
           ST->getBasePtr().getValueType() == MVT::i32) {
         if (matchFrameIndexPlusConst(ST->getBasePtr(), FI, Imm) &&
             Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {

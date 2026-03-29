@@ -13,6 +13,7 @@
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstBuilder.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -63,9 +64,16 @@ public:
     AsmPrinter::emitFunctionEntryLabel();
   }
 
-  void emitFunctionBodyStart() override { PendingAddrLiterals.clear(); }
+  void emitFunctionBodyStart() override {
+    PendingAddrLiterals.clear();
+    IndirectCallR3Pad = nullptr;
+  }
 
   void emitFunctionBodyEnd() override {
+    if (IndirectCallR3Pad) {
+      OutStreamer->emitLabel(IndirectCallR3Pad);
+      EmitToStreamer(*OutStreamer, MCInstBuilder(TC32::TJEXr).addReg(TC32::R3));
+    }
     if (!PendingAddrLiterals.empty()) {
       OutStreamer->emitValueToAlignment(Align(4));
       for (const PendingAddrLiteral &Literal : PendingAddrLiterals) {
@@ -84,6 +92,7 @@ private:
   };
 
   SmallVector<PendingAddrLiteral, 8> PendingAddrLiterals;
+  MCSymbol *IndirectCallR3Pad = nullptr;
 
   const MCExpr *getAddrLiteralValue(const MachineInstr *MI,
                                     const MachineOperand &MO) {
@@ -106,6 +115,15 @@ private:
   }
 
   void emitInstruction(const MachineInstr *MI) override {
+    if (MI->getOpcode() == TC32::TINDCALL_R3) {
+      if (!IndirectCallR3Pad)
+        IndirectCallR3Pad = OutContext.createTempSymbol();
+      EmitToStreamer(*OutStreamer,
+                     MCInstBuilder(TC32::TJL)
+                         .addExpr(MCSymbolRefExpr::create(IndirectCallR3Pad, OutContext)));
+      return;
+    }
+
     if (MI->getOpcode() == TC32::TLOADaddr) {
       MCSymbol *PoolLabel = OutContext.createTempSymbol();
 

@@ -3,6 +3,7 @@
 
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/TargetLowering.h"
+#include "llvm/Support/Alignment.h"
 
 namespace llvm {
 
@@ -13,6 +14,8 @@ enum NodeType : unsigned {
   FIRST_NUMBER = ISD::BUILTIN_OP_END,
   FRAMEADDR,
   BRCOND,
+  ULOAD,
+  USTORE,
   CALL,
   RET_FLAG
 };
@@ -41,6 +44,11 @@ public:
 
   SDValue LowerCall(CallLoweringInfo &CLI,
                     SmallVectorImpl<SDValue> &InVals) const override;
+
+  bool allowsMisalignedMemoryAccesses(EVT VT, unsigned AddrSpace,
+                                      Align Alignment,
+                                      MachineMemOperand::Flags Flags,
+                                      unsigned *Fast) const override;
 
   bool CanLowerReturn(CallingConv::ID CallConv, MachineFunction &MF,
                       bool IsVarArg,

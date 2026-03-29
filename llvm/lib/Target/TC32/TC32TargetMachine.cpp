@@ -285,6 +285,48 @@ public:
 
 char TC32BranchRelaxationPass::ID = 0;
 
+class TC32CallMaskPass : public MachineFunctionPass {
+public:
+  static char ID;
+
+  TC32CallMaskPass() : MachineFunctionPass(ID) {}
+
+  StringRef getPassName() const override {
+    return "TC32 Call Preserved Mask";
+  }
+
+  bool runOnMachineFunction(MachineFunction &MF) override {
+    const auto *TRI = MF.getSubtarget().getRegisterInfo();
+    const uint32_t *Mask = TRI->getCallPreservedMask(MF, CallingConv::C);
+    if (!Mask)
+      return false;
+
+    bool Changed = false;
+    for (MachineBasicBlock &MBB : MF) {
+      for (MachineInstr &MI : MBB) {
+        if (!MI.isCall())
+          continue;
+
+        bool HasRegMask = false;
+        for (const MachineOperand &MO : MI.operands()) {
+          if (MO.isRegMask()) {
+            HasRegMask = true;
+            break;
+          }
+        }
+        if (HasRegMask)
+          continue;
+
+        MI.addOperand(MF, MachineOperand::CreateRegMask(Mask));
+        Changed = true;
+      }
+    }
+    return Changed;
+  }
+};
+
+char TC32CallMaskPass::ID = 0;
+
 class TC32PassConfig : public TargetPassConfig {
 public:
   TC32PassConfig(TC32TargetMachine &TM, PassManagerBase &PM)
@@ -309,6 +351,8 @@ public:
     addPass(createTC32ISelDag(getTC32TargetMachine(), getOptLevel()));
     return false;
   }
+
+  void addPreRegAlloc() override { addPass(new TC32CallMaskPass()); }
 
   void addPreEmitPass() override { addPass(new TC32BranchRelaxationPass()); }
 };

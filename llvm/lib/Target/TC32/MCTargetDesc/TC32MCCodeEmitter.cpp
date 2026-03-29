@@ -432,7 +432,7 @@ public:
       break;
     case TC32::TJEXr:
       Bits = static_cast<uint16_t>(0x0700u |
-                                   (getRegEncoding(MI.getOperand(0).getReg()) << 4));
+                                   (getRegEncoding(MI.getOperand(0).getReg()) << 3));
       break;
     case TC32::TMOVrr:
       Bits = encodeTMOVrr(MI);
