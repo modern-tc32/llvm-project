@@ -44,10 +44,14 @@ void TC32Subtarget::initLibcallLoweringInfo(LibcallLoweringInfo &Info) const {
 }
 
 bool TC32Subtarget::isR7Reserved(const MachineFunction &MF) const {
-  // TC32 firmware uses r7 as a special low-level register in practice.
-  // Keep the policy explicit at the subtarget level so frame lowering and
-  // register allocation make the same decision, similar to ARM's split
-  // reserved-frame-pointer logic.
-  (void)MF;
-  return ReserveR7;
+  // Keep the reservation decision explicit and per-function so register
+  // allocation, frame lowering, and PEI all agree on when r7 is unavailable.
+  // This mirrors ARM's split between subtarget-forced reservation and
+  // function-driven FP/LR-save policy.
+  if (ReserveR7)
+    return true;
+
+  const MachineFrameInfo &MFI = MF.getFrameInfo();
+  return MFI.hasCalls() || MFI.hasVarSizedObjects() || MFI.isFrameAddressTaken() ||
+         MF.getFunction().isVarArg();
 }

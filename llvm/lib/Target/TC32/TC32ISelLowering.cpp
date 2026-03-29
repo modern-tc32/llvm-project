@@ -272,6 +272,89 @@ static SDValue lowerUnalignedI32Store(SDValue Op, SelectionDAG &DAG) {
   return Chain;
 }
 
+static bool matchConstS32(SDValue V, int32_t Value) {
+  if (auto *CN = dyn_cast<ConstantSDNode>(V))
+    return CN->getSExtValue() == Value;
+  return false;
+}
+
+static SDValue extendForCompare(SelectionDAG &DAG, const SDLoc &DL, SDValue V,
+                                ISD::CondCode CC) {
+  EVT VT = V.getValueType();
+  if (VT == MVT::i32)
+    return V;
+
+  if (ISD::isSignedIntSetCC(CC))
+    return DAG.getNode(ISD::SIGN_EXTEND, DL, MVT::i32, V);
+
+  if (ISD::isUnsignedIntSetCC(CC))
+    return DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, V);
+
+  return DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i32, V);
+}
+
+static SDValue lowerCompareSelectToSignOrOne(SelectionDAG &DAG, const SDLoc &DL,
+                                             EVT VT, SDValue LHS, SDValue RHS,
+                                             ISD::CondCode CC, SDValue TrueVal,
+                                             SDValue FalseVal) {
+  if (VT != MVT::i32)
+    return SDValue();
+
+  bool ReturnNegOneOnTrue = false;
+  bool ReverseOperands = false;
+  switch (CC) {
+  case ISD::SETULT:
+    if (!matchConstS32(TrueVal, -1) || !matchConstS32(FalseVal, 1))
+      return SDValue();
+    ReturnNegOneOnTrue = true;
+    break;
+  case ISD::SETUGT:
+    if (!matchConstS32(TrueVal, -1) || !matchConstS32(FalseVal, 1))
+      return SDValue();
+    ReturnNegOneOnTrue = true;
+    ReverseOperands = true;
+    break;
+  default:
+    return SDValue();
+  }
+
+  if (!ReturnNegOneOnTrue)
+    return SDValue();
+
+  SDValue A = extendForCompare(DAG, DL, ReverseOperands ? RHS : LHS, CC);
+  SDValue B = extendForCompare(DAG, DL, ReverseOperands ? LHS : RHS, CC);
+  SDValue Diff = DAG.getNode(ISD::SUB, DL, MVT::i32, A, B);
+  SDValue Sign = DAG.getNode(ISD::SRA, DL, MVT::i32, Diff,
+                             DAG.getConstant(31, DL, MVT::i32));
+  return DAG.getNode(ISD::OR, DL, MVT::i32, Sign,
+                     DAG.getConstant(1, DL, MVT::i32));
+}
+
+static SDValue stripBooleanCastsForSelect(SDValue V) {
+  while (true) {
+    switch (V.getOpcode()) {
+    case ISD::ZERO_EXTEND:
+    case ISD::SIGN_EXTEND:
+    case ISD::ANY_EXTEND:
+    case ISD::TRUNCATE:
+      V = V.getOperand(0);
+      continue;
+    case ISD::AND:
+      if (matchConstS32(V.getOperand(0), 1)) {
+        V = V.getOperand(1);
+        continue;
+      }
+      if (matchConstS32(V.getOperand(1), 1)) {
+        V = V.getOperand(0);
+        continue;
+      }
+      return V;
+    default:
+      return V;
+    }
+  }
+}
+
 MachineBasicBlock *
 TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                 MachineBasicBlock *MBB) const {
@@ -430,7 +513,23 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
     SDValue TrueVal = Op.getOperand(1);
     SDValue FalseVal = Op.getOperand(2);
 
+    SDValue RawCond = stripBooleanCastsForSelect(Cond);
+    if (RawCond.getOpcode() == ISD::SETCC) {
+      if (auto *CC = dyn_cast<CondCodeSDNode>(RawCond.getOperand(2))) {
+        if (SDValue Res = lowerCompareSelectToSignOrOne(
+                DAG, DL, VT, RawCond.getOperand(0), RawCond.getOperand(1),
+                CC->get(), TrueVal, FalseVal))
+          return Res;
+      }
+    }
+
     if (Cond.getOpcode() == ISD::SETCC) {
+      if (auto *CC = dyn_cast<CondCodeSDNode>(Cond.getOperand(2))) {
+        if (SDValue Res = lowerCompareSelectToSignOrOne(
+                DAG, DL, VT, Cond.getOperand(0), Cond.getOperand(1), CC->get(),
+                TrueVal, FalseVal))
+          return Res;
+      }
       return DAG.getNode(ISD::SELECT_CC, DL, VT, Cond.getOperand(0),
                          Cond.getOperand(1), TrueVal, FalseVal,
                          Cond.getOperand(2));
@@ -621,11 +720,18 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
   SmallVector<SDValue, 8> Ops;
   Ops.push_back(Callee);
   Ops.push_back(Chain);
-  if (Glue)
-    Ops.push_back(Glue);
+
+  unsigned CallOpc = TC32::TJL;
+  switch (RegsToPass.size()) {
+  case 0: CallOpc = TC32::TJL; break;
+  case 1: CallOpc = TC32::TJL_R0; break;
+  case 2: CallOpc = TC32::TJL_R0_R1; break;
+  case 3: CallOpc = TC32::TJL_R0_R1_R2; break;
+  default: CallOpc = TC32::TJL_R0_R1_R2_R3; break;
+  }
 
   MachineSDNode *Call =
-      DAG.getMachineNode(TC32::TJL, DL, {MVT::Other, MVT::Glue}, Ops);
+      DAG.getMachineNode(CallOpc, DL, {MVT::Other, MVT::Glue}, Ops);
   Chain = SDValue(Call, 0);
   Glue = SDValue(Call, 1);
   Chain = DAG.getCALLSEQ_END(Chain, DAG.getConstant(StackArgBytes, DL, PtrVT),

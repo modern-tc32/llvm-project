@@ -92,6 +92,33 @@ def TJL : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
   let Size = 4;
   let isCall = 1;
   let Defs = [R0, R1, R2, R3, R14];
+}
+
+def TJL_R0 : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
+  let Size = 4;
+  let isCall = 1;
+  let Defs = [R0, R1, R2, R3, R14];
+  let Uses = [R0];
+}
+
+def TJL_R0_R1 : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
+  let Size = 4;
+  let isCall = 1;
+  let Defs = [R0, R1, R2, R3, R14];
+  let Uses = [R0, R1];
+}
+
+def TJL_R0_R1_R2 : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
+  let Size = 4;
+  let isCall = 1;
+  let Defs = [R0, R1, R2, R3, R14];
+  let Uses = [R0, R1, R2];
+}
+
+def TJL_R0_R1_R2_R3 : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
+  let Size = 4;
+  let isCall = 1;
+  let Defs = [R0, R1, R2, R3, R14];
   let Uses = [R0, R1, R2, R3];
 }
 
@@ -272,51 +299,72 @@ def TASRi5 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src, uimm8:$imm),
 def TLOADspu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
                          "tloadr\t$dst, [sp, #$imm]"> {
   let Uses = [R13];
+  let mayLoad = 1;
 }
 
 def TLOADfpu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
                          "tloadr\t$dst, [r7, #$imm]"> {
   let Uses = [R7];
+  let mayLoad = 1;
 }
 
 def TLOADpcu8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
                          "tloadr\t$dst, [pc, #$imm]"> {
   let Uses = [R15];
+  let mayLoad = 1;
 }
 
 def TLOADrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base),
-                       "tloadr\t$dst, [$base]">;
+                       "tloadr\t$dst, [$base]"> {
+  let mayLoad = 1;
+}
 
 def TLOADru3 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base, uimm8:$imm),
-                        "tloadr\t$dst, [$base, #$imm]">;
+                        "tloadr\t$dst, [$base, #$imm]"> {
+  let mayLoad = 1;
+}
 
 def TLOADBrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base),
-                        "tloadrb\t$dst, [$base]">;
+                        "tloadrb\t$dst, [$base]"> {
+  let mayLoad = 1;
+}
 
 def TLOADBru3 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base, uimm8:$imm),
-                         "tloadrb\t$dst, [$base, #$imm]">;
+                         "tloadrb\t$dst, [$base, #$imm]"> {
+  let mayLoad = 1;
+}
 
 def TSTOREspu8 : TC32Inst<(outs), (ins LoGR32:$src, uimm8:$imm),
                           "tstorer\t$src, [sp, #$imm]"> {
   let Uses = [R13];
+  let mayStore = 1;
 }
 
 def TSTOREfpu8 : TC32Inst<(outs), (ins LoGR32:$src, uimm8:$imm),
                           "tstorer\t$src, [r7, #$imm]"> {
   let Uses = [R7];
+  let mayStore = 1;
 }
 
 def TSTORErr : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base),
-                        "tstorer\t$src, [$base]">;
+                        "tstorer\t$src, [$base]"> {
+  let mayStore = 1;
+}
 
 def TSTOREru3 : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base, uimm8:$imm),
-                         "tstorer\t$src, [$base, #$imm]">;
+                         "tstorer\t$src, [$base, #$imm]"> {
+  let mayStore = 1;
+}
 
 def TSTOREBrr : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base),
-                         "tstorerb\t$src, [$base]">;
+                         "tstorerb\t$src, [$base]"> {
+  let mayStore = 1;
+}
 
 def TSTOREBru3 : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base, uimm8:$imm),
-                          "tstorerb\t$src, [$base, #$imm]">;
+                          "tstorerb\t$src, [$base, #$imm]"> {
+  let mayStore = 1;
+}
 
 def TADDspu8 : TC32Inst<(outs), (ins uimm8:$imm), "tadd\tsp, #$imm"> {
   let Defs = [R13];

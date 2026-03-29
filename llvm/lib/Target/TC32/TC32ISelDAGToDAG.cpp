@@ -604,7 +604,6 @@ public:
   SDValue selectSetCCValue(SDLoc DL, ISD::CondCode CCVal, SDValue LHS,
                            SDValue RHS) {
     prepareCompareOperands(DL, CCVal, LHS, RHS);
-    normalizeUnsignedCompare(DL, CCVal, LHS, RHS);
 
     unsigned BrOpc = getBranchOpcodeForCond(CCVal);
     if (!BrOpc)
@@ -615,6 +614,51 @@ public:
     SDValue Ops[] = {FalseVal, TrueVal, LHS, RHS,
                      CurDAG->getTargetConstant(BrOpc, DL, MVT::i32)};
     return SDValue(CurDAG->getMachineNode(TC32::TSELECTCC, DL, MVT::i32, Ops), 0);
+  }
+
+  SDValue trySelectCompareSignOrOne(const SDLoc &DL, EVT VT, SDValue LHS,
+                                    SDValue RHS, SDValue TrueVal,
+                                    SDValue FalseVal, ISD::CondCode CCVal) {
+    if (VT != MVT::i32)
+      return SDValue();
+
+    auto matchConst = [](SDValue V, int32_t Value) {
+      if (const auto *CN = dyn_cast<ConstantSDNode>(V))
+        return CN->getSExtValue() == Value;
+      return false;
+    };
+
+    bool ReverseOperands = false;
+    switch (CCVal) {
+    case ISD::SETULT:
+      if (!matchConst(TrueVal, -1) || !matchConst(FalseVal, 1))
+        return SDValue();
+      break;
+    case ISD::SETUGT:
+      if (!matchConst(TrueVal, -1) || !matchConst(FalseVal, 1))
+        return SDValue();
+      ReverseOperands = true;
+      break;
+    default:
+      return SDValue();
+    }
+
+    if (ReverseOperands)
+      std::swap(LHS, RHS);
+
+    LHS = extendIntegerForCompare(LHS, DL, false);
+    RHS = extendIntegerForCompare(RHS, DL, false);
+
+    LHS = ensureValueInRegister(LHS, DL);
+    RHS = ensureValueInRegister(RHS, DL);
+
+    SDValue Diff = SDValue(CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32,
+                                                  LHS, RHS),
+                           0);
+    SDValue Sign =
+        SDValue(CurDAG->getMachineNode(TC32::TASRi31, DL, MVT::i32, Diff), 0);
+    return emitTwoAddressRR(TC32::TORrr, DL, MVT::i32, Sign,
+                            materializeConstant(CurDAG, DL, 1));
   }
 
   SDValue selectSetCC(SDNode *Node) {
@@ -989,8 +1033,13 @@ public:
       SDValue FalseVal = Node->getOperand(3);
       ISD::CondCode CCVal = CC->get();
 
+      if (SDValue Res = trySelectCompareSignOrOne(DL, VT, LHS, RHS, TrueVal,
+                                                  FalseVal, CCVal)) {
+        ReplaceNode(Node, Res.getNode());
+        return;
+      }
+
       prepareCompareOperands(DL, CCVal, LHS, RHS);
-      normalizeUnsignedCompare(DL, CCVal, LHS, RHS);
 
       unsigned BrOpc = getBranchOpcodeForCond(CCVal);
       if (!BrOpc)
@@ -1041,10 +1090,14 @@ public:
       unsigned BrOpc = 0;
 
       if (LHS.getNode()) {
+        if (SDValue Res = trySelectCompareSignOrOne(DL, VT, LHS, RHS, TrueVal,
+                                                    FalseVal, CCVal)) {
+          ReplaceNode(Node, Res.getNode());
+          return;
+        }
         if (Invert)
           CCVal = ISD::getSetCCInverse(CCVal, LHS.getValueType());
         prepareCompareOperands(DL, CCVal, LHS, RHS);
-        normalizeUnsignedCompare(DL, CCVal, LHS, RHS);
         BrOpc = getBranchOpcodeForCond(CCVal);
       } else if (Cond.getOpcode() == ISD::SETCC) {
         auto *CC = dyn_cast<CondCodeSDNode>(Cond.getOperand(2));
@@ -1055,8 +1108,12 @@ public:
           CCVal = ISD::getSetCCInverse(CCVal, Cond.getOperand(0).getValueType());
         LHS = Cond.getOperand(0);
         RHS = Cond.getOperand(1);
+        if (SDValue Res = trySelectCompareSignOrOne(DL, VT, LHS, RHS, TrueVal,
+                                                    FalseVal, CCVal)) {
+          ReplaceNode(Node, Res.getNode());
+          return;
+        }
         prepareCompareOperands(DL, CCVal, LHS, RHS);
-        normalizeUnsignedCompare(DL, CCVal, LHS, RHS);
         BrOpc = getBranchOpcodeForCond(CCVal);
       } else {
         if (Cond.getValueType() == MVT::i1)

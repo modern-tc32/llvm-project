@@ -2,8 +2,10 @@
 #include "MCTargetDesc/TC32MCTargetDesc.h"
 #include "TC32Subtarget.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/Target/TargetMachine.h"
 
 using namespace llvm;
@@ -15,6 +17,25 @@ TC32FrameLowering::TC32FrameLowering(const TC32Subtarget &STI)
 
 bool TC32FrameLowering::isR7Reserved(const MachineFunction &MF) const {
   return MF.getSubtarget<TC32Subtarget>().isR7Reserved(MF);
+}
+
+void TC32FrameLowering::determineCalleeSaves(MachineFunction &MF,
+                                             BitVector &SavedRegs,
+                                             RegScavenger *RS) const {
+  TargetFrameLowering::determineCalleeSaves(MF, SavedRegs, RS);
+
+  if (!RS)
+    return;
+
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+
+  // TC32 stack accesses and frame-index expansion are low-reg based. If PEI
+  // needs to scavenge a low register, it must have an emergency spill slot,
+  // similar in spirit to ARM's Thumb handling.
+  const TargetRegisterClass &RC = TC32::LoGR32RegClass;
+  RS->addScavengingFrameIndex(
+      MFI.CreateSpillStackObject(TRI->getSpillSize(RC), TRI->getSpillAlign(RC)));
 }
 
 void TC32FrameLowering::emitPrologue(MachineFunction &MF,

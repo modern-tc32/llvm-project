@@ -6,6 +6,7 @@
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
@@ -16,22 +17,22 @@ using namespace llvm;
 TC32RegisterInfo::TC32RegisterInfo() : TC32GenRegisterInfo(TC32::R15) {}
 
 const MCPhysReg *TC32RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
-  static const MCPhysReg CalleeSavedRegsNoFP[] = {TC32::R4, TC32::R5, TC32::R6, 0};
-  static const MCPhysReg CalleeSavedRegsNoReservedR7[] = {
-      TC32::R4,
-      TC32::R5,
-      TC32::R6,
-      TC32::R7,
-      0};
   if (MF && !MF->getSubtarget<TC32Subtarget>().isR7Reserved(*MF))
-    return CalleeSavedRegsNoReservedR7;
-  return CalleeSavedRegsNoFP;
+    return CSR_TC32_SaveList;
+  return CSR_TC32_NoR7_SaveList;
+}
+
+const uint32_t *TC32RegisterInfo::getCallPreservedMask(const MachineFunction &MF,
+                                                       CallingConv::ID CC) const {
+  (void)CC;
+  if (!MF.getSubtarget<TC32Subtarget>().isR7Reserved(MF))
+    return CSR_TC32_RegMask;
+  return CSR_TC32_NoR7_RegMask;
 }
 
 BitVector TC32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   Reserved.set(TC32::CPSR);
-  Reserved.set(TC32::R6);
   if (MF.getSubtarget<TC32Subtarget>().isR7Reserved(MF))
     Reserved.set(TC32::R7);
   Reserved.set(TC32::R8);
@@ -48,6 +49,33 @@ BitVector TC32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
 const TargetRegisterClass *TC32RegisterInfo::getPointerRegClass(unsigned Kind) const {
   (void)Kind;
   return &TC32::LoGR32RegClass;
+}
+
+bool TC32RegisterInfo::requiresRegisterScavenging(
+    const MachineFunction &MF) const {
+  (void)MF;
+  return true;
+}
+
+bool TC32RegisterInfo::requiresFrameIndexScavenging(
+    const MachineFunction &MF) const {
+  (void)MF;
+  return false;
+}
+
+bool TC32RegisterInfo::requiresFrameIndexReplacementScavenging(
+    const MachineFunction &MF) const {
+  (void)MF;
+  return true;
+}
+
+bool TC32RegisterInfo::useFPForScavengingIndex(
+    const MachineFunction &MF) const {
+  (void)MF;
+  // TC32 has wide positive SP-relative accesses, while FP-relative accesses
+  // are tighter. Keep the emergency spill slot near SP so scavenging can
+  // always reach it without recursive frame-index materialization.
+  return false;
 }
 
 bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int SPAdj,
@@ -67,6 +95,7 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
   int Offset = MFI.getObjectOffset(FI);
   int StackSize = MFI.getStackSize();
   int ExtraImm = 0;
+  const bool IsScavengingFI = RS && RS->isScavengingFrameIndex(FI);
 
   switch (MI.getOpcode()) {
   case TC32::TLOADBru3:
@@ -83,23 +112,42 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
 
   unsigned BaseReg = TFI->hasFP(MF) ? TC32::R7 : TC32::R13;
   int FrameImm = (Fixed ? Offset : Offset + StackSize) + ExtraImm;
-  if (TFI->hasFP(MF) && Fixed) {
+  if (IsScavengingFI) {
+    assert(TFI->hasReservedCallFrame(MF) &&
+           "cannot address TC32 scavenging slot from SP without reserved call frame");
+    assert(!MFI.hasVarSizedObjects() &&
+           "cannot address TC32 scavenging slot from SP with var-sized objects");
+    BaseReg = TC32::R13;
+  } else if (TFI->hasFP(MF) && Fixed) {
     BaseReg = TC32::R7;
     FrameImm += StackSize + 8;
   }
 
-  auto materializeByteAddr = [&](int EffectiveImm) -> bool {
+  auto getScratchReg = [&]() -> Register {
+    assert(RS && "TC32 frame index elimination needs scavenging for far offsets");
+    Register Scratch = RS->FindUnusedReg(&TC32::LoGR32RegClass);
+    if (!Scratch)
+      Scratch = RS->scavengeRegisterBackwards(TC32::LoGR32RegClass, II, false,
+                                              SPAdj);
+    if (!Scratch)
+      report_fatal_error("unable to scavenge TC32 low scratch register");
+    RS->setRegUsed(Scratch);
+    return Scratch;
+  };
+
+  auto materializeByteAddr = [&](Register ScratchReg, int EffectiveImm) -> bool {
     if (EffectiveImm < 0 || EffectiveImm > 255)
       return false;
 
     const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
     DebugLoc DL = MI.getDebugLoc();
     if (BaseReg == TC32::R13 && (EffectiveImm & 3) == 0 && EffectiveImm <= 252) {
-      BuildMI(MBB, II, DL, TII->get(TC32::TADDdstspu8), TC32::R6).addImm(EffectiveImm);
+      BuildMI(MBB, II, DL, TII->get(TC32::TADDdstspu8), ScratchReg)
+          .addImm(EffectiveImm);
     } else {
-      BuildMI(MBB, II, DL, TII->get(TC32::TMOVrr), TC32::R6).addReg(BaseReg);
-      BuildMI(MBB, II, DL, TII->get(TC32::TADDSri8), TC32::R6)
-          .addReg(TC32::R6)
+      BuildMI(MBB, II, DL, TII->get(TC32::TMOVrr), ScratchReg).addReg(BaseReg);
+      BuildMI(MBB, II, DL, TII->get(TC32::TADDSri8), ScratchReg)
+          .addReg(ScratchReg)
           .addImm(EffectiveImm);
     }
     return true;
@@ -155,8 +203,9 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
         MI.addOperand(MachineOperand::CreateImm(FrameImm));
       return false;
     }
-    if (materializeByteAddr(FrameImm)) {
-      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
+    Register ScratchReg = getScratchReg();
+    if (materializeByteAddr(ScratchReg, FrameImm)) {
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
       return false;
     }
     break;
@@ -170,8 +219,9 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
         MI.addOperand(MachineOperand::CreateImm(FrameImm));
       return false;
     }
-    if (materializeByteAddr(FrameImm)) {
-      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
+    Register ScratchReg = getScratchReg();
+    if (materializeByteAddr(ScratchReg, FrameImm)) {
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
       return false;
     }
     break;
@@ -182,9 +232,10 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
       MI.getOperand(FIOperandNum + 1).ChangeToImmediate(FrameImm);
       return false;
     }
-    if (materializeByteAddr(FrameImm)) {
+    Register ScratchReg = getScratchReg();
+    if (materializeByteAddr(ScratchReg, FrameImm)) {
       MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TLOADBrr));
-      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
       MI.removeOperand(FIOperandNum + 1);
       return false;
     }
@@ -196,9 +247,10 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
       MI.getOperand(FIOperandNum + 1).ChangeToImmediate(FrameImm);
       return false;
     }
-    if (materializeByteAddr(FrameImm)) {
+    Register ScratchReg = getScratchReg();
+    if (materializeByteAddr(ScratchReg, FrameImm)) {
       MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTOREBrr));
-      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
       MI.removeOperand(FIOperandNum + 1);
       return false;
     }
@@ -217,8 +269,9 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
       MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
       return false;
     }
-    if (materializeFrameAddr(MI, TC32::R6)) {
-      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
+    Register ScratchReg = getScratchReg();
+    if (materializeFrameAddr(MI, ScratchReg)) {
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
       return false;
     }
     break;
@@ -236,8 +289,9 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
       MI.getOperand(FIOperandNum).ChangeToImmediate(FrameImm);
       return false;
     }
-    if (materializeFrameAddr(MI, TC32::R6)) {
-      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
+    Register ScratchReg = getScratchReg();
+    if (materializeFrameAddr(MI, ScratchReg)) {
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
       return false;
     }
     break;
@@ -257,9 +311,10 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
       MI.removeOperand(FIOperandNum + 1);
       return false;
     }
-    if (materializeFrameAddr(MI, TC32::R6)) {
+    Register ScratchReg = getScratchReg();
+    if (materializeFrameAddr(MI, ScratchReg)) {
       MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TLOADrr));
-      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
       MI.removeOperand(FIOperandNum + 1);
       return false;
     }
@@ -280,9 +335,10 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
       MI.removeOperand(FIOperandNum + 1);
       return false;
     }
-    if (materializeFrameAddr(MI, TC32::R6)) {
+    Register ScratchReg = getScratchReg();
+    if (materializeFrameAddr(MI, ScratchReg)) {
       MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTORErr));
-      MI.getOperand(FIOperandNum).ChangeToRegister(TC32::R6, false);
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
       MI.removeOperand(FIOperandNum + 1);
       return false;
     }

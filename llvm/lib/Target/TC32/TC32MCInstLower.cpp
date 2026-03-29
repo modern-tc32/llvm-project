@@ -41,7 +41,9 @@ MCOperand TC32MCInstLower::lowerOperand(const MachineOperand &MO) const {
 void TC32MCInstLower::lower(const MachineInstr *MI, MCInst &OutMI) const {
   OutMI.setOpcode(MI->getOpcode());
 
-  if (MI->getOpcode() == TC32::TJL) {
+  if (MI->getOpcode() == TC32::TJL || MI->getOpcode() == TC32::TJL_R0 ||
+      MI->getOpcode() == TC32::TJL_R0_R1 || MI->getOpcode() == TC32::TJL_R0_R1_R2 ||
+      MI->getOpcode() == TC32::TJL_R0_R1_R2_R3) {
     for (const MachineOperand &MO : MI->operands()) {
       if (MO.isImplicit() || MO.isRegMask())
         continue;

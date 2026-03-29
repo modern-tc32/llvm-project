@@ -175,29 +175,9 @@ void MachineInstr::removeRegOperandsFromUseLists(MachineRegisterInfo &MRI) {
 }
 
 void MachineInstr::addRegOperandsToUseLists(MachineRegisterInfo &MRI) {
-  unsigned OpIdx = 0;
   for (MachineOperand &MO : operands()) {
-    if (MO.isReg()) {
-      if (MO.getReg() == 0) {
-        errs() << "TC32 debug: zero reg operand while adding use-lists in ";
-        if (const MachineFunction *MF = getMFIfAvailable(*this))
-          errs() << MF->getName();
-        errs() << "\n";
-        print(errs(), /*SkipOpers=*/false, /*SkipDebugLoc=*/true);
-        errs() << "\n";
-        for (const MachineOperand &DbgMO : operands()) {
-          errs() << "  op" << OpIdx++ << ": type=" << DbgMO.getType();
-          if (DbgMO.isReg())
-            errs() << " reg=" << DbgMO.getReg()
-                   << " def=" << DbgMO.isDef()
-                   << " imp=" << DbgMO.isImplicit();
-          errs() << "\n";
-        }
-        report_fatal_error("zero register operand in MachineInstr");
-      }
+    if (MO.isReg())
       MRI.addRegOperandToUseList(&MO);
-    }
-    ++OpIdx;
   }
 }
 
