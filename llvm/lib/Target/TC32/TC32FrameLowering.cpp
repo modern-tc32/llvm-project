@@ -28,6 +28,10 @@ void TC32FrameLowering::determineCalleeSaves(MachineFunction &MF,
     return;
 
   MachineFrameInfo &MFI = MF.getFrameInfo();
+  if (!hasFP(MF) && !MFI.hasVarSizedObjects() && !MFI.isFrameAddressTaken() &&
+      !MF.getFunction().isVarArg() && MFI.estimateStackSize(MF) == 0)
+    return;
+
   const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
 
   // TC32 stack accesses and frame-index expansion are low-reg based. If PEI
@@ -175,10 +179,12 @@ MachineBasicBlock::iterator TC32FrameLowering::eliminateCallFramePseudoInstr(
 
 bool TC32FrameLowering::hasFPImpl(const MachineFunction &MF) const {
   const MachineFrameInfo &MFI = MF.getFrameInfo();
-  // TC32 does not have a general-purpose frame pointer register we can spend
-  // freely in normal code. Using r7 as a hard frame pointer breaks low-level
-  // code paths such as IRQ handling and HW init. Keep frame pointers only for
-  // cases that semantically require them.
+  // Match the usual LLVM/ARM policy: honor explicit frame-pointer requests
+  // first, then fall back to semantic requirements such as VLAs, frame
+  // address, or varargs handling.
+  if (MF.getTarget().Options.DisableFramePointerElim(MF))
+    return true;
+
   return MFI.hasVarSizedObjects() || MFI.isFrameAddressTaken() ||
          MF.getFunction().isVarArg();
 }

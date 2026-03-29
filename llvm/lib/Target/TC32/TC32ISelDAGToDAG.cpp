@@ -252,28 +252,46 @@ static SDValue materializeConstant(SelectionDAG *DAG, const SDLoc &DL,
     return DAG->getTargetConstant(Imm, DL, MVT::i32);
   };
 
+  auto constrainToLoRegClass = [&](SDValue V) {
+    SDValue RC = DAG->getTargetConstant(TC32::LoGR32RegClassID, DL, MVT::i32);
+    return SDValue(
+        DAG->getMachineNode(TargetOpcode::COPY_TO_REGCLASS, DL, MVT::i32, V, RC),
+        0);
+  };
+
   if (Value <= 255)
-    return SDValue(DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(Value)), 0);
+    return constrainToLoRegClass(
+        SDValue(DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(Value)), 0));
 
-  SmallVector<uint8_t, 4> Bytes;
-  for (int Shift = 24; Shift >= 0; Shift -= 8) {
-    uint8_t Byte = static_cast<uint8_t>((Value >> Shift) & 0xff);
-    if (Bytes.empty() && Byte == 0)
-      continue;
-    Bytes.push_back(Byte);
-  }
+  auto getMaterializationBytes = [&](uint32_t C) {
+    SmallVector<uint8_t, 4> Bytes;
+    for (int Shift = 24; Shift >= 0; Shift -= 8) {
+      uint8_t Byte = static_cast<uint8_t>((C >> Shift) & 0xff);
+      if (Bytes.empty() && Byte == 0)
+        continue;
+      Bytes.push_back(Byte);
+    }
+    if (Bytes.empty())
+      Bytes.push_back(0);
+    return Bytes;
+  };
 
-  if (Bytes.empty())
-    Bytes.push_back(0);
+  SmallVector<uint8_t, 4> Bytes = getMaterializationBytes(Value);
+  SmallVector<uint8_t, 4> NotBytes = getMaterializationBytes(~Value);
+  bool UseNot = (NotBytes.size() + 1) < Bytes.size();
+  ArrayRef<uint8_t> ChosenBytes = UseNot ? ArrayRef(NotBytes) : ArrayRef(Bytes);
 
-  SDValue Cur =
-      SDValue(DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(Bytes[0])), 0);
-  for (unsigned I = 1; I < Bytes.size(); ++I) {
+  SDValue Cur = constrainToLoRegClass(SDValue(
+      DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(ChosenBytes[0])), 0));
+  for (unsigned I = 1; I < ChosenBytes.size(); ++I) {
     Cur = SDValue(DAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, Cur, getImm(8)), 0);
-    if (Bytes[I] != 0)
+    if (ChosenBytes[I] != 0)
       Cur = SDValue(
-          DAG->getMachineNode(TC32::TADDSri8, DL, MVT::i32, Cur, getImm(Bytes[I])), 0);
+          DAG->getMachineNode(TC32::TADDSri8, DL, MVT::i32, Cur, getImm(ChosenBytes[I])), 0);
   }
+  if (UseNot)
+    Cur = constrainToLoRegClass(
+        SDValue(DAG->getMachineNode(TC32::TMOVNrr, DL, MVT::i32, Cur), 0));
   return Cur;
 }
 
@@ -425,16 +443,14 @@ public:
                            SDValue RHS) {
     LHS = ensureValueInRegister(LHS, DL);
     RHS = ensureValueInRegister(RHS, DL);
-    SDValue Dst = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, VT, LHS), 0);
-    return SDValue(CurDAG->getMachineNode(Opcode, DL, VT, Dst, RHS), 0);
+    return SDValue(CurDAG->getMachineNode(Opcode, DL, VT, LHS, RHS), 0);
   }
 
   SDValue emitTwoAddressRRGlue(unsigned Opcode, const SDLoc &DL, EVT VT,
                                SDValue LHS, SDValue RHS, SDValue Glue) {
     LHS = ensureValueInRegister(LHS, DL);
     RHS = ensureValueInRegister(RHS, DL);
-    SDValue Dst = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, VT, LHS), 0);
-    return SDValue(CurDAG->getMachineNode(Opcode, DL, VT, Dst, RHS, Glue), 0);
+    return SDValue(CurDAG->getMachineNode(Opcode, DL, VT, LHS, RHS, Glue), 0);
   }
 
   SDValue emitByteLoad(SDValue Ptr, SDValue Chain, unsigned Offset,
@@ -963,9 +979,16 @@ public:
         SDValue Val = materializeConstant(CurDAG, DL,
                                           static_cast<uint32_t>(CN->getZExtValue()));
         if (Node->getValueType(0) == MVT::i8)
-          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TMOVi8, DL, MVT::i8,
-                                                   CurDAG->getTargetConstant(
-                                                       CN->getZExtValue() & 0xff, DL, MVT::i32)));
+          ReplaceNode(
+              Node,
+              CurDAG->getMachineNode(
+                  TargetOpcode::COPY_TO_REGCLASS, DL, MVT::i8,
+                  SDValue(CurDAG->getMachineNode(
+                              TC32::TMOVi8, DL, MVT::i8,
+                              CurDAG->getTargetConstant(CN->getZExtValue() & 0xff,
+                                                        DL, MVT::i32)),
+                          0),
+                  CurDAG->getTargetConstant(TC32::LoGR32RegClassID, DL, MVT::i32)));
         else
           ReplaceNode(Node, Val.getNode());
         return;
@@ -1274,7 +1297,12 @@ public:
         SDValue RHS = Node->getOperand(1);
         auto *RC = dyn_cast<ConstantSDNode>(RHS);
         if (RC && RC->getSExtValue() == -1) {
-          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TMOVNrr, DL, VT, LHS));
+          ReplaceNode(
+              Node,
+              CurDAG->getMachineNode(
+                  TargetOpcode::COPY_TO_REGCLASS, DL, VT,
+                  SDValue(CurDAG->getMachineNode(TC32::TMOVNrr, DL, VT, LHS), 0),
+                  CurDAG->getTargetConstant(TC32::LoGR32RegClassID, DL, MVT::i32)));
           return;
         }
         ReplaceNode(Node, emitTwoAddressRR(TC32::TXORrr, DL, VT, LHS, RHS).getNode());
