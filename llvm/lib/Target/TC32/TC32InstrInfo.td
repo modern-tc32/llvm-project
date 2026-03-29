@@ -241,58 +241,84 @@ def TMOVi8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
                       "tmovs\t$dst, #$imm">;
 
 def TNEGrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src),
-                      "tneg\t$dst, $src">;
+                      "tneg\t$dst, $src"> {
+  let Defs = [CPSR];
+}
 
 def TMOVNrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src),
                        "tmovn\t$dst, $src">;
 
 def TADDSrru8 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src, uimm3:$imm),
-                         "tadds\t$dst, $src, #$imm">;
+                         "tadds\t$dst, $src, #$imm"> {
+  let Defs = [CPSR];
+}
 
 let Constraints = "$dst = $src" in
 def TADDSri8 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src, uimm8:$imm),
-                        "tadds\t$dst, $src, #$imm">;
+                        "tadds\t$dst, $src, #$imm"> {
+  let Defs = [CPSR];
+}
 
 def TADDSrrr : TC32Inst<(outs LoGR32:$dst),
                         (ins LoGR32:$src, LoGR32:$rhs),
-                        "tadds\t$dst, $src, $rhs">;
+                        "tadds\t$dst, $src, $rhs"> {
+  let Defs = [CPSR];
+}
 
 let Constraints = "$dst = $lhs" in
 def TADDCrr : TC32Inst<(outs LoGR32:$dst),
                        (ins LoGR32:$lhs, LoGR32:$rhs),
-                       "taddc\t$dst, $rhs">;
+                       "taddc\t$dst, $rhs"> {
+  let Uses = [CPSR];
+  let Defs = [CPSR];
+}
 
 let Constraints = "$dst = $lhs" in
 def TANDrr : TC32Inst<(outs LoGR32:$dst),
                       (ins LoGR32:$lhs, LoGR32:$rhs),
-                      "tand\t$dst, $rhs">;
+                      "tand\t$dst, $rhs"> {
+  let Defs = [CPSR];
+}
 
 let Constraints = "$dst = $lhs" in
 def TORrr : TC32Inst<(outs LoGR32:$dst),
                      (ins LoGR32:$lhs, LoGR32:$rhs),
-                     "tor\t$dst, $rhs">;
+                     "tor\t$dst, $rhs"> {
+  let Defs = [CPSR];
+}
 
 let Constraints = "$dst = $lhs" in
 def TXORrr : TC32Inst<(outs LoGR32:$dst),
                       (ins LoGR32:$lhs, LoGR32:$rhs),
-                      "txor\t$dst, $rhs">;
+                      "txor\t$dst, $rhs"> {
+  let Defs = [CPSR];
+}
 
 let Constraints = "$dst = $lhs" in
 def TMULrr : TC32Inst<(outs LoGR32:$dst),
                       (ins LoGR32:$lhs, LoGR32:$rhs),
-                      "tmul\t$dst, $rhs">;
+                      "tmul\t$dst, $rhs"> {
+  let Defs = [CPSR];
+}
 
 def TSUBrrr : TC32Inst<(outs LoGR32:$dst),
                        (ins LoGR32:$src, LoGR32:$rhs),
-                       "tsub\t$dst, $src, $rhs">;
+                       "tsub\t$dst, $src, $rhs"> {
+  let Defs = [CPSR];
+}
 
 def TSUBri1 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src),
-                       "tsub\t$dst, $src, #1">;
+                       "tsub\t$dst, $src, #1"> {
+  let Defs = [CPSR];
+}
 
 let Constraints = "$dst = $lhs" in
 def TSUBCrr : TC32Inst<(outs LoGR32:$dst),
                        (ins LoGR32:$lhs, LoGR32:$rhs),
-                       "tsubc\t$dst, $rhs">;
+                       "tsubc\t$dst, $rhs"> {
+  let Uses = [CPSR];
+  let Defs = [CPSR];
+}
 
 def TSHFTRi31 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src),
                          "tshftr\t$dst, $src, #31">;

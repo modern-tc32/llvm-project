@@ -559,10 +559,13 @@ TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
 
     MachineBasicBlock *ThisMBB = MBB;
     MachineFunction::iterator It = ++ThisMBB->getIterator();
+    MachineBasicBlock *TrueMBB =
+        MF->CreateMachineBasicBlock(ThisMBB->getBasicBlock());
     MachineBasicBlock *FalseMBB =
         MF->CreateMachineBasicBlock(ThisMBB->getBasicBlock());
     MachineBasicBlock *SinkMBB =
         MF->CreateMachineBasicBlock(ThisMBB->getBasicBlock());
+    MF->insert(It, TrueMBB);
     MF->insert(It, FalseMBB);
     MF->insert(It, SinkMBB);
 
@@ -570,18 +573,21 @@ TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
     SinkMBB->splice(SinkMBB->begin(), ThisMBB, std::next(MII), ThisMBB->end());
     SinkMBB->transferSuccessorsAndUpdatePHIs(ThisMBB);
 
+    ThisMBB->addSuccessor(TrueMBB);
     ThisMBB->addSuccessor(FalseMBB);
-    ThisMBB->addSuccessor(SinkMBB);
+    TrueMBB->addSuccessor(SinkMBB);
     FalseMBB->addSuccessor(SinkMBB);
 
     BuildMI(*ThisMBB, MII, DL, TII.get(TC32::TCMPrr)).addReg(LHS).addReg(RHS);
-    BuildMI(*ThisMBB, MII, DL, TII.get(BrOpc)).addMBB(SinkMBB);
+    BuildMI(*ThisMBB, MII, DL, TII.get(BrOpc)).addMBB(TrueMBB);
+    BuildMI(*ThisMBB, MII, DL, TII.get(TC32::TJ)).addMBB(FalseMBB);
 
-    BuildMI(*SinkMBB, SinkMBB->begin(), DL, TII.get(TargetOpcode::PHI), Dst)
-        .addReg(FalseVal)
-        .addMBB(FalseMBB)
-        .addReg(TrueVal)
-        .addMBB(ThisMBB);
+    BuildMI(*TrueMBB, TrueMBB->end(), DL, TII.get(TargetOpcode::COPY), Dst)
+        .addReg(TrueVal);
+    BuildMI(*TrueMBB, TrueMBB->end(), DL, TII.get(TC32::TJ)).addMBB(SinkMBB);
+
+    BuildMI(*FalseMBB, FalseMBB->end(), DL, TII.get(TargetOpcode::COPY), Dst)
+        .addReg(FalseVal);
 
     MI.eraseFromParent();
     return SinkMBB;
