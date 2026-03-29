@@ -1223,6 +1223,7 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
   case llvm::Triple::riscv32be:
   case llvm::Triple::riscv64be:
   case llvm::Triple::systemz:
+  case llvm::Triple::tc32:
   case llvm::Triple::xcore:
   case llvm::Triple::xtensa:
     return false;
