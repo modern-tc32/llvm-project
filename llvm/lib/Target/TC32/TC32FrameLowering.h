@@ -14,6 +14,7 @@ protected:
 public:
   explicit TC32FrameLowering(const TC32Subtarget &STI);
   bool isR7Reserved(const MachineFunction &MF) const;
+  bool usesPushLR(const MachineFunction &MF) const;
   bool usesPushR7LR(const MachineFunction &MF) const;
   unsigned getFixedObjectBaseOffset(const MachineFunction &MF) const;
   void determineCalleeSaves(MachineFunction &MF, BitVector &SavedRegs,

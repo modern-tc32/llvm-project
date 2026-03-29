@@ -26,8 +26,11 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setStackPointerRegisterToSaveRestore(TC32::R13);
   setBooleanContents(ZeroOrOneBooleanContent);
   setBooleanVectorContents(ZeroOrOneBooleanContent);
-  setMinFunctionAlignment(Align(2));
-  setPrefFunctionAlignment(Align(2));
+  // Vendor TC32 code aligns functions to 4 bytes. This matters for code that
+  // uses many PC-relative literal loads, because the ISA treats code/data
+  // layout more like Thumb-style aligned text than arbitrary 2-byte packing.
+  setMinFunctionAlignment(Align(4));
+  setPrefFunctionAlignment(Align(4));
   setMaxAtomicSizeInBitsSupported(0);
   setOperationAction(ISD::Constant, MVT::i32, Legal);
   setOperationAction(ISD::Constant, MVT::i8, Legal);

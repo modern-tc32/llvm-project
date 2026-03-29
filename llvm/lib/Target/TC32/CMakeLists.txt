@@ -19,8 +19,10 @@ add_llvm_target(TC32CodeGen
   TC32RegisterInfo.cpp
   TC32Subtarget.cpp
   TC32TargetMachine.cpp
+  TC32TargetTransformInfo.cpp
 
   LINK_COMPONENTS
+  Analysis
   AsmPrinter
   CodeGen
   Core

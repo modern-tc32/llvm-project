@@ -61,11 +61,31 @@ public:
     AsmPrinter::emitFunctionEntryLabel();
   }
 
+  void emitFunctionBodyStart() override { PendingAddrLiterals.clear(); }
+
+  void emitFunctionBodyEnd() override {
+    if (!PendingAddrLiterals.empty()) {
+      OutStreamer->emitValueToAlignment(Align(4));
+      for (const PendingAddrLiteral &Literal : PendingAddrLiterals) {
+        OutStreamer->emitLabel(Literal.Label);
+        OutStreamer->emitValue(Literal.Value, 4);
+      }
+      PendingAddrLiterals.clear();
+    }
+    AsmPrinter::emitFunctionBodyEnd();
+  }
+
 private:
+  struct PendingAddrLiteral {
+    MCSymbol *Label;
+    const MCExpr *Value;
+  };
+
+  SmallVector<PendingAddrLiteral, 8> PendingAddrLiterals;
+
   void emitInstruction(const MachineInstr *MI) override {
     if (MI->getOpcode() == TC32::TLOADaddr) {
       MCSymbol *PoolLabel = OutContext.createTempSymbol();
-      MCSymbol *SkipLabel = OutContext.createTempSymbol();
 
       MCInst Load;
       Load.setOpcode(TC32::TLOADpcu8);
@@ -73,18 +93,11 @@ private:
       Load.addOperand(MCOperand::createExpr(MCSymbolRefExpr::create(PoolLabel, OutContext)));
       EmitToStreamer(*OutStreamer, Load);
 
-      MCInst SkipPool;
-      SkipPool.setOpcode(TC32::TJ);
-      SkipPool.addOperand(
-          MCOperand::createExpr(MCSymbolRefExpr::create(SkipLabel, OutContext)));
-      EmitToStreamer(*OutStreamer, SkipPool);
-
       TC32MCInstLower Lower(OutContext, *this);
       MCOperand Value = Lower.lowerOperand(MI->getOperand(1));
-      OutStreamer->emitValueToAlignment(Align(4));
-      OutStreamer->emitLabel(PoolLabel);
-      OutStreamer->emitValue(Value.getExpr(), 4);
-      OutStreamer->emitLabel(SkipLabel);
+      if (!Value.isExpr())
+        report_fatal_error("TC32 TLOADaddr expects expression operand");
+      PendingAddrLiterals.push_back({PoolLabel, Value.getExpr()});
       return;
     }
 

@@ -65,6 +65,11 @@ def TPUSH_R7_LR : TC32Inst<(outs), (ins), "tpush\t{r7, lr}"> {
   let Uses = [R7, R13, R14];
 }
 
+def TPUSH_LR : TC32Inst<(outs), (ins), "tpush\t{lr}"> {
+  let Defs = [R13];
+  let Uses = [R13, R14];
+}
+
 def TPUSH_R0_R1_R2_R3 : TC32Inst<(outs), (ins), "tpush\t{r0, r1, r2, r3}"> {
   let Defs = [R13];
   let Uses = [R0, R1, R2, R3, R13];
@@ -86,6 +91,14 @@ def TPOP_R7 : TC32Inst<(outs), (ins), "tpop\t{r7}"> {
 def TPOP_R3 : TC32Inst<(outs), (ins), "tpop\t{r3}"> {
   let Defs = [R3, R13];
   let Uses = [R13];
+}
+
+def TPOP_PC : TC32Inst<(outs), (ins), "tpop\t{pc}"> {
+  let Defs = [R13, R15];
+  let Uses = [R13];
+  let isReturn = 1;
+  let isTerminator = 1;
+  let isBarrier = 1;
 }
 
 def TJL : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
