@@ -110,7 +110,7 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SELECT, MVT::i8, Custom);
   setOperationAction(ISD::SELECT_CC, MVT::i32, Legal);
   setOperationAction(ISD::SELECT_CC, MVT::i8, Legal);
-  setOperationAction(ISD::BRCOND, MVT::Other, Legal);
+  setOperationAction(ISD::BRCOND, MVT::Other, Custom);
   setOperationAction(ISD::BR_CC, MVT::i32, Custom);
   setOperationAction(ISD::BR_CC, MVT::i8, Custom);
   setOperationAction(ISD::FrameIndex, MVT::i32, Custom);
@@ -149,6 +149,8 @@ const char *TC32TargetLowering::getTargetNodeName(unsigned Opcode) const {
   switch (Opcode) {
   case TC32ISD::FRAMEADDR:
     return "TC32ISD::FRAMEADDR";
+  case TC32ISD::BRCOND:
+    return "TC32ISD::BRCOND";
   case TC32ISD::CALL:
     return "TC32ISD::CALL";
   case TC32ISD::RET_FLAG:
@@ -359,6 +361,140 @@ static SDValue stripBooleanCastsForSelect(SDValue V) {
   }
 }
 
+static unsigned getTC32BranchOpcodeForCond(ISD::CondCode CCVal) {
+  switch (CCVal) {
+  case ISD::SETEQ:
+    return TC32::TJEQ;
+  case ISD::SETNE:
+    return TC32::TJNE;
+  case ISD::SETUGE:
+    return TC32::TJCS;
+  case ISD::SETULT:
+    return TC32::TJCC;
+  case ISD::SETUGT:
+    return TC32::TJHI;
+  case ISD::SETULE:
+    return TC32::TJLS;
+  case ISD::SETGE:
+    return TC32::TJGE;
+  case ISD::SETLT:
+    return TC32::TJLT;
+  case ISD::SETGT:
+    return TC32::TJGT;
+  case ISD::SETLE:
+    return TC32::TJLE;
+  default:
+    return 0;
+  }
+}
+
+static void normalizeUnsignedCompareForTC32(SelectionDAG &DAG, const SDLoc &DL,
+                                            ISD::CondCode &CC, SDValue &LHS,
+                                            SDValue &RHS) {
+  auto *RC = dyn_cast<ConstantSDNode>(RHS);
+  if (!RC)
+    return;
+
+  APInt C = RC->getAPIntValue();
+  if (C == 0)
+    return;
+
+  switch (CC) {
+  case ISD::SETULT:
+    CC = ISD::SETULE;
+    RHS = DAG.getConstant(C - 1, DL, RHS.getValueType());
+    break;
+  case ISD::SETUGE:
+    CC = ISD::SETUGT;
+    RHS = DAG.getConstant(C - 1, DL, RHS.getValueType());
+    break;
+  default:
+    break;
+  }
+}
+
+static SDValue stripBooleanCondForBranch(SDValue V, bool &Invert) {
+  while (true) {
+    switch (V.getOpcode()) {
+    case ISD::ZERO_EXTEND:
+    case ISD::SIGN_EXTEND:
+    case ISD::ANY_EXTEND:
+    case ISD::TRUNCATE:
+      V = V.getOperand(0);
+      continue;
+    case ISD::AND:
+      if (matchConstS32(V.getOperand(0), 1)) {
+        V = V.getOperand(1);
+        continue;
+      }
+      if (matchConstS32(V.getOperand(1), 1)) {
+        V = V.getOperand(0);
+        continue;
+      }
+      return V;
+    case ISD::XOR:
+      if (matchConstS32(V.getOperand(0), 1)) {
+        Invert = !Invert;
+        V = V.getOperand(1);
+        continue;
+      }
+      if (matchConstS32(V.getOperand(1), 1)) {
+        Invert = !Invert;
+        V = V.getOperand(0);
+        continue;
+      }
+      return V;
+    default:
+      return V;
+    }
+  }
+}
+
+SDValue TC32TargetLowering::LowerBRCOND(SDValue Op,
+                                        SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue Chain = Op.getOperand(0);
+  SDValue Cond = Op.getOperand(1);
+  SDValue Dest = Op.getOperand(2);
+  bool Invert = false;
+
+  Cond = stripBooleanCondForBranch(Cond, Invert);
+  if (Cond.getOpcode() == ISD::SETCC) {
+    auto *CCNode = dyn_cast<CondCodeSDNode>(Cond.getOperand(2));
+    if (!CCNode)
+      return SDValue();
+
+    SDValue LHS = Cond.getOperand(0);
+    SDValue RHS = Cond.getOperand(1);
+    ISD::CondCode CC = CCNode->get();
+    if (Invert)
+      CC = ISD::getSetCCInverse(CC, LHS.getValueType());
+
+    normalizeUnsignedCompareForTC32(DAG, DL, CC, LHS, RHS);
+
+    EVT CmpVT = LHS.getValueType();
+    if (CmpVT == MVT::i8 || CmpVT == MVT::i16) {
+      LHS = extendForCompare(DAG, DL, LHS, CC);
+      RHS = extendForCompare(DAG, DL, RHS, CC);
+    }
+
+    unsigned BrOpc = getTC32BranchOpcodeForCond(CC);
+    if (!BrOpc)
+      return SDValue();
+    return DAG.getNode(TC32ISD::BRCOND, DL, MVT::Other, Chain, Dest,
+                       DAG.getTargetConstant(BrOpc, DL, MVT::i32), LHS, RHS);
+  }
+
+  EVT CondVT = Cond.getValueType();
+  if (CondVT == MVT::i1 || CondVT == MVT::i8 || CondVT == MVT::i16)
+    Cond = DAG.getZExtOrTrunc(Cond, DL, MVT::i32);
+
+  unsigned BrOpc = Invert ? TC32::TJEQ : TC32::TJNE;
+  return DAG.getNode(TC32ISD::BRCOND, DL, MVT::Other, Chain, Dest,
+                     DAG.getTargetConstant(BrOpc, DL, MVT::i32), Cond,
+                     DAG.getConstant(0, DL, Cond.getValueType()));
+}
+
 
 SDValue TC32TargetLowering::LowerBR_CC(SDValue Op,
                                        SelectionDAG &DAG) const {
@@ -370,14 +506,19 @@ SDValue TC32TargetLowering::LowerBR_CC(SDValue Op,
   SDValue Dest = Op.getOperand(4);
   ISD::CondCode CC = CCNode->get();
 
+  normalizeUnsignedCompareForTC32(DAG, DL, CC, LHS, RHS);
+
   EVT CmpVT = LHS.getValueType();
   if (CmpVT == MVT::i8 || CmpVT == MVT::i16) {
     LHS = extendForCompare(DAG, DL, LHS, CC);
     RHS = extendForCompare(DAG, DL, RHS, CC);
   }
 
-  SDValue Cond = DAG.getSetCC(DL, MVT::i32, LHS, RHS, CC);
-  return DAG.getNode(ISD::BRCOND, DL, MVT::Other, Chain, Cond, Dest);
+  unsigned BrOpc = getTC32BranchOpcodeForCond(CC);
+  if (!BrOpc)
+    return SDValue();
+  return DAG.getNode(TC32ISD::BRCOND, DL, MVT::Other, Chain, Dest,
+                     DAG.getTargetConstant(BrOpc, DL, MVT::i32), LHS, RHS);
 }
 
 
@@ -530,6 +671,8 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
     return lowerUnalignedI32Load(Op, DAG);
   case ISD::STORE:
     return lowerUnalignedI32Store(Op, DAG);
+  case ISD::BRCOND:
+    return LowerBRCOND(Op, DAG);
   case ISD::BR_CC:
     return LowerBR_CC(Op, DAG);
   case ISD::SELECT: {
@@ -718,8 +861,11 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
     if (Outs[I].VT != MVT::i32 && Outs[I].VT != MVT::i16 && Outs[I].VT != MVT::i8)
       report_fatal_error("TC32 only supports i32/i16/i8 call arguments right now");
     SDValue ArgVal = OutVals[I];
-    if (Outs[I].VT == MVT::i8 || Outs[I].VT == MVT::i16)
-      ArgVal = DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, ArgVal);
+    if (Outs[I].VT == MVT::i8 || Outs[I].VT == MVT::i16) {
+      unsigned ExtendOp = Outs[I].Flags.isSExt() ? ISD::SIGN_EXTEND
+                                                 : ISD::ZERO_EXTEND;
+      ArgVal = DAG.getNode(ExtendOp, DL, MVT::i32, ArgVal);
+    }
 
     if (I < std::size(ArgRegs)) {
       RegsToPass.push_back({ArgRegs[I], ArgVal});
