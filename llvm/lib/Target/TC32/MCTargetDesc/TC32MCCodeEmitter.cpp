@@ -364,7 +364,11 @@ public:
     case TC32::TPOP_R7_PC:
       Bits = 0x6D80;
       break;
-    case TC32::TJL: {
+    case TC32::TJL:
+    case TC32::TJL_R0:
+    case TC32::TJL_R0_R1:
+    case TC32::TJL_R0_R1_R2:
+    case TC32::TJL_R0_R1_R2_R3: {
       const MCOperand &Op = MI.getOperand(0);
       if (Op.isExpr()) {
         addFixup(Fixups, 0, Op.getExpr(), static_cast<MCFixupKind>(TC32::fixup_tc32_call));

@@ -2,7 +2,9 @@
 #include "MCTargetDesc/TC32MCTargetDesc.h"
 #include "TC32Subtarget.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
+#include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
@@ -12,6 +14,14 @@ using namespace llvm;
 
 static bool isLowPhysReg(Register Reg) {
   return Reg.isPhysical() && TC32::LoGR32RegClass.contains(Reg);
+}
+
+static bool isLowValueReg(Register Reg, const MachineRegisterInfo &MRI) {
+  if (isLowPhysReg(Reg))
+    return true;
+  if (!Reg.isVirtual())
+    return false;
+  return MRI.getRegClass(Reg) == &TC32::LoGR32RegClass;
 }
 
 TC32InstrInfo::TC32InstrInfo(const TC32Subtarget &STI)
@@ -86,15 +96,21 @@ void TC32InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
                                         Register VReg,
                                         MachineInstr::MIFlag Flags) const {
   (void)VReg;
+  MachineFunction &MF = *MBB.getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
   if (RC != &TC32::LoGR32RegClass && RC != &TC32::GR32RegClass)
     report_fatal_error("TC32 spill only supports GPRs");
 
-  if (!isLowPhysReg(SrcReg)) {
-    assert(SrcReg != TC32::R6 && "reserved low scratch register spilled unexpectedly");
-    BuildMI(MBB, MI, DebugLoc(), get(TC32::TMOVrr), TC32::R6)
+  if (!isLowValueReg(SrcReg, MRI)) {
+    Register SpillReg = MF.getProperties().hasNoVRegs()
+                            ? Register(TC32::R6)
+                            : MRI.createVirtualRegister(&TC32::LoGR32RegClass);
+    assert((!SpillReg.isPhysical() || SrcReg != TC32::R6) &&
+           "reserved low scratch register spilled unexpectedly");
+    BuildMI(MBB, MI, DebugLoc(), get(TC32::TMOVrr), SpillReg)
         .addReg(SrcReg, getKillRegState(IsKill))
         .setMIFlags(Flags);
-    SrcReg = TC32::R6;
+    SrcReg = SpillReg;
     IsKill = true;
   }
 
@@ -112,16 +128,22 @@ void TC32InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
                                          MachineInstr::MIFlag Flags) const {
   (void)VReg;
   (void)SubReg;
+  MachineFunction &MF = *MBB.getParent();
+  MachineRegisterInfo &MRI = MF.getRegInfo();
   if (RC != &TC32::LoGR32RegClass && RC != &TC32::GR32RegClass)
     report_fatal_error("TC32 reload only supports GPRs");
 
-  if (!isLowPhysReg(DestReg)) {
-    assert(DestReg != TC32::R6 && "reserved low scratch register reloaded unexpectedly");
-    BuildMI(MBB, MI, DebugLoc(), get(TC32::TLOADrr), TC32::R6)
+  if (!isLowValueReg(DestReg, MRI)) {
+    Register ReloadReg = MF.getProperties().hasNoVRegs()
+                             ? Register(TC32::R6)
+                             : MRI.createVirtualRegister(&TC32::LoGR32RegClass);
+    assert((!ReloadReg.isPhysical() || DestReg != TC32::R6) &&
+           "reserved low scratch register reloaded unexpectedly");
+    BuildMI(MBB, MI, DebugLoc(), get(TC32::TLOADrr), ReloadReg)
         .addFrameIndex(FrameIndex)
         .setMIFlags(Flags);
     BuildMI(MBB, MI, DebugLoc(), get(TC32::TMOVrr), DestReg)
-        .addReg(TC32::R6)
+        .addReg(ReloadReg, getKillRegState(true))
         .setMIFlags(Flags);
     return;
   }

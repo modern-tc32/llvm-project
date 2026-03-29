@@ -25,7 +25,7 @@ public:
 };
 
 class TC32Subtarget : public TC32GenSubtargetInfo {
-  bool ReserveR7 = true;
+  bool ReserveR7 = false;
   TC32InstrInfo InstrInfo;
   TC32TargetLowering TLInfo;
   TC32FrameLowering FrameLowering;

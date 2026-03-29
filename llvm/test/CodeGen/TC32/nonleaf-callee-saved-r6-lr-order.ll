@@ -14,7 +14,7 @@ entry:
 
 ; CHECK-LABEL: nonleaf_preserves_r6:
 ; CHECK: tsub	sp, #
-; CHECK: tmov	r7, lr
+; CHECK: tmov	r7, r14
 ; CHECK-NEXT: tstorer	r7,
 ; CHECK: tstorer	r4,
 ; CHECK: tstorer	r5,

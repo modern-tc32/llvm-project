@@ -37,3 +37,6 @@ def GR32 : RegisterClass<"TC32", [i32, i8], 32,
 let RegInfos = RegInfoByHwMode<[DefaultMode], [RegInfo<32, 32, 32>]> in
 def LoGR32 : RegisterClass<"TC32", [i32, i8], 32,
                            (add R0, R1, R2, R3, R4, R5, R6, R7)>;
+
+def CSR_TC32 : CalleeSavedRegs<(add R7, R6, R5, R4)>;
+def CSR_TC32_NoR7 : CalleeSavedRegs<(add R6, R5, R4)>;
