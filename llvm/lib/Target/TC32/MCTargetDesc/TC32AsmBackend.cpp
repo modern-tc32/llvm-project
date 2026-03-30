@@ -188,11 +188,19 @@ public:
 
   bool writeNopData(raw_ostream &OS, uint64_t Count,
                     const MCSubtargetInfo *STI) const override {
-    (void)OS;
     (void)STI;
-    if (Count == 0)
-      return true;
-    return false;
+    for (uint64_t I = 0; I != Count; ++I)
+      OS.write(uint8_t(0));
+    return true;
+  }
+
+  unsigned getMinimumNopSize() const override {
+    return 2;
+  }
+
+  unsigned getMaximumNopSize(const MCSubtargetInfo &STI) const override {
+    (void)STI;
+    return 2;
   }
 };
 
