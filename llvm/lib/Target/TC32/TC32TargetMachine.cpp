@@ -368,8 +368,31 @@ public:
     return false;
   }
 
+  static bool usesRegBeforeDef(const MachineBasicBlock &MBB, Register Reg,
+                               const TargetRegisterInfo *TRI) {
+    for (const MachineInstr &MI : MBB) {
+      if (MI.isDebugInstr())
+        continue;
+      for (const MachineOperand &MO : MI.operands()) {
+        if (!MO.isReg())
+          continue;
+        Register MOReg = MO.getReg();
+        if (!MOReg)
+          continue;
+        if (!TRI->regsOverlap(MOReg, Reg))
+          continue;
+        if (MO.isUse())
+          return true;
+        if (MO.isDef())
+          return false;
+      }
+    }
+    return false;
+  }
+
   bool runOnMachineFunction(MachineFunction &MF) override {
     bool Changed = false;
+    const auto *TRI = MF.getSubtarget().getRegisterInfo();
 
     for (MachineBasicBlock &MBB : MF) {
       for (auto BI = MBB.begin(), BE = MBB.end(); BI != BE; ++BI) {
@@ -410,6 +433,46 @@ public:
         for (auto It = LateCopies.rbegin(); It != LateCopies.rend(); ++It) {
           MBB.splice(InsertPt, &MBB, *It);
         }
+        Changed = true;
+        continue;
+      }
+
+      for (auto BI = MBB.begin(), BE = MBB.end(); BI != BE; ++BI) {
+        if (!isCondBranch(*BI))
+          continue;
+
+        auto CopyIt = BI;
+        while (CopyIt != MBB.begin()) {
+          --CopyIt;
+          if (!CopyIt->isDebugInstr())
+            break;
+        }
+        if (CopyIt == BI || !isLateCopy(*CopyIt))
+          continue;
+
+        auto CmpIt = CopyIt;
+        while (CmpIt != MBB.begin()) {
+          --CmpIt;
+          if (!CmpIt->isDebugInstr())
+            break;
+        }
+        if (CmpIt == CopyIt || !isCompare(*CmpIt) || !definesCmpInput(*CopyIt, *CmpIt))
+          continue;
+
+        auto FalseBrIt = std::next(BI);
+        while (FalseBrIt != BE && FalseBrIt->isDebugInstr())
+          ++FalseBrIt;
+        if (FalseBrIt == BE || FalseBrIt->getOpcode() != TC32::TJ)
+          continue;
+
+        if (CopyIt->getNumOperands() < 1 || !CopyIt->getOperand(0).isReg())
+          continue;
+        Register DefReg = CopyIt->getOperand(0).getReg();
+        MachineBasicBlock *TrueMBB = BI->getOperand(0).getMBB();
+        if (!TrueMBB || usesRegBeforeDef(*TrueMBB, DefReg, TRI))
+          continue;
+
+        MBB.splice(FalseBrIt, &MBB, CopyIt);
         Changed = true;
       }
     }

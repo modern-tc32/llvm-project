@@ -131,6 +131,73 @@ static bool matchConstInt(SDValue V, uint64_t Value) {
   return false;
 }
 
+static unsigned getIntegerVTBits(EVT VT) {
+  if (VT == MVT::i1)
+    return 1;
+  if (VT == MVT::i8)
+    return 8;
+  if (VT == MVT::i16)
+    return 16;
+  if (VT == MVT::i32)
+    return 32;
+  return 0;
+}
+
+static bool peelNarrowCompareValue(SDValue V, SDValue &Base, unsigned &Bits) {
+  switch (V.getOpcode()) {
+  case ISD::AssertSext:
+  case ISD::AssertZext:
+  case ISD::SIGN_EXTEND_INREG: {
+    auto *VTN = dyn_cast<VTSDNode>(V.getOperand(1));
+    if (!VTN)
+      return false;
+    Bits = getIntegerVTBits(VTN->getVT());
+    if (Bits == 0 || Bits >= 32)
+      return false;
+    Base = V.getOperand(0);
+    return true;
+  }
+  case ISD::ZERO_EXTEND:
+  case ISD::SIGN_EXTEND:
+  case ISD::ANY_EXTEND:
+  case ISD::TRUNCATE:
+    Bits = getIntegerVTBits(V.getOperand(0).getValueType());
+    if (V.getOpcode() == ISD::TRUNCATE)
+      Bits = getIntegerVTBits(V.getValueType());
+    if (Bits == 0 || Bits >= 32)
+      return false;
+    Base = V.getOperand(0);
+    return true;
+  case ISD::AND: {
+    SDValue X = V.getOperand(0);
+    SDValue Y = V.getOperand(1);
+    if (matchConstInt(X, 0xff)) {
+      Base = Y;
+      Bits = 8;
+      return true;
+    }
+    if (matchConstInt(Y, 0xff)) {
+      Base = X;
+      Bits = 8;
+      return true;
+    }
+    if (matchConstInt(X, 0xffff)) {
+      Base = Y;
+      Bits = 16;
+      return true;
+    }
+    if (matchConstInt(Y, 0xffff)) {
+      Base = X;
+      Bits = 16;
+      return true;
+    }
+    return false;
+  }
+  default:
+    return false;
+  }
+}
+
 static SDValue stripBoolCond(SDValue V, bool &Invert) {
   while (true) {
     switch (V.getOpcode()) {
@@ -394,18 +461,16 @@ public:
   SDValue extendIntegerForCompare(SDValue Value, const SDLoc &DL,
                                   bool SignExtend) {
     EVT VT = Value.getValueType();
-    if (VT == MVT::i32)
+    unsigned Bits = getIntegerVTBits(VT);
+    if (Bits == 32) {
+      SDValue Base;
+      if (!peelNarrowCompareValue(Value, Base, Bits))
+        return ensureValueInRegister(Value, DL);
+      Value = Base;
+      VT = Value.getValueType();
+    } else if (Bits == 0) {
       return ensureValueInRegister(Value, DL);
-
-    unsigned Bits = 0;
-    if (VT == MVT::i1)
-      Bits = 1;
-    else if (VT == MVT::i8)
-      Bits = 8;
-    else if (VT == MVT::i16)
-      Bits = 16;
-    else
-      return ensureValueInRegister(Value, DL);
+    }
 
     if (const auto *CN = dyn_cast<ConstantSDNode>(Value)) {
       uint64_t Raw = CN->getZExtValue();
@@ -430,7 +495,9 @@ public:
       return materializeConstant(CurDAG, DL, ExtValue);
     }
 
-    SDValue Wide = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Value), 0);
+    SDValue Wide = ensureValueInRegister(Value, DL);
+    if (Wide.getValueType() != MVT::i32)
+      Wide = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Wide), 0);
     unsigned Shift = 32 - Bits;
     if (Shift == 0)
       return Wide;

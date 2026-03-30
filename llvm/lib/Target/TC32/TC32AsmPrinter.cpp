@@ -72,7 +72,7 @@ public:
   void emitFunctionBodyEnd() override {
     if (IndirectCallR3Pad) {
       OutStreamer->emitLabel(IndirectCallR3Pad);
-      EmitToStreamer(*OutStreamer, MCInstBuilder(TC32::TJEXr).addReg(TC32::R3));
+      EmitToStreamer(*OutStreamer, MCInstBuilder(TC32::TJEXr).addReg(TC32::R12));
     }
     flushPendingAddrLiterals();
     AsmPrinter::emitFunctionBodyEnd();
@@ -120,7 +120,7 @@ private:
   }
 
   void emitInstruction(const MachineInstr *MI) override {
-    if (MI->getOpcode() == TC32::TINDCALL_R3) {
+    if (MI->getOpcode() == TC32::TINDCALL_R12) {
       if (!IndirectCallR3Pad)
         IndirectCallR3Pad = OutContext.createTempSymbol();
       EmitToStreamer(*OutStreamer,
