@@ -112,10 +112,13 @@ public:
       if (MI.getOpcode() == TC32::TLOADaddr) {
         (void)Offset;
         // TLOADaddr emits a 2-byte PC-relative load plus a 4-byte literal in a
-        // nearby pool after the next barrier. Use a conservative local size so
-        // branch relaxation sees roughly the same growth the asm printer will
-        // introduce before final MC layout.
-        return 6u;
+        // nearby pool after the next barrier. Like ARM constant islands, the
+        // real distance seen by a short conditional branch must budget not only
+        // the instruction itself but also later literal-pool growth and
+        // alignment between the branch and its destination. TC32 does not have
+        // ARM's full island machinery yet, so keep a deliberately conservative
+        // local estimate here to force CFG branch relaxation before MC layout.
+        return 20u;
       }
       return TII->getInstSizeInBytes(MI);
     };
@@ -190,6 +193,8 @@ public:
           }
           if (UncondBrAddr == &MI)
             continue;
+          if (UncondBr && !CondBr)
+            continue;
           if (!MI.isTerminator())
             break;
         }
@@ -221,6 +226,28 @@ public:
 
         if (!CondBr)
           continue;
+
+        bool NeedsSplit = false;
+        for (MachineBasicBlock::iterator I = std::next(CondBr->getIterator()),
+                                         E = MBB.end();
+             I != E; ++I) {
+          if (I->isDebugInstr())
+            continue;
+          if (!I->isTerminator()) {
+            NeedsSplit = true;
+            break;
+          }
+        }
+
+        if (NeedsSplit) {
+          MachineBasicBlock *TrueMBB = CondBr->getOperand(0).getMBB();
+          MachineBasicBlock *SplitMBB = MBB.splitAt(*CondBr);
+          SplitMBB->removeSuccessor(TrueMBB);
+          MBB.addSuccessor(TrueMBB);
+          LocalChange = true;
+          Changed = true;
+          continue;
+        }
 
         auto *TrueMBB = CondBr->getOperand(0).getMBB();
         uint64_t BrOffset = InstOffsets.lookup(CondBr);
