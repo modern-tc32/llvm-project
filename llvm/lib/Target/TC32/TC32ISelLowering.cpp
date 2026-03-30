@@ -72,6 +72,7 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::UDIV, MVT::i32, LibCall);
   setOperationAction(ISD::SREM, MVT::i32, LibCall);
   setOperationAction(ISD::UREM, MVT::i32, LibCall);
+  setOperationAction(ISD::USUBSAT, MVT::i32, Custom);
   setOperationAction(ISD::SDIVREM, MVT::i32, Expand);
   setOperationAction(ISD::UDIVREM, MVT::i32, Expand);
   setOperationAction(ISD::SDIV, MVT::i8, Promote);
@@ -679,6 +680,17 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
                          FalseVal, DAG.getCondCode(ISD::SETNE));
     }
     break;
+  }
+  case ISD::USUBSAT: {
+    if (Op.getValueType() != MVT::i32)
+      break;
+
+    SDValue LHS = Op.getOperand(0);
+    SDValue RHS = Op.getOperand(1);
+    SDValue Diff = DAG.getNode(ISD::SUB, DL, MVT::i32, LHS, RHS);
+    SDValue Zero = DAG.getConstant(0, DL, MVT::i32);
+    return DAG.getNode(ISD::SELECT_CC, DL, MVT::i32, LHS, RHS, Diff, Zero,
+                       DAG.getCondCode(ISD::SETUGT));
   }
   case ISD::SETCC: {
     EVT VT = Op.getValueType();
