@@ -111,10 +111,11 @@ public:
     auto getInstSize = [&](const MachineInstr &MI, uint64_t Offset) {
       if (MI.getOpcode() == TC32::TLOADaddr) {
         (void)Offset;
-        // TLOADaddr now lowers to a single PC-relative load. The literal words
-        // are emitted once at function end by the asm printer, so local branch
-        // layout within the function must treat this as a 2-byte instruction.
-        return 2u;
+        // TLOADaddr emits a 2-byte PC-relative load plus a 4-byte literal in a
+        // nearby pool after the next barrier. Use a conservative local size so
+        // branch relaxation sees roughly the same growth the asm printer will
+        // introduce before final MC layout.
+        return 6u;
       }
       return TII->getInstSizeInBytes(MI);
     };
@@ -226,8 +227,6 @@ public:
         int64_t BrDelta =
             static_cast<int64_t>(BlockOffsets.lookup(TrueMBB)) - static_cast<int64_t>(BrOffset);
         int64_t BrImm = (BrDelta - 4) >> 1;
-        if (isInt<8>(BrImm))
-          continue;
 
         MachineBasicBlock *FalseMBB = nullptr;
         if (UncondBr && UncondBr->getParent() == &MBB) {
@@ -243,6 +242,41 @@ public:
         }
         if (!FalseMBB)
           continue;
+
+        if (UncondBr && UncondBr->getParent() == &MBB &&
+            UncondBr->getOpcode() == TC32::TJ) {
+          int64_t FalseDelta =
+              static_cast<int64_t>(BlockOffsets.lookup(FalseMBB)) -
+              static_cast<int64_t>(BrOffset);
+          int64_t FalseImm = (FalseDelta - 4) >> 1;
+          if (std::llabs(FalseImm) < std::llabs(BrImm)) {
+            CondBr->setDesc(TII->get(invertCondBranch(CondBr->getOpcode())));
+            CondBr->getOperand(0).setMBB(FalseMBB);
+            UncondBr->getOperand(0).setMBB(TrueMBB);
+            LocalChange = true;
+            Changed = true;
+            continue;
+          }
+        }
+
+        if (isInt<8>(BrImm))
+          continue;
+
+        if (UncondBr && UncondBr->getParent() == &MBB &&
+            UncondBr->getOpcode() == TC32::TJ) {
+          int64_t FalseDelta =
+              static_cast<int64_t>(BlockOffsets.lookup(FalseMBB)) -
+              static_cast<int64_t>(BrOffset);
+          int64_t FalseImm = (FalseDelta - 4) >> 1;
+          if (isInt<8>(FalseImm)) {
+            CondBr->setDesc(TII->get(invertCondBranch(CondBr->getOpcode())));
+            CondBr->getOperand(0).setMBB(FalseMBB);
+            UncondBr->getOperand(0).setMBB(TrueMBB);
+            LocalChange = true;
+            Changed = true;
+            continue;
+          }
+        }
 
         MachineBasicBlock *ShimMBB =
             MF.CreateMachineBasicBlock(MBB.getBasicBlock());
