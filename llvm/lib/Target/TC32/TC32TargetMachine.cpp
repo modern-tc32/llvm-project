@@ -10,6 +10,7 @@
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -208,10 +209,17 @@ public:
               static_cast<int64_t>(JumpTargetOff) - static_cast<int64_t>(JumpOff);
           int64_t JumpImm = (JumpDelta - 4) >> 1;
           if (!isInt<11>(JumpImm)) {
-            Register JumpReg = findAvailableLowRegAtEnd(MBB);
-            if (!JumpReg)
-              report_fatal_error("TC32 branch relaxation could not find dead low register");
             auto InsertPt = UncondBr->getIterator();
+            Register JumpReg = findAvailableLowRegAtEnd(MBB);
+            if (!JumpReg) {
+              RegScavenger RS;
+              RS.enterBasicBlockEnd(MBB);
+              JumpReg = RS.scavengeRegisterBackwards(
+                  TC32::LoGR32RegClass, InsertPt, false, 0);
+            }
+            if (!JumpReg)
+              report_fatal_error(
+                  "TC32 branch relaxation could not scavenge a low register");
             BuildMI(MBB, InsertPt, UncondBr->getDebugLoc(),
                     TII->get(TC32::TLOADaddr), JumpReg)
                 .addMBB(JumpTarget);
