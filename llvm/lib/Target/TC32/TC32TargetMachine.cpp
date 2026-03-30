@@ -8,9 +8,7 @@
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
-#include "llvm/CodeGen/LivePhysRegs.h"
 #include "llvm/CodeGen/Passes.h"
-#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -71,8 +69,6 @@ public:
   bool runOnMachineFunction(MachineFunction &MF) override {
     const auto *TII =
         static_cast<const TC32InstrInfo *>(MF.getSubtarget().getInstrInfo());
-    const auto *TRI = MF.getSubtarget().getRegisterInfo();
-    MachineRegisterInfo &MRI = MF.getRegInfo();
     bool Changed = false;
 
     auto isCondBranch = [](unsigned Opc) {
@@ -122,17 +118,6 @@ public:
         return 20u;
       }
       return TII->getInstSizeInBytes(MI);
-    };
-
-    auto findAvailableLowRegAtEnd = [&](MachineBasicBlock &MBB) -> Register {
-      LivePhysRegs LiveRegs(*TRI);
-      LiveRegs.addLiveOuts(MBB);
-      for (MCPhysReg Reg : {TC32::R0, TC32::R1, TC32::R2, TC32::R3,
-                            TC32::R4, TC32::R5, TC32::R6, TC32::R7}) {
-        if (LiveRegs.available(MRI, Reg))
-          return Reg;
-      }
-      return Register();
     };
 
     auto computeOffsets = [&](DenseMap<const MachineBasicBlock *, uint64_t> &BlockOffsets,
@@ -210,16 +195,7 @@ public:
           int64_t JumpImm = (JumpDelta - 4) >> 1;
           if (!isInt<11>(JumpImm)) {
             auto InsertPt = UncondBr->getIterator();
-            Register JumpReg = findAvailableLowRegAtEnd(MBB);
-            if (!JumpReg) {
-              RegScavenger RS;
-              RS.enterBasicBlockEnd(MBB);
-              JumpReg = RS.scavengeRegisterBackwards(
-                  TC32::LoGR32RegClass, InsertPt, false, 0);
-            }
-            if (!JumpReg)
-              report_fatal_error(
-                  "TC32 branch relaxation could not scavenge a low register");
+            constexpr Register JumpReg = TC32::R6;
             BuildMI(MBB, InsertPt, UncondBr->getDebugLoc(),
                     TII->get(TC32::TLOADaddr), JumpReg)
                 .addMBB(JumpTarget);
@@ -562,7 +538,8 @@ char TC32CompareBranchRepairPass::ID = 0;
 class TC32PassConfig : public TargetPassConfig {
 public:
   TC32PassConfig(TC32TargetMachine &TM, PassManagerBase &PM)
-      : TargetPassConfig(TM, PM) {}
+      : TargetPassConfig(TM, PM) {
+  }
 
   TC32TargetMachine &getTC32TargetMachine() const {
     return getTM<TC32TargetMachine>();

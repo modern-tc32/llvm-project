@@ -388,6 +388,16 @@ def TLOADBrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base),
   let mayLoad = 1;
 }
 
+def TLOADHrr : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base),
+                        "tloadrh\t$dst, [$base]"> {
+  let mayLoad = 1;
+}
+
+def TLOADHru5 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base, uimm8:$imm),
+                         "tloadrh\t$dst, [$base, #$imm]"> {
+  let mayLoad = 1;
+}
+
 def TLOADBru3 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$base, uimm8:$imm),
                          "tloadrb\t$dst, [$base, #$imm]"> {
   let mayLoad = 1;
@@ -417,6 +427,16 @@ def TSTOREru3 : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base, uimm8:$imm),
 
 def TSTOREBrr : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base),
                          "tstorerb\t$src, [$base]"> {
+  let mayStore = 1;
+}
+
+def TSTOREHrr : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base),
+                         "tstorerh\t$src, [$base]"> {
+  let mayStore = 1;
+}
+
+def TSTOREHru5 : TC32Inst<(outs), (ins LoGR32:$src, LoGR32:$base, uimm8:$imm),
+                          "tstorerh\t$src, [$base, #$imm]"> {
   let mayStore = 1;
 }
 

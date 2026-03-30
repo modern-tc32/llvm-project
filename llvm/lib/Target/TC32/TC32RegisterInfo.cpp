@@ -39,6 +39,10 @@ const uint32_t *TC32RegisterInfo::getCallPreservedMask(const MachineFunction &MF
 BitVector TC32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   Reserved.set(TC32::CPSR);
+  // Keep one low register permanently reserved for late branch relaxation.
+  // Unlike ARM, TC32 cannot rely on a high scratch register for literal-load
+  // long branches, and post-RA scavenging here has no emergency spill slot.
+  Reserved.set(TC32::R6);
   if (MF.getSubtarget<TC32Subtarget>().isR7Reserved(MF))
     Reserved.set(TC32::R7);
   Reserved.set(TC32::R8);
@@ -106,6 +110,10 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
   switch (MI.getOpcode()) {
   case TC32::TLOADBru3:
   case TC32::TSTOREBru3:
+    ExtraImm = MI.getOperand(FIOperandNum + 1).getImm();
+    break;
+  case TC32::TLOADHru5:
+  case TC32::TSTOREHru5:
     ExtraImm = MI.getOperand(FIOperandNum + 1).getImm();
     break;
   case TC32::TLOADru3:
@@ -200,7 +208,7 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
     break;
   }
   case TC32::TLOADBrr: {
-    if (FrameImm >= 0 && FrameImm <= 7) {
+    if (FrameImm >= 0 && FrameImm <= 31) {
       MI.setDesc(MF.getSubtarget().getInstrInfo()->get(
           FrameImm == 0 ? TC32::TLOADBrr : TC32::TLOADBru3));
       MI.getOperand(FIOperandNum).ChangeToRegister(BaseReg, false);
@@ -215,8 +223,24 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
     }
     break;
   }
+  case TC32::TLOADHrr: {
+    if (FrameImm >= 0 && FrameImm <= 62 && (FrameImm & 1) == 0) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(
+          FrameImm == 0 ? TC32::TLOADHrr : TC32::TLOADHru5));
+      MI.getOperand(FIOperandNum).ChangeToRegister(BaseReg, false);
+      if (FrameImm != 0)
+        MI.addOperand(MachineOperand::CreateImm(FrameImm));
+      return false;
+    }
+    Register ScratchReg = getScratchReg();
+    if (materializeByteAddr(ScratchReg, FrameImm)) {
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
+      return false;
+    }
+    break;
+  }
   case TC32::TSTOREBrr: {
-    if (FrameImm >= 0 && FrameImm <= 7) {
+    if (FrameImm >= 0 && FrameImm <= 31) {
       MI.setDesc(MF.getSubtarget().getInstrInfo()->get(
           FrameImm == 0 ? TC32::TSTOREBrr : TC32::TSTOREBru3));
       MI.getOperand(FIOperandNum).ChangeToRegister(BaseReg, false);
@@ -231,8 +255,24 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
     }
     break;
   }
+  case TC32::TSTOREHrr: {
+    if (FrameImm >= 0 && FrameImm <= 62 && (FrameImm & 1) == 0) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(
+          FrameImm == 0 ? TC32::TSTOREHrr : TC32::TSTOREHru5));
+      MI.getOperand(FIOperandNum).ChangeToRegister(BaseReg, false);
+      if (FrameImm != 0)
+        MI.addOperand(MachineOperand::CreateImm(FrameImm));
+      return false;
+    }
+    Register ScratchReg = getScratchReg();
+    if (materializeByteAddr(ScratchReg, FrameImm)) {
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
+      return false;
+    }
+    break;
+  }
   case TC32::TLOADBru3: {
-    if (FrameImm >= 0 && FrameImm <= 7) {
+    if (FrameImm >= 0 && FrameImm <= 31) {
       MI.getOperand(FIOperandNum).ChangeToRegister(BaseReg, false);
       MI.getOperand(FIOperandNum + 1).ChangeToImmediate(FrameImm);
       return false;
@@ -246,8 +286,23 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
     }
     break;
   }
+  case TC32::TLOADHru5: {
+    if (FrameImm >= 0 && FrameImm <= 62 && (FrameImm & 1) == 0) {
+      MI.getOperand(FIOperandNum).ChangeToRegister(BaseReg, false);
+      MI.getOperand(FIOperandNum + 1).ChangeToImmediate(FrameImm);
+      return false;
+    }
+    Register ScratchReg = getScratchReg();
+    if (materializeByteAddr(ScratchReg, FrameImm)) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TLOADHrr));
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
+      MI.removeOperand(FIOperandNum + 1);
+      return false;
+    }
+    break;
+  }
   case TC32::TSTOREBru3: {
-    if (FrameImm >= 0 && FrameImm <= 7) {
+    if (FrameImm >= 0 && FrameImm <= 31) {
       MI.getOperand(FIOperandNum).ChangeToRegister(BaseReg, false);
       MI.getOperand(FIOperandNum + 1).ChangeToImmediate(FrameImm);
       return false;
@@ -255,6 +310,21 @@ bool TC32RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II, int S
     Register ScratchReg = getScratchReg();
     if (materializeByteAddr(ScratchReg, FrameImm)) {
       MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTOREBrr));
+      MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
+      MI.removeOperand(FIOperandNum + 1);
+      return false;
+    }
+    break;
+  }
+  case TC32::TSTOREHru5: {
+    if (FrameImm >= 0 && FrameImm <= 62 && (FrameImm & 1) == 0) {
+      MI.getOperand(FIOperandNum).ChangeToRegister(BaseReg, false);
+      MI.getOperand(FIOperandNum + 1).ChangeToImmediate(FrameImm);
+      return false;
+    }
+    Register ScratchReg = getScratchReg();
+    if (materializeByteAddr(ScratchReg, FrameImm)) {
+      MI.setDesc(MF.getSubtarget().getInstrInfo()->get(TC32::TSTOREHrr));
       MI.getOperand(FIOperandNum).ChangeToRegister(ScratchReg, false);
       MI.removeOperand(FIOperandNum + 1);
       return false;

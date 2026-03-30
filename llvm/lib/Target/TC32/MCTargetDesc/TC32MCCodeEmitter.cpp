@@ -244,12 +244,30 @@ class TC32MCCodeEmitter : public MCCodeEmitter {
     return static_cast<uint16_t>(0x4800u | (Base << 3) | Dst);
   }
 
+  uint16_t encodeTLOADHrr(const MCInst &MI) const {
+    unsigned Dst = getRegEncoding(MI.getOperand(0).getReg());
+    unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
+    check(Dst < 8 && Base < 8, "tloadrh [reg] form requires low registers");
+    return static_cast<uint16_t>(0x2800u | (Base << 3) | Dst);
+  }
+
+  uint16_t encodeTLOADHru5(const MCInst &MI) const {
+    unsigned Dst = getRegEncoding(MI.getOperand(0).getReg());
+    unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
+    int64_t Imm = MI.getOperand(2).getImm();
+    check(Dst < 8 && Base < 8, "tloadrh [reg,#imm] form requires low registers");
+    check(Imm >= 0 && Imm <= 62 && (Imm & 1) == 0,
+          "tloadrh [reg,#imm] halfword offset must be 0..62 step 2");
+    return static_cast<uint16_t>(0x2800u | (((unsigned)Imm >> 1) << 6) |
+                                 (Base << 3) | Dst);
+  }
+
   uint16_t encodeTLOADBru3(const MCInst &MI) const {
     unsigned Dst = getRegEncoding(MI.getOperand(0).getReg());
     unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
     int64_t Imm = MI.getOperand(2).getImm();
     check(Dst < 8 && Base < 8, "tloadrb [reg,#imm] form requires low registers");
-    check(Imm >= 0 && Imm <= 7, "tloadrb [reg,#imm] byte offset must be 0..7");
+    check(Imm >= 0 && Imm <= 31, "tloadrb [reg,#imm] byte offset must be 0..31");
     return static_cast<uint16_t>(0x4800u | ((unsigned)Imm << 6) |
                                  (Base << 3) | Dst);
   }
@@ -302,12 +320,30 @@ class TC32MCCodeEmitter : public MCCodeEmitter {
     return static_cast<uint16_t>(0x4000u | (Base << 3) | Src);
   }
 
+  uint16_t encodeTSTOREHrr(const MCInst &MI) const {
+    unsigned Src = getRegEncoding(MI.getOperand(0).getReg());
+    unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
+    check(Src < 8 && Base < 8, "tstorerh [reg] form requires low registers");
+    return static_cast<uint16_t>(0x2000u | (Base << 3) | Src);
+  }
+
+  uint16_t encodeTSTOREHru5(const MCInst &MI) const {
+    unsigned Src = getRegEncoding(MI.getOperand(0).getReg());
+    unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
+    int64_t Imm = MI.getOperand(2).getImm();
+    check(Src < 8 && Base < 8, "tstorerh [reg,#imm] form requires low registers");
+    check(Imm >= 0 && Imm <= 62 && (Imm & 1) == 0,
+          "tstorerh [reg,#imm] halfword offset must be 0..62 step 2");
+    return static_cast<uint16_t>(0x2000u | (((unsigned)Imm >> 1) << 6) |
+                                 (Base << 3) | Src);
+  }
+
   uint16_t encodeTSTOREBru3(const MCInst &MI) const {
     unsigned Src = getRegEncoding(MI.getOperand(0).getReg());
     unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
     int64_t Imm = MI.getOperand(2).getImm();
     check(Src < 8 && Base < 8, "tstorerb [reg,#imm] form requires low registers");
-    check(Imm >= 0 && Imm <= 7, "tstorerb [reg,#imm] byte offset must be 0..7");
+    check(Imm >= 0 && Imm <= 31, "tstorerb [reg,#imm] byte offset must be 0..31");
     return static_cast<uint16_t>(0x4000u | ((unsigned)Imm << 6) |
                                  (Base << 3) | Src);
   }
@@ -510,6 +546,12 @@ public:
     case TC32::TLOADBrr:
       Bits = encodeTLOADBrr(MI);
       break;
+    case TC32::TLOADHrr:
+      Bits = encodeTLOADHrr(MI);
+      break;
+    case TC32::TLOADHru5:
+      Bits = encodeTLOADHru5(MI);
+      break;
     case TC32::TLOADBru3:
       Bits = encodeTLOADBru3(MI);
       break;
@@ -527,6 +569,12 @@ public:
       break;
     case TC32::TSTOREBrr:
       Bits = encodeTSTOREBrr(MI);
+      break;
+    case TC32::TSTOREHrr:
+      Bits = encodeTSTOREHrr(MI);
+      break;
+    case TC32::TSTOREHru5:
+      Bits = encodeTSTOREHru5(MI);
       break;
     case TC32::TSTOREBru3:
       Bits = encodeTSTOREBru3(MI);

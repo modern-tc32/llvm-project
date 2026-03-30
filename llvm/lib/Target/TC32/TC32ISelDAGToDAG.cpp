@@ -103,7 +103,17 @@ static bool getFrameIndexReference(const SelectionDAG *DAG, int FI, int64_t Extr
 
 static bool getI8FrameIndexOperands(SelectionDAG *DAG, int FI, int64_t ExtraImm,
                                     SDValue &Base, SDValue &ImmVal, const SDLoc &DL) {
-  if (ExtraImm < 0 || ExtraImm > 7)
+  if (ExtraImm < 0 || ExtraImm > 31)
+    return false;
+  Base = DAG->getTargetFrameIndex(FI, MVT::i32);
+  ImmVal = DAG->getTargetConstant(ExtraImm, DL, MVT::i32);
+  return true;
+}
+
+static bool getI16FrameIndexOperands(SelectionDAG *DAG, int FI, int64_t ExtraImm,
+                                     SDValue &Base, SDValue &ImmVal,
+                                     const SDLoc &DL) {
+  if (ExtraImm < 0 || ExtraImm > 62 || (ExtraImm & 1) != 0)
     return false;
   Base = DAG->getTargetFrameIndex(FI, MVT::i32);
   ImmVal = DAG->getTargetConstant(ExtraImm, DL, MVT::i32);
@@ -527,7 +537,7 @@ public:
     SDValue Base;
     int64_t Imm = 0;
     int FI = 0;
-    if (matchFrameIndexPlusConst(Ptr, FI, Imm) && Imm + Offset >= 0 && Imm + Offset <= 7) {
+    if (matchFrameIndexPlusConst(Ptr, FI, Imm) && Imm + Offset >= 0 && Imm + Offset <= 31) {
       SDValue FIBase, FIImm;
       if (getI8FrameIndexOperands(CurDAG, FI, Imm + Offset, FIBase, FIImm, DL))
         return SDValue(CurDAG->getMachineNode(TC32::TLOADBru3, DL,
@@ -535,7 +545,7 @@ public:
                                               {FIBase, FIImm, Chain}),
                        0);
     }
-    if (matchBasePlusConst(Ptr, Base, Imm) && Imm + Offset >= 0 && Imm + Offset <= 7) {
+    if (matchBasePlusConst(Ptr, Base, Imm) && Imm + Offset >= 0 && Imm + Offset <= 31) {
       return SDValue(CurDAG->getMachineNode(TC32::TLOADBru3, DL,
                                             {MVT::i32, MVT::Other},
                                             {Base,
@@ -564,14 +574,14 @@ public:
     SDValue Base;
     int64_t Imm = 0;
     int FI = 0;
-    if (matchFrameIndexPlusConst(Ptr, FI, Imm) && Imm + Offset >= 0 && Imm + Offset <= 7) {
+    if (matchFrameIndexPlusConst(Ptr, FI, Imm) && Imm + Offset >= 0 && Imm + Offset <= 31) {
       SDValue FIBase, FIImm;
       if (getI8FrameIndexOperands(CurDAG, FI, Imm + Offset, FIBase, FIImm, DL))
         return SDValue(CurDAG->getMachineNode(TC32::TSTOREBru3, DL, MVT::Other,
                                               {Value, FIBase, FIImm, Chain}),
                        0);
     }
-    if (matchBasePlusConst(Ptr, Base, Imm) && Imm + Offset >= 0 && Imm + Offset <= 7) {
+    if (matchBasePlusConst(Ptr, Base, Imm) && Imm + Offset >= 0 && Imm + Offset <= 31) {
       return SDValue(CurDAG->getMachineNode(TC32::TSTOREBru3, DL, MVT::Other,
                                             {Value, Base,
                                              CurDAG->getTargetConstant(Imm + Offset, DL,
@@ -593,6 +603,96 @@ public:
                    0);
   }
 
+  SDValue emitHalfLoad(EVT VT, SDValue Ptr, SDValue Chain, unsigned Offset,
+                       const SDLoc &DL) {
+    SDValue Base;
+    int64_t Imm = 0;
+    int FI = 0;
+    if (matchFrameIndexPlusConst(Ptr, FI, Imm) && Imm + Offset >= 0 &&
+        Imm + Offset <= 62 && ((Imm + Offset) & 1) == 0) {
+      SDValue FIBase, FIImm;
+      if (getI16FrameIndexOperands(CurDAG, FI, Imm + Offset, FIBase, FIImm, DL))
+        return SDValue(CurDAG->getMachineNode(TC32::TLOADHru5, DL,
+                                              {VT, MVT::Other},
+                                              {FIBase, FIImm, Chain}),
+                       0);
+    }
+    if (matchBasePlusConst(Ptr, Base, Imm) && Imm + Offset >= 0 &&
+        Imm + Offset <= 62 && ((Imm + Offset) & 1) == 0) {
+      return SDValue(CurDAG->getMachineNode(TC32::TLOADHru5, DL,
+                                            {VT, MVT::Other},
+                                            {Base,
+                                             CurDAG->getTargetConstant(Imm + Offset, DL,
+                                                                       MVT::i32),
+                                             Chain}),
+                     0);
+    }
+
+    if (Offset == 0) {
+      if (Ptr.getOpcode() == ISD::FrameIndex || Ptr.getOpcode() == ISD::TargetFrameIndex) {
+        int DirectFI = cast<FrameIndexSDNode>(Ptr)->getIndex();
+        SDValue FIBase = CurDAG->getTargetFrameIndex(DirectFI, MVT::i32);
+        return SDValue(CurDAG->getMachineNode(TC32::TLOADHrr, DL,
+                                              {VT, MVT::Other},
+                                              {FIBase, Chain}),
+                       0);
+      }
+      return SDValue(CurDAG->getMachineNode(TC32::TLOADHrr, DL,
+                                            {VT, MVT::Other},
+                                            {Ptr, Chain}),
+                     0);
+    }
+
+    return SDValue(CurDAG->getMachineNode(TC32::TLOADHru5, DL,
+                                          {VT, MVT::Other},
+                                          {Ptr, CurDAG->getTargetConstant(Offset, DL, MVT::i32),
+                                           Chain}),
+                   0);
+  }
+
+  SDValue emitHalfStore(SDValue Value, SDValue Ptr, SDValue Chain, unsigned Offset,
+                        const SDLoc &DL) {
+    SDValue Base;
+    int64_t Imm = 0;
+    int FI = 0;
+    if (matchFrameIndexPlusConst(Ptr, FI, Imm) && Imm + Offset >= 0 &&
+        Imm + Offset <= 62 && ((Imm + Offset) & 1) == 0) {
+      SDValue FIBase, FIImm;
+      if (getI16FrameIndexOperands(CurDAG, FI, Imm + Offset, FIBase, FIImm, DL))
+        return SDValue(CurDAG->getMachineNode(TC32::TSTOREHru5, DL, MVT::Other,
+                                              {Value, FIBase, FIImm, Chain}),
+                       0);
+    }
+    if (matchBasePlusConst(Ptr, Base, Imm) && Imm + Offset >= 0 &&
+        Imm + Offset <= 62 && ((Imm + Offset) & 1) == 0) {
+      return SDValue(CurDAG->getMachineNode(TC32::TSTOREHru5, DL, MVT::Other,
+                                            {Value, Base,
+                                             CurDAG->getTargetConstant(Imm + Offset, DL,
+                                                                       MVT::i32),
+                                             Chain}),
+                     0);
+    }
+
+    if (Offset == 0) {
+      if (Ptr.getOpcode() == ISD::FrameIndex || Ptr.getOpcode() == ISD::TargetFrameIndex) {
+        int DirectFI = cast<FrameIndexSDNode>(Ptr)->getIndex();
+        SDValue FIBase = CurDAG->getTargetFrameIndex(DirectFI, MVT::i32);
+        return SDValue(CurDAG->getMachineNode(TC32::TSTOREHrr, DL, MVT::Other,
+                                              {Value, FIBase, Chain}),
+                       0);
+      }
+      return SDValue(CurDAG->getMachineNode(TC32::TSTOREHrr, DL, MVT::Other,
+                                            {Value, Ptr, Chain}),
+                     0);
+    }
+
+    return SDValue(CurDAG->getMachineNode(TC32::TSTOREHru5, DL, MVT::Other,
+                                          {Value, Ptr,
+                                           CurDAG->getTargetConstant(Offset, DL, MVT::i32),
+                                           Chain}),
+                   0);
+  }
+
   bool trySelectExtI16Load(SDNode *Node, LoadSDNode *LD, const SDLoc &DL) {
     if (Node->getValueType(0) != MVT::i32 || LD->getMemoryVT() != MVT::i16 ||
         (LD->getExtensionType() != ISD::ZEXTLOAD &&
@@ -600,19 +700,9 @@ public:
         LD->getBasePtr().getValueType() != MVT::i32)
       return false;
 
-    SDValue Ptr = LD->getBasePtr();
-    SDValue Load0 = emitByteLoad(Ptr, LD->getChain(), 0, DL);
-    SDValue Load1 = emitByteLoad(Ptr, Load0.getValue(1), 1, DL);
-
-    SDValue Byte1Shifted = SDValue(
-        CurDAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, SDValue(Load1.getNode(), 0),
-                               CurDAG->getTargetConstant(8, DL, MVT::i32)),
-        0);
-    SDValue Acc = emitTwoAddressRR(TC32::TORrr, DL, MVT::i32, SDValue(Load0.getNode(), 0),
-                                   Byte1Shifted);
-
-    CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 0), Acc);
-    CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 1), Load1.getValue(1));
+    SDValue Load = emitHalfLoad(MVT::i32, LD->getBasePtr(), LD->getChain(), 0, DL);
+    CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 0), SDValue(Load.getNode(), 0));
+    CurDAG->ReplaceAllUsesOfValueWith(SDValue(Node, 1), Load.getValue(1));
     CurDAG->RemoveDeadNode(Node);
     return true;
   }
@@ -722,7 +812,7 @@ public:
           }
         }
         if (matchBasePlusConst(LD->getBasePtr(), Base, Imm) &&
-            Imm >= 0 && Imm <= 7) {
+            Imm >= 0 && Imm <= 31) {
           ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADBru3, DL,
                                                    {MVT::i32, MVT::Other},
                                                    {Base,
@@ -1526,7 +1616,7 @@ public:
           }
         }
         if (matchBasePlusConst(LD->getBasePtr(), Base, Imm) &&
-            Imm >= 0 && Imm <= 7) {
+            Imm >= 0 && Imm <= 31) {
           ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADBru3, DL,
                                                    {MVT::i8, MVT::Other},
                                                    {Base,
@@ -1590,33 +1680,7 @@ public:
         SDValue Value32 = ST->getValue();
         if (Value32.getValueType() == MVT::i16)
           Value32 = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Value32), 0);
-
-        SDValue LowByte = Value32;
-        SDValue HighByte =
-            SDValue(CurDAG->getMachineNode(TC32::TSHFTRi5, DL, MVT::i32, Value32,
-                                          CurDAG->getTargetConstant(8, DL, MVT::i32)),
-                    0);
-
-        if (matchBasePlusConst(ST->getBasePtr(), Base, Imm) && Imm >= 0 && Imm <= 6) {
-          SmallVector<SDValue, 4> FirstOps = {
-              LowByte, Base, CurDAG->getTargetConstant(Imm, DL, MVT::i32), ST->getChain()};
-          SDValue First =
-              SDValue(CurDAG->getMachineNode(TC32::TSTOREBru3, DL, MVT::Other, FirstOps), 0);
-          SmallVector<SDValue, 4> SecondOps = {
-              HighByte, Base, CurDAG->getTargetConstant(Imm + 1, DL, MVT::i32), First};
-          ReplaceNode(Node,
-                      CurDAG->getMachineNode(TC32::TSTOREBru3, DL, MVT::Other, SecondOps));
-          return;
-        }
-
-        SDValue First = SDValue(
-            CurDAG->getMachineNode(TC32::TSTOREBrr, DL, MVT::Other,
-                                   LowByte, ST->getBasePtr(), ST->getChain()),
-            0);
-        SmallVector<SDValue, 4> SecondOps = {HighByte, ST->getBasePtr(),
-                                             CurDAG->getTargetConstant(1, DL, MVT::i32), First};
-        ReplaceNode(Node,
-                    CurDAG->getMachineNode(TC32::TSTOREBru3, DL, MVT::Other, SecondOps));
+        ReplaceNode(Node, emitHalfStore(Value32, ST->getBasePtr(), ST->getChain(), 0, DL).getNode());
         return;
       }
       if (ST->getValue().getValueType() == MVT::i32 &&
@@ -1643,7 +1707,7 @@ public:
           }
         }
         if (matchBasePlusConst(ST->getBasePtr(), Base, Imm) &&
-            Imm >= 0 && Imm <= 7) {
+            Imm >= 0 && Imm <= 31) {
           SmallVector<SDValue, 4> Ops = {ST->getValue(), Base,
                                          CurDAG->getTargetConstant(Imm, DL, MVT::i32),
                                          ST->getChain()};
@@ -1669,7 +1733,7 @@ public:
           }
         }
         if (matchBasePlusConst(ST->getBasePtr(), Base, Imm) &&
-            Imm >= 0 && Imm <= 7) {
+            Imm >= 0 && Imm <= 31) {
           SmallVector<SDValue, 4> Ops = {ST->getValue(), Base,
                                          CurDAG->getTargetConstant(Imm, DL, MVT::i32),
                                          ST->getChain()};

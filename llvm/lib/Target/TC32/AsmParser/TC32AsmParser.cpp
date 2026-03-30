@@ -607,8 +607,8 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
           return Error(IDLoc, "word offset must be 0..28 step 4");
         Inst.setOpcode(TC32::TLOADru3);
       } else {
-        if (Imm < 0 || Imm > 7)
-          return Error(IDLoc, "byte offset must be 0..7");
+        if (Imm < 0 || Imm > 31)
+          return Error(IDLoc, "byte offset must be 0..31");
         Inst.setOpcode(TC32::TLOADBru3);
       }
       Inst.addOperand(MCOperand::createReg(Dst.getReg()));
@@ -637,8 +637,8 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
           return Error(IDLoc, "word offset must be 0..28 step 4");
         Inst.setOpcode(TC32::TSTOREru3);
       } else {
-        if (Imm < 0 || Imm > 7)
-          return Error(IDLoc, "byte offset must be 0..7");
+        if (Imm < 0 || Imm > 31)
+          return Error(IDLoc, "byte offset must be 0..31");
         Inst.setOpcode(TC32::TSTOREBru3);
       }
       Inst.addOperand(MCOperand::createReg(Src.getReg()));
