@@ -237,6 +237,14 @@ def TRET_R0 : TC32Inst<(outs), (ins), "tmov\tpc, lr"> {
 
 def TJEXr : TC32Inst<(outs), (ins GR32:$src), "tjex\t$src"> {
   let Defs = [R15];
+  let isBranch = 1;
+  let isIndirectBranch = 1;
+  let isTerminator = 1;
+  let isBarrier = 1;
+}
+
+def TRETjr : Pseudo<(outs), (ins GR32:$src), "#TRETjr $src"> {
+  let Defs = [R15];
   let isReturn = 1;
   let isTerminator = 1;
   let isBarrier = 1;

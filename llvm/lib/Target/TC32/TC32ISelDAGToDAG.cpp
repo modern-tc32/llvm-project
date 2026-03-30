@@ -751,8 +751,14 @@ public:
     case ISD::TargetFrameIndex:
     case ISD::TargetGlobalAddress:
     case ISD::TargetExternalSymbol:
+    case ISD::TargetJumpTable:
       Node->setNodeId(-1);
       return;
+    case TC32ISD::WRAPPER_JT: {
+      ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADaddr, DL, MVT::i32,
+                                               Node->getOperand(0)));
+      return;
+    }
     case ISD::CopyFromReg:
     case ISD::CopyToReg:
       Node->setNodeId(-1);
@@ -821,6 +827,13 @@ public:
       ReplaceNode(Node, CurDAG->getMachineNode(TC32::TJ, DL, MVT::Other,
                                                Node->getOperand(1),
                                                Node->getOperand(0)));
+      return;
+    }
+    case ISD::BRIND: {
+      SDValue Chain = Node->getOperand(0);
+      SDValue Addr = ensureValueInRegister(Node->getOperand(1), DL);
+      ReplaceNode(Node, CurDAG->getMachineNode(TC32::TJEXr, DL, MVT::Other,
+                                               Addr, Chain));
       return;
     }
     case ISD::BR_CC: {

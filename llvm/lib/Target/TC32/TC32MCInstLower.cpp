@@ -33,6 +33,9 @@ MCOperand TC32MCInstLower::lowerOperand(const MachineOperand &MO) const {
   case MachineOperand::MO_ExternalSymbol:
     return MCOperand::createExpr(MCSymbolRefExpr::create(
         Printer.GetExternalSymbolSymbol(MO.getSymbolName()), Ctx));
+  case MachineOperand::MO_JumpTableIndex:
+    return MCOperand::createExpr(
+        MCSymbolRefExpr::create(Printer.GetJTISymbol(MO.getIndex()), Ctx));
   case MachineOperand::MO_BlockAddress:
     return MCOperand::createExpr(MCSymbolRefExpr::create(
         Printer.GetBlockAddressSymbol(MO.getBlockAddress()), Ctx));

@@ -129,6 +129,12 @@ private:
       return;
     }
 
+    if (MI->getOpcode() == TC32::TRETjr) {
+      EmitToStreamer(*OutStreamer,
+                     MCInstBuilder(TC32::TJEXr).addReg(MI->getOperand(0).getReg()));
+      return;
+    }
+
     if (MI->getOpcode() == TC32::TLOADaddr) {
       MCSymbol *PoolLabel = OutContext.createTempSymbol();
 

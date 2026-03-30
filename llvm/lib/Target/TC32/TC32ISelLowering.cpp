@@ -122,8 +122,11 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::BR_CC, MVT::i32, Custom);
   setOperationAction(ISD::BR_CC, MVT::i8, Custom);
   setOperationAction(ISD::BR_CC, MVT::i16, Custom);
+  setOperationAction(ISD::BR_JT, MVT::Other, Custom);
+  setOperationAction(ISD::BRIND, MVT::Other, Legal);
   setOperationAction(ISD::FrameIndex, MVT::i32, Custom);
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
+  setMinimumJumpTableEntries(4);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i8, MVT::i1, Promote);
   setLoadExtAction(ISD::EXTLOAD, MVT::i8, MVT::i1, Promote);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i32, MVT::i8, Legal);
@@ -167,6 +170,8 @@ const char *TC32TargetLowering::getTargetNodeName(unsigned Opcode) const {
   switch (Opcode) {
   case TC32ISD::FRAMEADDR:
     return "TC32ISD::FRAMEADDR";
+  case TC32ISD::WRAPPER_JT:
+    return "TC32ISD::WRAPPER_JT";
   case TC32ISD::BRCOND:
     return "TC32ISD::BRCOND";
   case TC32ISD::ULOAD:
@@ -500,6 +505,40 @@ SDValue TC32TargetLowering::LowerBR_CC(SDValue Op,
                      DAG.getTargetConstant(BrOpc, DL, MVT::i32), LHS, RHS);
 }
 
+SDValue TC32TargetLowering::LowerBR_JT(SDValue Op,
+                                       SelectionDAG &DAG) const {
+  SDLoc DL(Op);
+  SDValue Chain = Op.getOperand(0);
+  SDValue Table = Op.getOperand(1);
+  SDValue Index = Op.getOperand(2);
+  EVT PTy = getPointerTy(DAG.getDataLayout());
+
+  auto *JT = dyn_cast<JumpTableSDNode>(Table);
+  if (!JT)
+    return SDValue();
+
+  SDValue JTI = DAG.getTargetJumpTable(JT->getIndex(), PTy);
+  SDValue Base = DAG.getNode(TC32ISD::WRAPPER_JT, DL, PTy, JTI);
+  if (Index.getValueType() != PTy)
+    Index = DAG.getZExtOrTrunc(Index, DL, PTy);
+
+  SDValue ShiftAmt = DAG.getConstant(2, DL, PTy);
+  SDValue Offset = DAG.getNode(ISD::SHL, DL, PTy, Index, ShiftAmt);
+  SDValue EntryAddr = DAG.getNode(ISD::ADD, DL, PTy, Base, Offset);
+  SDValue LoadedAddr =
+      DAG.getLoad(PTy, DL, Chain, EntryAddr,
+                  MachinePointerInfo::getJumpTable(DAG.getMachineFunction()));
+  Chain = LoadedAddr.getValue(1);
+  return DAG.getNode(ISD::BRIND, DL, MVT::Other, Chain, LoadedAddr);
+}
+
+bool TC32TargetLowering::areJTsAllowed(const Function *Fn) const {
+  if (Fn && Fn->getFnAttribute("no-jump-tables").getValueAsBool())
+    return false;
+  return isOperationLegalOrCustom(ISD::BR_JT, MVT::Other) ||
+         isOperationLegalOrCustom(ISD::BRIND, MVT::Other);
+}
+
 
 MachineBasicBlock *
 TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
@@ -689,6 +728,8 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
     return LowerBRCOND(Op, DAG);
   case ISD::BR_CC:
     return LowerBR_CC(Op, DAG);
+  case ISD::BR_JT:
+    return LowerBR_JT(Op, DAG);
   case ISD::SELECT: {
     EVT VT = Op.getValueType();
     if (VT != MVT::i32 && VT != MVT::i16 && VT != MVT::i8)

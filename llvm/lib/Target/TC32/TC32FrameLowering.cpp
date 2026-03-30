@@ -163,7 +163,7 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
   BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R3));
   BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TADDspu8))
       .addImm(16);
-  auto MIB = BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TJEXr))
+  auto MIB = BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TRETjr))
                  .addReg(TC32::R3);
   if (ReturnsR0)
     MIB.addReg(TC32::R0, RegState::Implicit);
