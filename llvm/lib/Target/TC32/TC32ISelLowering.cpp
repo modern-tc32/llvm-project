@@ -94,6 +94,13 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setBuiltinLibcall(RTLIB::SREM_I32, "__modsi3");
   setBuiltinLibcall(RTLIB::UREM_I32, "__umodsi3");
   setBuiltinLibcall(RTLIB::SHL_I32, "__ashlsi3");
+  setBuiltinLibcall(RTLIB::FPEXT_F32_F64, "__extendsfdf2");
+  setBuiltinLibcall(RTLIB::OEQ_F64, "__eqdf2");
+  setBuiltinLibcall(RTLIB::UNE_F64, "__nedf2");
+  setBuiltinLibcall(RTLIB::OGE_F64, "__gedf2");
+  setBuiltinLibcall(RTLIB::OLT_F64, "__ltdf2");
+  setBuiltinLibcall(RTLIB::OLE_F64, "__ledf2");
+  setBuiltinLibcall(RTLIB::OGT_F64, "__gtdf2");
   setBuiltinLibcall(RTLIB::MEMSET, "memset");
   setBuiltinLibcall(RTLIB::MEMCPY, "memcpy");
   setBuiltinLibcall(RTLIB::MEMMOVE, "memmove");
@@ -166,6 +173,39 @@ static SDValue preserveIncomingScalarArgExt(SelectionDAG &DAG, const SDLoc &DL,
   return DAG.getNode(ISD::AssertZext, DL, MVT::i32, Arg,
                      DAG.getValueType(VT));
 }
+
+static void lowerCallArgToI32Words(SelectionDAG &DAG, const SDLoc &DL,
+                                   EVT ABIArgVT, SDValue ArgVal,
+                                   const ISD::ArgFlagsTy &Flags,
+                                   SmallVectorImpl<SDValue> &Words) {
+  if (ABIArgVT == MVT::i8 || ABIArgVT == MVT::i16) {
+    ArgVal = DAG.getZExtOrTrunc(ArgVal, DL, MVT::i32);
+    ArgVal = normalizeIncomingScalarArgI32(DAG, DL, ArgVal, ABIArgVT, Flags);
+    Words.push_back(ArgVal);
+    return;
+  }
+
+  if (ABIArgVT == MVT::i32 || ABIArgVT == MVT::f32) {
+    if (ArgVal.getValueType() != MVT::i32)
+      ArgVal = DAG.getNode(ISD::BITCAST, DL, MVT::i32, ArgVal);
+    Words.push_back(ArgVal);
+    return;
+  }
+
+  if (ABIArgVT == MVT::i64 || ABIArgVT == MVT::f64) {
+    if (ArgVal.getValueType() != MVT::i64)
+      ArgVal = DAG.getNode(ISD::BITCAST, DL, MVT::i64, ArgVal);
+    SDValue Lo, Hi;
+    std::tie(Lo, Hi) = DAG.SplitScalar(ArgVal, DL, MVT::i32, MVT::i32);
+    Words.push_back(Lo);
+    Words.push_back(Hi);
+    return;
+  }
+
+  report_fatal_error(
+      "TC32 only supports 32-bit and 64-bit scalar call arguments right now");
+}
+
 const char *TC32TargetLowering::getTargetNodeName(unsigned Opcode) const {
   switch (Opcode) {
   case TC32ISD::FRAMEADDR:
@@ -903,8 +943,6 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   static const MCPhysReg ArgRegs[] = {TC32::R0, TC32::R1, TC32::R2, TC32::R3};
 
-  if (CLI.IsVarArg)
-    report_fatal_error("TC32 varargs calls are not implemented yet");
   CLI.IsTailCall = false;
 
   SDValue Callee = CLI.Callee;
@@ -932,39 +970,55 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
   MachineFunction &MF = DAG.getMachineFunction();
   MF.getFrameInfo().setHasCalls(true);
   const unsigned NumRegArgs = static_cast<unsigned>(std::size(ArgRegs));
+  unsigned NumArgWords = 0;
+  for (const ISD::OutputArg &Out : Outs) {
+    switch (Out.ArgVT.getSimpleVT().SimpleTy) {
+    case MVT::i8:
+    case MVT::i16:
+    case MVT::i32:
+    case MVT::f32:
+      NumArgWords += 1;
+      break;
+    case MVT::i64:
+    case MVT::f64:
+      NumArgWords += 2;
+      break;
+    default:
+      report_fatal_error(
+          "TC32 only supports 32-bit and 64-bit scalar call arguments right now");
+    }
+  }
   unsigned StackArgBytes =
-      Outs.size() > NumRegArgs ? (Outs.size() - NumRegArgs) * 4 : 0;
+      NumArgWords > NumRegArgs ? (NumArgWords - NumRegArgs) * 4 : 0;
   Chain = DAG.getCALLSEQ_START(Chain, StackArgBytes, 0, DL);
 
   SmallVector<std::pair<Register, SDValue>, 8> RegsToPass;
   SmallVector<SDValue, 8> MemOpChains;
   SDValue StackPtr;
 
+  unsigned ArgWordIndex = 0;
   for (unsigned I = 0; I < Outs.size(); ++I) {
     EVT ABIArgVT = Outs[I].ArgVT;
-    if (ABIArgVT != MVT::i32 && ABIArgVT != MVT::i16 && ABIArgVT != MVT::i8)
-      report_fatal_error("TC32 only supports i32/i16/i8 call arguments right now");
-    SDValue ArgVal = OutVals[I];
-    if (ABIArgVT == MVT::i8 || ABIArgVT == MVT::i16) {
-      ArgVal = DAG.getZExtOrTrunc(ArgVal, DL, MVT::i32);
-      ArgVal = normalizeIncomingScalarArgI32(DAG, DL, ArgVal, ABIArgVT,
-                                             Outs[I].Flags);
-    }
+    SmallVector<SDValue, 2> ArgWords;
+    lowerCallArgToI32Words(DAG, DL, ABIArgVT, OutVals[I], Outs[I].Flags,
+                           ArgWords);
 
-    if (I < NumRegArgs) {
-      RegsToPass.push_back({ArgRegs[I], ArgVal});
-      continue;
+    for (SDValue WordVal : ArgWords) {
+      if (ArgWordIndex < NumRegArgs) {
+        RegsToPass.push_back({ArgRegs[ArgWordIndex], WordVal});
+      } else {
+        if (!StackPtr.getNode())
+          StackPtr = DAG.getCopyFromReg(Chain, DL, TC32::R13, PtrVT);
+        unsigned StackOffset = (ArgWordIndex - NumRegArgs) * 4;
+        SDValue Addr = StackPtr;
+        if (StackOffset != 0)
+          Addr = DAG.getNode(ISD::ADD, DL, PtrVT, StackPtr,
+                             DAG.getIntPtrConstant(StackOffset, DL));
+        MemOpChains.push_back(DAG.getStore(
+            Chain, DL, WordVal, Addr, MachinePointerInfo::getStack(MF, StackOffset)));
+      }
+      ++ArgWordIndex;
     }
-
-    if (!StackPtr.getNode())
-      StackPtr = DAG.getCopyFromReg(Chain, DL, TC32::R13, PtrVT);
-    unsigned StackOffset = (I - NumRegArgs) * 4;
-    SDValue Addr = StackPtr;
-    if (StackOffset != 0)
-      Addr = DAG.getNode(ISD::ADD, DL, PtrVT, StackPtr,
-                         DAG.getIntPtrConstant(StackOffset, DL));
-    MemOpChains.push_back(
-        DAG.getStore(Chain, DL, ArgVal, Addr, MachinePointerInfo::getStack(MF, StackOffset)));
   }
 
   if (!MemOpChains.empty())
@@ -1010,8 +1064,23 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
   if (Ins.empty())
     return Chain;
   if (Ins.size() != 1 ||
-      (Ins[0].VT != MVT::i32 && Ins[0].VT != MVT::i16 && Ins[0].VT != MVT::i8))
-    report_fatal_error("TC32 only supports single i32/i16/i8 call return values right now");
+      (Ins[0].VT != MVT::i32 && Ins[0].VT != MVT::i16 && Ins[0].VT != MVT::i8 &&
+       Ins[0].VT != MVT::i64 && Ins[0].VT != MVT::f64))
+    report_fatal_error(
+        "TC32 only supports single 8/16/32/64-bit scalar call return values right now");
+
+  if (Ins[0].VT == MVT::i64 || Ins[0].VT == MVT::f64) {
+    SDValue Lo = DAG.getCopyFromReg(Chain, DL, TC32::R0, MVT::i32, Glue);
+    Chain = Lo.getValue(1);
+    Glue = Lo.getValue(2);
+    SDValue Hi = DAG.getCopyFromReg(Chain, DL, TC32::R1, MVT::i32, Glue);
+    SDValue Pair = DAG.getNode(ISD::BUILD_PAIR, DL, MVT::i64, Lo, Hi);
+    if (Ins[0].VT == MVT::f64)
+      InVals.push_back(DAG.getNode(ISD::BITCAST, DL, MVT::f64, Pair));
+    else
+      InVals.push_back(Pair);
+    return Hi.getValue(1);
+  }
 
   SDValue RetVal32 = DAG.getCopyFromReg(Chain, DL, TC32::R0, MVT::i32, Glue);
   if (Ins[0].VT == MVT::i8)
