@@ -135,11 +135,11 @@ def TJL_R0_R1_R2_R3 : TC32Inst<(outs), (ins calltarget:$dst), "tjl\t$dst"> {
   let Uses = [R0, R1, R2, R3];
 }
 
-def TINDCALL_R3 : Pseudo<(outs), (ins), "#TINDCALL_R3"> {
+def TINDCALL_R12 : Pseudo<(outs), (ins), "#TINDCALL_R12"> {
   let Size = 4;
   let isCall = 1;
-  let Defs = [R0, R1, R2, R3, R14];
-  let Uses = [R0, R1, R2, R3];
+  let Defs = [R0, R1, R2, R3, R12, R14];
+  let Uses = [R0, R1, R2, R3, R12];
 }
 
 def TCMPri0 : TC32Inst<(outs), (ins LoGR32:$src), "tcmp\t$src, #0"> {
@@ -242,7 +242,12 @@ def TJEXr : TC32Inst<(outs), (ins GR32:$src), "tjex\t$src"> {
   let isBarrier = 1;
 }
 
-def TMOVrr : TC32Inst<(outs GR32:$dst), (ins GR32:$src), "tmov\t$dst, $src">;
+// Unlike ARM's plain MOV, TC32 tmov is not flag-transparent in practice.
+// Model it as clobbering CPSR so compare/branch repair and scheduling never
+// assume a tcmp result can survive across an intervening tmov.
+def TMOVrr : TC32Inst<(outs GR32:$dst), (ins GR32:$src), "tmov\t$dst, $src"> {
+  let Defs = [CPSR];
+}
 
 def TMOVi8 : TC32Inst<(outs LoGR32:$dst), (ins uimm8:$imm),
                       "tmovs\t$dst, #$imm">;

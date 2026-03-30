@@ -29,11 +29,12 @@ bool TC32FrameLowering::usesPushR7LR(const MachineFunction &MF) const {
 
 unsigned TC32FrameLowering::getFixedObjectBaseOffset(
     const MachineFunction &MF) const {
+  unsigned Offset = MF.getFrameInfo().getStackSize();
   if (usesPushR7LR(MF))
-    return MF.getFrameInfo().getStackSize() + 8;
+    return Offset + 8;
   if (usesPushLR(MF))
-    return MF.getFrameInfo().getStackSize() + 4;
-  return 0;
+    return Offset + 4;
+  return Offset;
 }
 
 void TC32FrameLowering::determineCalleeSaves(MachineFunction &MF,

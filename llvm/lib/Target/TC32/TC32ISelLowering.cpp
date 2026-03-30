@@ -111,13 +111,17 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::AssertZext, MVT::i32, Legal);
   setOperationAction(ISD::SETCC, MVT::i32, Custom);
   setOperationAction(ISD::SETCC, MVT::i8, Custom);
+  setOperationAction(ISD::SETCC, MVT::i16, Custom);
   setOperationAction(ISD::SELECT, MVT::i32, Custom);
-  setOperationAction(ISD::SELECT, MVT::i8, Custom);
+  setOperationAction(ISD::SELECT, MVT::i8, Promote);
+  setOperationAction(ISD::SELECT, MVT::i16, Promote);
   setOperationAction(ISD::SELECT_CC, MVT::i32, Legal);
-  setOperationAction(ISD::SELECT_CC, MVT::i8, Legal);
+  setOperationAction(ISD::SELECT_CC, MVT::i8, Promote);
+  setOperationAction(ISD::SELECT_CC, MVT::i16, Promote);
   setOperationAction(ISD::BRCOND, MVT::Other, Custom);
   setOperationAction(ISD::BR_CC, MVT::i32, Custom);
   setOperationAction(ISD::BR_CC, MVT::i8, Custom);
+  setOperationAction(ISD::BR_CC, MVT::i16, Custom);
   setOperationAction(ISD::FrameIndex, MVT::i32, Custom);
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i8, MVT::i1, Promote);
@@ -138,18 +142,27 @@ static SDValue normalizeIncomingScalarArgI32(SelectionDAG &DAG, const SDLoc &DL,
   if (VT != MVT::i8 && VT != MVT::i16)
     return Arg;
 
-  if (!Flags.isSExt()) {
-    uint32_t Mask = VT == MVT::i8 ? 0xffu : 0xffffu;
-    return DAG.getNode(ISD::AND, DL, MVT::i32, Arg,
-                       DAG.getConstant(Mask, DL, MVT::i32));
-  }
-
   unsigned Shift = VT == MVT::i8 ? 24 : 16;
   SDValue ShiftAmt = DAG.getConstant(Shift, DL, MVT::i32);
   Arg = DAG.getNode(ISD::SHL, DL, MVT::i32, Arg, ShiftAmt);
+  if (!Flags.isSExt())
+    return DAG.getNode(ISD::SRL, DL, MVT::i32, Arg, ShiftAmt);
   return DAG.getNode(ISD::SRA, DL, MVT::i32, Arg, ShiftAmt);
 }
 
+static SDValue preserveIncomingScalarArgExt(SelectionDAG &DAG, const SDLoc &DL,
+                                            SDValue Arg, EVT VT,
+                                            const ISD::ArgFlagsTy &Flags) {
+  if (VT != MVT::i8 && VT != MVT::i16)
+    return Arg;
+
+  if (Flags.isSExt())
+    return DAG.getNode(ISD::AssertSext, DL, MVT::i32, Arg,
+                       DAG.getValueType(VT));
+
+  return DAG.getNode(ISD::AssertZext, DL, MVT::i32, Arg,
+                     DAG.getValueType(VT));
+}
 const char *TC32TargetLowering::getTargetNodeName(unsigned Opcode) const {
   switch (Opcode) {
   case TC32ISD::FRAMEADDR:
@@ -167,6 +180,13 @@ const char *TC32TargetLowering::getTargetNodeName(unsigned Opcode) const {
   default:
     return nullptr;
   }
+}
+
+EVT TC32TargetLowering::getSetCCResultType(const DataLayout &DL,
+                                           LLVMContext &, EVT VT) const {
+  if (!VT.isVector())
+    return getPointerTy(DL);
+  return VT.changeVectorElementTypeToInteger();
 }
 
 static SDValue lowerI8Shift(SDValue Op, SelectionDAG &DAG) {
@@ -222,13 +242,46 @@ static SDValue extendForCompare(SelectionDAG &DAG, const SDLoc &DL, SDValue V,
   if (VT == MVT::i32)
     return V;
 
-  if (ISD::isSignedIntSetCC(CC))
-    return DAG.getNode(ISD::SIGN_EXTEND, DL, MVT::i32, V);
+  if (VT == MVT::i8 || VT == MVT::i16) {
+    SDValue Wide = DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i32, V);
 
-  if (ISD::isUnsignedIntSetCC(CC))
-    return DAG.getNode(ISD::ZERO_EXTEND, DL, MVT::i32, V);
+    if (ISD::isSignedIntSetCC(CC)) {
+      unsigned Shift = VT == MVT::i8 ? 24 : 16;
+      SDValue ShiftAmt = DAG.getConstant(Shift, DL, MVT::i32);
+      Wide = DAG.getNode(ISD::SHL, DL, MVT::i32, Wide, ShiftAmt);
+      return DAG.getNode(ISD::SRA, DL, MVT::i32, Wide, ShiftAmt);
+    }
+
+    if (ISD::isUnsignedIntSetCC(CC)) {
+      uint32_t Mask = VT == MVT::i8 ? 0xffu : 0xffffu;
+      return DAG.getNode(ISD::AND, DL, MVT::i32, Wide,
+                         DAG.getConstant(Mask, DL, MVT::i32));
+    }
+  }
 
   return DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i32, V);
+}
+
+static SDValue canonicalizeCompareOperand(SelectionDAG &DAG, const SDLoc &DL,
+                                          SDValue V, ISD::CondCode CC) {
+  EVT VT = V.getValueType();
+  if (VT == MVT::i8 || VT == MVT::i16)
+    return extendForCompare(DAG, DL, V, CC);
+
+  if (VT != MVT::i32)
+    return V;
+
+  unsigned Opc = V.getOpcode();
+  if (Opc != ISD::ANY_EXTEND && Opc != ISD::ZERO_EXTEND &&
+      Opc != ISD::SIGN_EXTEND)
+    return V;
+
+  SDValue Narrow = V.getOperand(0);
+  EVT NarrowVT = Narrow.getValueType();
+  if (NarrowVT != MVT::i8 && NarrowVT != MVT::i16)
+    return V;
+
+  return extendForCompare(DAG, DL, Narrow, CC);
 }
 
 static SDValue lowerCompareSelectToSignOrOne(SelectionDAG &DAG, const SDLoc &DL,
@@ -404,11 +457,8 @@ SDValue TC32TargetLowering::LowerBRCOND(SDValue Op,
 
     normalizeUnsignedCompareForTC32(DAG, DL, CC, LHS, RHS);
 
-    EVT CmpVT = LHS.getValueType();
-    if (CmpVT == MVT::i8 || CmpVT == MVT::i16) {
-      LHS = extendForCompare(DAG, DL, LHS, CC);
-      RHS = extendForCompare(DAG, DL, RHS, CC);
-    }
+    LHS = canonicalizeCompareOperand(DAG, DL, LHS, CC);
+    RHS = canonicalizeCompareOperand(DAG, DL, RHS, CC);
 
     unsigned BrOpc = getTC32BranchOpcodeForCond(CC);
     if (!BrOpc)
@@ -440,11 +490,8 @@ SDValue TC32TargetLowering::LowerBR_CC(SDValue Op,
 
   normalizeUnsignedCompareForTC32(DAG, DL, CC, LHS, RHS);
 
-  EVT CmpVT = LHS.getValueType();
-  if (CmpVT == MVT::i8 || CmpVT == MVT::i16) {
-    LHS = extendForCompare(DAG, DL, LHS, CC);
-    RHS = extendForCompare(DAG, DL, RHS, CC);
-  }
+  LHS = canonicalizeCompareOperand(DAG, DL, LHS, CC);
+  RHS = canonicalizeCompareOperand(DAG, DL, RHS, CC);
 
   unsigned BrOpc = getTC32BranchOpcodeForCond(CC);
   if (!BrOpc)
@@ -644,7 +691,7 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
     return LowerBR_CC(Op, DAG);
   case ISD::SELECT: {
     EVT VT = Op.getValueType();
-    if (VT != MVT::i32 && VT != MVT::i8)
+    if (VT != MVT::i32 && VT != MVT::i16 && VT != MVT::i8)
       break;
 
     SDValue Cond = Op.getOperand(0);
@@ -674,7 +721,8 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
     }
 
     EVT CondVT = Cond.getValueType();
-    if (CondVT == MVT::i1 || CondVT == MVT::i8 || CondVT == MVT::i32) {
+    if (CondVT == MVT::i1 || CondVT == MVT::i8 || CondVT == MVT::i16 ||
+        CondVT == MVT::i32) {
       SDValue Zero = DAG.getConstant(0, DL, CondVT);
       return DAG.getNode(ISD::SELECT_CC, DL, VT, Cond, Zero, TrueVal,
                          FalseVal, DAG.getCondCode(ISD::SETNE));
@@ -694,19 +742,17 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
   }
   case ISD::SETCC: {
     EVT VT = Op.getValueType();
-    if (VT != MVT::i32 && VT != MVT::i8)
+    if (VT != MVT::i32 && VT != MVT::i16 && VT != MVT::i8)
       break;
 
     SDValue LHS = Op.getOperand(0);
     SDValue RHS = Op.getOperand(1);
     SDValue CC = Op.getOperand(2);
-    if (LHS.getValueType() == MVT::i8 || LHS.getValueType() == MVT::i16) {
-      auto *CCNode = dyn_cast<CondCodeSDNode>(CC);
-      if (!CCNode)
-        break;
-      LHS = extendForCompare(DAG, DL, LHS, CCNode->get());
-      RHS = extendForCompare(DAG, DL, RHS, CCNode->get());
-    }
+    auto *CCNode = dyn_cast<CondCodeSDNode>(CC);
+    if (!CCNode)
+      break;
+    LHS = canonicalizeCompareOperand(DAG, DL, LHS, CCNode->get());
+    RHS = canonicalizeCompareOperand(DAG, DL, RHS, CCNode->get());
     SDValue One = DAG.getConstant(1, DL, VT);
     SDValue Zero = DAG.getConstant(0, DL, VT);
     return DAG.getNode(ISD::SELECT_CC, DL, VT, LHS, RHS, One, Zero, CC);
@@ -844,8 +890,7 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
 
   MachineFunction &MF = DAG.getMachineFunction();
   MF.getFrameInfo().setHasCalls(true);
-  const unsigned NumRegArgs =
-      IsIndirectCall ? 3u : static_cast<unsigned>(std::size(ArgRegs));
+  const unsigned NumRegArgs = static_cast<unsigned>(std::size(ArgRegs));
   unsigned StackArgBytes =
       Outs.size() > NumRegArgs ? (Outs.size() - NumRegArgs) * 4 : 0;
   Chain = DAG.getCALLSEQ_START(Chain, StackArgBytes, 0, DL);
@@ -855,13 +900,14 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
   SDValue StackPtr;
 
   for (unsigned I = 0; I < Outs.size(); ++I) {
-    if (Outs[I].VT != MVT::i32 && Outs[I].VT != MVT::i16 && Outs[I].VT != MVT::i8)
+    EVT ABIArgVT = Outs[I].ArgVT;
+    if (ABIArgVT != MVT::i32 && ABIArgVT != MVT::i16 && ABIArgVT != MVT::i8)
       report_fatal_error("TC32 only supports i32/i16/i8 call arguments right now");
     SDValue ArgVal = OutVals[I];
-    if (Outs[I].VT == MVT::i8 || Outs[I].VT == MVT::i16) {
-      unsigned ExtendOp = Outs[I].Flags.isSExt() ? ISD::SIGN_EXTEND
-                                                 : ISD::ZERO_EXTEND;
-      ArgVal = DAG.getNode(ExtendOp, DL, MVT::i32, ArgVal);
+    if (ABIArgVT == MVT::i8 || ABIArgVT == MVT::i16) {
+      ArgVal = DAG.getZExtOrTrunc(ArgVal, DL, MVT::i32);
+      ArgVal = normalizeIncomingScalarArgI32(DAG, DL, ArgVal, ABIArgVT,
+                                             Outs[I].Flags);
     }
 
     if (I < NumRegArgs) {
@@ -894,10 +940,10 @@ SDValue TC32TargetLowering::LowerCall(CallLoweringInfo &CLI,
   unsigned CallOpc = TC32::TJL;
 
   if (IsIndirectCall) {
-    Chain = DAG.getCopyToReg(Chain, DL, TC32::R3, Callee, Glue);
+    Chain = DAG.getCopyToReg(Chain, DL, TC32::R12, Callee, Glue);
     Glue = Chain.getValue(1);
     Ops[0] = Chain;
-    CallOpc = TC32::TINDCALL_R3;
+    CallOpc = TC32::TINDCALL_R12;
   } else {
     Ops.insert(Ops.begin(), Callee);
     switch (RegsToPass.size()) {
