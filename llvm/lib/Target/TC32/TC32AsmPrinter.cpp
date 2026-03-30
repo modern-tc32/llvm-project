@@ -74,14 +74,7 @@ public:
       OutStreamer->emitLabel(IndirectCallR3Pad);
       EmitToStreamer(*OutStreamer, MCInstBuilder(TC32::TJEXr).addReg(TC32::R3));
     }
-    if (!PendingAddrLiterals.empty()) {
-      OutStreamer->emitValueToAlignment(Align(4));
-      for (const PendingAddrLiteral &Literal : PendingAddrLiterals) {
-        OutStreamer->emitLabel(Literal.Label);
-        OutStreamer->emitValue(Literal.Value, 4);
-      }
-      PendingAddrLiterals.clear();
-    }
+    flushPendingAddrLiterals();
     AsmPrinter::emitFunctionBodyEnd();
   }
 
@@ -93,6 +86,18 @@ private:
 
   SmallVector<PendingAddrLiteral, 8> PendingAddrLiterals;
   MCSymbol *IndirectCallR3Pad = nullptr;
+
+  void flushPendingAddrLiterals() {
+    if (PendingAddrLiterals.empty())
+      return;
+
+    OutStreamer->emitValueToAlignment(Align(4));
+    for (const PendingAddrLiteral &Literal : PendingAddrLiterals) {
+      OutStreamer->emitLabel(Literal.Label);
+      OutStreamer->emitValue(Literal.Value, 4);
+    }
+    PendingAddrLiterals.clear();
+  }
 
   const MCExpr *getAddrLiteralValue(const MachineInstr *MI,
                                     const MachineOperand &MO) {
@@ -132,7 +137,6 @@ private:
       Load.addOperand(MCOperand::createReg(MI->getOperand(0).getReg()));
       Load.addOperand(MCOperand::createExpr(MCSymbolRefExpr::create(PoolLabel, OutContext)));
       EmitToStreamer(*OutStreamer, Load);
-
       PendingAddrLiterals.push_back(
           {PoolLabel, getAddrLiteralValue(MI, MI->getOperand(1))});
       return;
@@ -142,6 +146,8 @@ private:
     MCInst OutMI;
     Lower.lower(MI, OutMI);
     EmitToStreamer(*OutStreamer, OutMI);
+    if (MI->isBarrier())
+      flushPendingAddrLiterals();
   }
 };
 
