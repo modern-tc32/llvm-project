@@ -1274,6 +1274,16 @@ EmitSpecialNode(SDNode *Node, bool IsClone, bool IsCloned,
   case ISD::MERGE_VALUES:
   case ISD::TokenFactor:
   case ISD::DEACTIVATION_SYMBOL:
+  case ISD::BasicBlock:
+  case ISD::VALUETYPE:
+  case ISD::CONDCODE:
+  case ISD::Register:
+  case ISD::RegisterMask:
+  case ISD::FrameIndex:
+  case ISD::TargetFrameIndex:
+  case ISD::TargetConstant:
+  case ISD::TargetGlobalAddress:
+  case ISD::TargetExternalSymbol:
     break;
   case ISD::CopyToReg: {
     Register DestReg = cast<RegisterSDNode>(Node->getOperand(1))->getReg();

@@ -317,16 +317,9 @@ static SDValue materializeConstant(SelectionDAG *DAG, const SDLoc &DL,
     return DAG->getTargetConstant(Imm, DL, MVT::i32);
   };
 
-  auto constrainToLoRegClass = [&](SDValue V) {
-    SDValue RC = DAG->getTargetConstant(TC32::LoGR32RegClassID, DL, MVT::i32);
-    return SDValue(
-        DAG->getMachineNode(TargetOpcode::COPY_TO_REGCLASS, DL, MVT::i32, V, RC),
-        0);
-  };
-
   if (Value <= 255)
-    return constrainToLoRegClass(
-        SDValue(DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(Value)), 0));
+    return SDValue(DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(Value)),
+                   0);
 
   auto getMaterializationBytes = [&](uint32_t C) {
     SmallVector<uint8_t, 4> Bytes;
@@ -342,8 +335,8 @@ static SDValue materializeConstant(SelectionDAG *DAG, const SDLoc &DL,
   };
 
   auto materializeShiftAddBytes = [&](ArrayRef<uint8_t> Bytes) {
-    SDValue Cur = constrainToLoRegClass(
-        SDValue(DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(Bytes[0])), 0));
+    SDValue Cur = SDValue(
+        DAG->getMachineNode(TC32::TMOVi8, DL, MVT::i32, getImm(Bytes[0])), 0);
     for (unsigned I = 1; I < Bytes.size(); ++I) {
       Cur = SDValue(DAG->getMachineNode(TC32::TSHFTLi5, DL, MVT::i32, Cur, getImm(8)), 0);
       if (Bytes[I] != 0)
@@ -751,9 +744,11 @@ public:
     case ISD::RegisterMask:
     case ISD::TokenFactor:
     case ISD::BasicBlock:
+    case ISD::FrameIndex:
     case ISD::VALUETYPE:
     case ISD::CONDCODE:
     case ISD::TargetConstant:
+    case ISD::TargetFrameIndex:
     case ISD::TargetGlobalAddress:
     case ISD::TargetExternalSymbol:
       Node->setNodeId(-1);
@@ -768,7 +763,7 @@ public:
       return;
     case ISD::LIFETIME_START:
     case ISD::LIFETIME_END:
-      ReplaceNode(Node, Node->getOperand(0).getNode());
+      Node->setNodeId(-1);
       return;
     case ISD::CALLSEQ_START: {
       SDValue Ops[] = {getTargetImm(Node->getOperand(1)),
@@ -984,16 +979,10 @@ public:
         SDValue Val = materializeConstant(CurDAG, DL,
                                           static_cast<uint32_t>(CN->getZExtValue()));
         if (Node->getValueType(0) == MVT::i8)
-          ReplaceNode(
-              Node,
-              CurDAG->getMachineNode(
-                  TargetOpcode::COPY_TO_REGCLASS, DL, MVT::i8,
-                  SDValue(CurDAG->getMachineNode(
-                              TC32::TMOVi8, DL, MVT::i8,
-                              CurDAG->getTargetConstant(CN->getZExtValue() & 0xff,
-                                                        DL, MVT::i32)),
-                          0),
-                  CurDAG->getTargetConstant(TC32::LoGR32RegClassID, DL, MVT::i32)));
+          ReplaceNode(Node, CurDAG->getMachineNode(
+                                TC32::TMOVi8, DL, MVT::i8,
+                                CurDAG->getTargetConstant(CN->getZExtValue() & 0xff,
+                                                          DL, MVT::i32)));
         else
           ReplaceNode(Node, Val.getNode());
         return;
