@@ -285,6 +285,105 @@ public:
 
 char TC32BranchRelaxationPass::ID = 0;
 
+class TC32CompareBranchRepairPass : public MachineFunctionPass {
+public:
+  static char ID;
+
+  TC32CompareBranchRepairPass() : MachineFunctionPass(ID) {}
+
+  StringRef getPassName() const override {
+    return "TC32 Compare/Branch Repair";
+  }
+
+  static bool isCondBranch(const MachineInstr &MI) {
+    switch (MI.getOpcode()) {
+    case TC32::TJEQ:
+    case TC32::TJNE:
+    case TC32::TJCS:
+    case TC32::TJCC:
+    case TC32::TJGE:
+    case TC32::TJLT:
+    case TC32::TJHI:
+    case TC32::TJLS:
+    case TC32::TJGT:
+    case TC32::TJLE:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  static bool isCompare(const MachineInstr &MI) {
+    return MI.getOpcode() == TC32::TCMPri0 || MI.getOpcode() == TC32::TCMPrr;
+  }
+
+  static bool isLateCopy(const MachineInstr &MI) {
+    return MI.getOpcode() == TC32::TMOVrr || MI.getOpcode() == TC32::TMOVNrr;
+  }
+
+  static bool definesCmpInput(const MachineInstr &Copy, const MachineInstr &Cmp) {
+    if (Copy.getNumOperands() < 1 || !Copy.getOperand(0).isReg())
+      return true;
+    Register DefReg = Copy.getOperand(0).getReg();
+    for (const MachineOperand &MO : Cmp.operands()) {
+      if (!MO.isReg() || !MO.isUse())
+        continue;
+      if (MO.getReg() == DefReg)
+        return true;
+    }
+    return false;
+  }
+
+  bool runOnMachineFunction(MachineFunction &MF) override {
+    bool Changed = false;
+
+    for (MachineBasicBlock &MBB : MF) {
+      for (auto BI = MBB.begin(), BE = MBB.end(); BI != BE; ++BI) {
+        if (!isCondBranch(*BI))
+          continue;
+
+        SmallVector<MachineBasicBlock::iterator, 4> LateCopies;
+        auto Scan = BI;
+
+        while (Scan != MBB.begin()) {
+          --Scan;
+          if (Scan->isDebugInstr())
+            continue;
+          if (isLateCopy(*Scan)) {
+            LateCopies.push_back(Scan);
+            continue;
+          }
+          if (!isCompare(*Scan)) {
+            LateCopies.clear();
+          }
+          break;
+        }
+
+        if (LateCopies.empty() || Scan == BI || !isCompare(*Scan))
+          continue;
+
+        bool Safe = true;
+        for (auto It : LateCopies) {
+          if (definesCmpInput(*It, *Scan)) {
+            Safe = false;
+            break;
+          }
+        }
+        if (!Safe)
+          continue;
+
+        auto InsertPt = Scan;
+        for (auto It = LateCopies.rbegin(); It != LateCopies.rend(); ++It) {
+          MBB.splice(InsertPt, &MBB, *It);
+        }
+        Changed = true;
+      }
+    }
+
+    return Changed;
+  }
+};
+
 class TC32CallMaskPass : public MachineFunctionPass {
 public:
   static char ID;
@@ -326,6 +425,7 @@ public:
 };
 
 char TC32CallMaskPass::ID = 0;
+char TC32CompareBranchRepairPass::ID = 0;
 
 class TC32PassConfig : public TargetPassConfig {
 public:
@@ -354,7 +454,10 @@ public:
 
   void addPreRegAlloc() override { addPass(new TC32CallMaskPass()); }
 
-  void addPreEmitPass() override { addPass(new TC32BranchRelaxationPass()); }
+  void addPreEmitPass() override {
+    addPass(new TC32CompareBranchRepairPass());
+    addPass(new TC32BranchRelaxationPass());
+  }
 };
 
 } // namespace
