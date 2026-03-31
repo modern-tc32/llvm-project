@@ -25,8 +25,13 @@ public:
         ST(static_cast<const TC32Subtarget *>(TM->getSubtargetImpl(F))),
         TLI(ST->getTargetLowering()) {}
 
+  unsigned getInliningThresholdMultiplier() const override { return 0; }
   unsigned getInlineCallPenalty(const Function *F, const CallBase &Call,
                                 unsigned DefaultCallPenalty) const override;
+  int getInliningLastCallToStaticBonus() const override { return 0; }
+  void getUnrollingPreferences(Loop *L, ScalarEvolution &SE,
+                               TargetTransformInfo::UnrollingPreferences &UP,
+                               OptimizationRemarkEmitter *ORE) const override;
 };
 
 } // namespace llvm

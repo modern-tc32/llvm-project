@@ -580,6 +580,60 @@ bool TC32TargetLowering::areJTsAllowed(const Function *Fn) const {
          isOperationLegalOrCustom(ISD::BRIND, MVT::Other);
 }
 
+bool TC32TargetLowering::isLegalAddressingMode(const DataLayout &DL,
+                                               const AddrMode &AM, Type *Ty,
+                                               unsigned AddrSpace,
+                                               Instruction *I) const {
+  (void)AddrSpace;
+  (void)I;
+
+  if (AM.BaseGV || AM.ScalableOffset || AM.Scale != 0)
+    return false;
+
+  // TC32 load/store encodings are base-plus-small-positive-immediate only.
+  // There is no general negative displacement or scaled-register addressing
+  // mode, so tell LSR and friends the truth to avoid creating induction
+  // formulas that later need literal materialization.
+  if (!AM.HasBaseReg)
+    return AM.BaseOffs == 0;
+
+  EVT VT = getValueType(DL, Ty, true);
+  if (!VT.isSimple())
+    return false;
+
+  int64_t Offs = AM.BaseOffs;
+  if (Offs < 0)
+    return false;
+
+  switch (VT.getSimpleVT().SimpleTy) {
+  case MVT::i1:
+  case MVT::i8:
+    return Offs <= 31;
+  case MVT::i16:
+    return Offs <= 62 && (Offs & 1) == 0;
+  case MVT::i32:
+  case MVT::f32:
+    return Offs <= 28 && (Offs & 3) == 0;
+  case MVT::i64:
+  case MVT::f64:
+    return Offs == 0;
+  case MVT::isVoid:
+    return Offs == 0;
+  default:
+    return false;
+  }
+}
+
+bool TC32TargetLowering::isLegalICmpImmediate(int64_t Imm) const {
+  return Imm == 0;
+}
+
+bool TC32TargetLowering::isLegalAddImmediate(int64_t Imm) const {
+  if (Imm == -1)
+    return true;
+  return Imm >= 0 && Imm <= 255;
+}
+
 
 MachineBasicBlock *
 TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,

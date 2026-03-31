@@ -43,6 +43,14 @@ public:
 
   bool areJTsAllowed(const Function *Fn) const override;
 
+  bool isLegalAddressingMode(const DataLayout &DL, const AddrMode &AM,
+                             Type *Ty, unsigned AddrSpace,
+                             Instruction *I = nullptr) const override;
+
+  bool isLegalICmpImmediate(int64_t Imm) const override;
+
+  bool isLegalAddImmediate(int64_t Imm) const override;
+
   SDValue LowerFormalArguments(SDValue Chain, CallingConv::ID CallConv,
                                bool IsVarArg,
                                const SmallVectorImpl<ISD::InputArg> &Ins,
