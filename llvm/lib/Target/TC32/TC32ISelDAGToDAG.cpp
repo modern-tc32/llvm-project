@@ -767,6 +767,7 @@ public:
                             materializeConstant(CurDAG, DL, 1));
   }
 
+
   SDValue selectSetCC(SDNode *Node) {
     SDLoc DL(Node);
     auto *CC = dyn_cast<CondCodeSDNode>(Node->getOperand(2));
@@ -1260,7 +1261,6 @@ public:
         ReplaceNode(Node, Res.getNode());
         return;
       }
-
       prepareCompareOperands(DL, CCVal, LHS, RHS);
 
       unsigned BrOpc = getBranchOpcodeForCond(CCVal);

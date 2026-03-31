@@ -786,6 +786,32 @@ TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
         llvm_unreachable("unexpected tc32 branch opcode");
       }
     };
+    auto getInverseBranchOpcode = [](unsigned BrOpc) -> unsigned {
+      switch (BrOpc) {
+      case TC32::TJEQ:
+        return TC32::TJNE;
+      case TC32::TJNE:
+        return TC32::TJEQ;
+      case TC32::TJCS:
+        return TC32::TJCC;
+      case TC32::TJCC:
+        return TC32::TJCS;
+      case TC32::TJGE:
+        return TC32::TJLT;
+      case TC32::TJLT:
+        return TC32::TJGE;
+      case TC32::TJHI:
+        return TC32::TJLS;
+      case TC32::TJLS:
+        return TC32::TJHI;
+      case TC32::TJGT:
+        return TC32::TJLE;
+      case TC32::TJLE:
+        return TC32::TJGT;
+      default:
+        llvm_unreachable("unexpected tc32 branch opcode");
+      }
+    };
 
     Register Dst = MI.getOperand(0).getReg();
     Register FalseVal = MI.getOperand(1).getReg();
@@ -793,17 +819,15 @@ TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
     Register LHS = MI.getOperand(3).getReg();
     Register RHS = MI.getOperand(4).getReg();
     unsigned BrOpc = getBranchOpcode(MI.getOperand(5).getImm());
+    unsigned InvBrOpc = getInverseBranchOpcode(BrOpc);
 
     MachineBasicBlock *ThisMBB = MBB;
     MachineFunction::iterator It = ++ThisMBB->getIterator();
     MachineBasicBlock *TrueMBB =
         MF->CreateMachineBasicBlock(ThisMBB->getBasicBlock());
-    MachineBasicBlock *FalseMBB =
-        MF->CreateMachineBasicBlock(ThisMBB->getBasicBlock());
     MachineBasicBlock *SinkMBB =
         MF->CreateMachineBasicBlock(ThisMBB->getBasicBlock());
     MF->insert(It, TrueMBB);
-    MF->insert(It, FalseMBB);
     MF->insert(It, SinkMBB);
 
     MachineBasicBlock::iterator MII(MI);
@@ -811,20 +835,15 @@ TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
     SinkMBB->transferSuccessorsAndUpdatePHIs(ThisMBB);
 
     ThisMBB->addSuccessor(TrueMBB);
-    ThisMBB->addSuccessor(FalseMBB);
+    ThisMBB->addSuccessor(SinkMBB);
     TrueMBB->addSuccessor(SinkMBB);
-    FalseMBB->addSuccessor(SinkMBB);
 
+    BuildMI(*ThisMBB, MII, DL, TII.get(TargetOpcode::COPY), Dst)
+        .addReg(FalseVal);
     BuildMI(*ThisMBB, MII, DL, TII.get(TC32::TCMPrr)).addReg(LHS).addReg(RHS);
-    BuildMI(*ThisMBB, MII, DL, TII.get(BrOpc)).addMBB(TrueMBB);
-    BuildMI(*ThisMBB, MII, DL, TII.get(TC32::TJ)).addMBB(FalseMBB);
-
+    BuildMI(*ThisMBB, MII, DL, TII.get(InvBrOpc)).addMBB(SinkMBB);
     BuildMI(*TrueMBB, TrueMBB->end(), DL, TII.get(TargetOpcode::COPY), Dst)
         .addReg(TrueVal);
-    BuildMI(*TrueMBB, TrueMBB->end(), DL, TII.get(TC32::TJ)).addMBB(SinkMBB);
-
-    BuildMI(*FalseMBB, FalseMBB->end(), DL, TII.get(TargetOpcode::COPY), Dst)
-        .addReg(FalseVal);
 
     MI.eraseFromParent();
     return SinkMBB;
