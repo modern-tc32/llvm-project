@@ -1265,10 +1265,14 @@ SDValue DAGTypeLegalizer::SoftenFloatOp_FP_ROUND(SDNode *N) {
 }
 
 SDValue DAGTypeLegalizer::SoftenFloatOp_BR_CC(SDNode *N) {
+  EVT VT = N->getOperand(2).getValueType();
+  if (CustomLowerNode(N, VT, false))
+    return SDValue();
+
   SDValue NewLHS = N->getOperand(2), NewRHS = N->getOperand(3);
   ISD::CondCode CCCode = cast<CondCodeSDNode>(N->getOperand(1))->get();
 
-  EVT VT = NewLHS.getValueType();
+  VT = NewLHS.getValueType();
   NewLHS = GetSoftenedFloat(NewLHS);
   NewRHS = GetSoftenedFloat(NewRHS);
   TLI.softenSetCCOperands(DAG, VT, NewLHS, NewRHS, CCCode, SDLoc(N),
@@ -1349,10 +1353,14 @@ SDValue DAGTypeLegalizer::SoftenFloatOp_FP_TO_XINT_SAT(SDNode *N) {
 }
 
 SDValue DAGTypeLegalizer::SoftenFloatOp_SELECT_CC(SDNode *N) {
+  EVT VT = N->getOperand(0).getValueType();
+  if (CustomLowerNode(N, VT, false))
+    return SDValue();
+
   SDValue NewLHS = N->getOperand(0), NewRHS = N->getOperand(1);
   ISD::CondCode CCCode = cast<CondCodeSDNode>(N->getOperand(4))->get();
 
-  EVT VT = NewLHS.getValueType();
+  VT = NewLHS.getValueType();
   NewLHS = GetSoftenedFloat(NewLHS);
   NewRHS = GetSoftenedFloat(NewRHS);
   TLI.softenSetCCOperands(DAG, VT, NewLHS, NewRHS, CCCode, SDLoc(N),
@@ -1374,13 +1382,17 @@ SDValue DAGTypeLegalizer::SoftenFloatOp_SELECT_CC(SDNode *N) {
 
 SDValue DAGTypeLegalizer::SoftenFloatOp_SETCC(SDNode *N) {
   bool IsStrict = N->isStrictFPOpcode();
+  EVT VT = N->getOperand(IsStrict ? 1 : 0).getValueType();
+  if (CustomLowerNode(N, VT, false))
+    return SDValue();
+
   SDValue Op0 = N->getOperand(IsStrict ? 1 : 0);
   SDValue Op1 = N->getOperand(IsStrict ? 2 : 1);
   SDValue Chain = IsStrict ? N->getOperand(0) : SDValue();
   ISD::CondCode CCCode =
       cast<CondCodeSDNode>(N->getOperand(IsStrict ? 3 : 2))->get();
 
-  EVT VT = Op0.getValueType();
+  VT = Op0.getValueType();
   SDValue NewLHS = GetSoftenedFloat(Op0);
   SDValue NewRHS = GetSoftenedFloat(Op1);
   TLI.softenSetCCOperands(DAG, VT, NewLHS, NewRHS, CCCode, SDLoc(N), Op0, Op1,

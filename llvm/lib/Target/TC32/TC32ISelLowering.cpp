@@ -16,6 +16,127 @@
 
 using namespace llvm;
 
+static SDValue lowerTC32SoftFloatSetCC(SelectionDAG &DAG,
+                                       const TC32TargetLowering &TLI,
+                                       const SDLoc &DL, EVT ResVT,
+                                       SDValue LHS, SDValue RHS,
+                                       ISD::CondCode CC,
+                                       SDValue Chain = SDValue()) {
+  assert(LHS.getValueType() == MVT::f64 && RHS.getValueType() == MVT::f64 &&
+         "TC32 soft-float SETCC helper expects f64 operands");
+
+  RTLIB::Libcall LC1 = RTLIB::UNKNOWN_LIBCALL, LC2 = RTLIB::UNKNOWN_LIBCALL;
+  bool ShouldInvertCC = false;
+  switch (CC) {
+  case ISD::SETEQ:
+  case ISD::SETOEQ:
+    LC1 = RTLIB::OEQ_F64;
+    break;
+  case ISD::SETNE:
+  case ISD::SETUNE:
+    LC1 = RTLIB::UNE_F64;
+    break;
+  case ISD::SETGE:
+  case ISD::SETOGE:
+    LC1 = RTLIB::OGE_F64;
+    break;
+  case ISD::SETLT:
+  case ISD::SETOLT:
+    LC1 = RTLIB::OLT_F64;
+    break;
+  case ISD::SETLE:
+  case ISD::SETOLE:
+    LC1 = RTLIB::OLE_F64;
+    break;
+  case ISD::SETGT:
+  case ISD::SETOGT:
+    LC1 = RTLIB::OGT_F64;
+    break;
+  case ISD::SETO:
+    ShouldInvertCC = true;
+    [[fallthrough]];
+  case ISD::SETUO:
+    LC1 = RTLIB::UO_F64;
+    break;
+  case ISD::SETONE:
+    ShouldInvertCC = true;
+    [[fallthrough]];
+  case ISD::SETUEQ:
+    LC1 = RTLIB::UO_F64;
+    LC2 = RTLIB::OEQ_F64;
+    break;
+  default:
+    ShouldInvertCC = true;
+    switch (CC) {
+    case ISD::SETULT:
+      LC1 = RTLIB::OGE_F64;
+      break;
+    case ISD::SETULE:
+      LC1 = RTLIB::OGT_F64;
+      break;
+    case ISD::SETUGT:
+      LC1 = RTLIB::OLE_F64;
+      break;
+    case ISD::SETUGE:
+      LC1 = RTLIB::OLT_F64;
+      break;
+    default:
+      llvm_unreachable("unsupported TC32 soft-float SETCC predicate");
+    }
+  }
+
+  RTLIB::LibcallImpl LC1Impl = TLI.getLibcallImpl(LC1);
+  if (LC1Impl == RTLIB::Unsupported)
+    report_fatal_error("no TC32 libcall available to lower f64 compare");
+
+  EVT CmpRetVT = TLI.getCmpLibcallReturnType();
+
+  auto makeWordArgs = [&](SDValue X, SDValue Y) {
+    SDValue XInt = DAG.getNode(ISD::BITCAST, DL, MVT::i64, X);
+    SDValue YInt = DAG.getNode(ISD::BITCAST, DL, MVT::i64, Y);
+    SDValue XLo, XHi, YLo, YHi;
+    std::tie(XLo, XHi) = DAG.SplitScalar(XInt, DL, MVT::i32, MVT::i32);
+    std::tie(YLo, YHi) = DAG.SplitScalar(YInt, DL, MVT::i32, MVT::i32);
+
+    SmallVector<SDValue, 4> Args;
+    Args.push_back(XLo);
+    Args.push_back(XHi);
+    Args.push_back(YLo);
+    Args.push_back(YHi);
+    return Args;
+  };
+
+  auto makeCmpCall = [&](RTLIB::LibcallImpl LC) {
+    auto Args = makeWordArgs(LHS, RHS);
+    TargetLowering::MakeLibCallOptions CallOptions;
+    return TLI.makeLibCall(DAG, LC, CmpRetVT, Args, CallOptions, DL, Chain);
+  };
+
+  auto Call1 = makeCmpCall(LC1Impl);
+
+  ISD::CondCode LibCC = TLI.getSoftFloatCmpLibcallPredicate(LC1Impl);
+  if (ShouldInvertCC)
+    LibCC = getSetCCInverse(LibCC, CmpRetVT);
+
+  SDValue Zero = DAG.getConstant(0, DL, CmpRetVT);
+  SDValue Result1 = DAG.getSetCC(DL, ResVT, Call1.first, Zero, LibCC);
+
+  if (LC2 == RTLIB::UNKNOWN_LIBCALL)
+    return Result1;
+
+  RTLIB::LibcallImpl LC2Impl = TLI.getLibcallImpl(LC2);
+  if (LC2Impl == RTLIB::Unsupported)
+    report_fatal_error("no TC32 secondary libcall available to lower f64 compare");
+
+  auto Call2 = makeCmpCall(LC2Impl);
+  ISD::CondCode LibCC2 = TLI.getSoftFloatCmpLibcallPredicate(LC2Impl);
+  if (ShouldInvertCC)
+    LibCC2 = getSetCCInverse(LibCC2, CmpRetVT);
+  SDValue Result2 = DAG.getSetCC(DL, ResVT, Call2.first, Zero, LibCC2);
+  return DAG.getNode(ShouldInvertCC ? ISD::AND : ISD::OR, DL, ResVT, Result1,
+                     Result2);
+}
+
 TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
                                        const TC32Subtarget &STI)
     : TargetLowering(TM, STI) {
@@ -119,16 +240,19 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SETCC, MVT::i32, Custom);
   setOperationAction(ISD::SETCC, MVT::i8, Custom);
   setOperationAction(ISD::SETCC, MVT::i16, Custom);
+  setOperationAction(ISD::SETCC, MVT::f64, Custom);
   setOperationAction(ISD::SELECT, MVT::i32, Custom);
   setOperationAction(ISD::SELECT, MVT::i8, Promote);
   setOperationAction(ISD::SELECT, MVT::i16, Promote);
   setOperationAction(ISD::SELECT_CC, MVT::i32, Legal);
   setOperationAction(ISD::SELECT_CC, MVT::i8, Promote);
   setOperationAction(ISD::SELECT_CC, MVT::i16, Promote);
+  setOperationAction(ISD::SELECT_CC, MVT::f64, Custom);
   setOperationAction(ISD::BRCOND, MVT::Other, Custom);
   setOperationAction(ISD::BR_CC, MVT::i32, Custom);
   setOperationAction(ISD::BR_CC, MVT::i8, Custom);
   setOperationAction(ISD::BR_CC, MVT::i16, Custom);
+  setOperationAction(ISD::BR_CC, MVT::f64, Custom);
   setOperationAction(ISD::BR_JT, MVT::Other, Custom);
   setOperationAction(ISD::BRIND, MVT::Other, Legal);
   setOperationAction(ISD::FrameIndex, MVT::i32, Custom);
@@ -878,11 +1002,19 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
   }
   case ISD::SETCC: {
     EVT VT = Op.getValueType();
+    SDValue LHS = Op.getOperand(0);
+    SDValue RHS = Op.getOperand(1);
+    if (LHS.getValueType() == MVT::f64 && RHS.getValueType() == MVT::f64) {
+      auto *CCNode = dyn_cast<CondCodeSDNode>(Op.getOperand(2));
+      if (!CCNode)
+        break;
+      return lowerTC32SoftFloatSetCC(DAG, *this, DL, VT, LHS, RHS,
+                                     CCNode->get());
+    }
+
     if (VT != MVT::i32 && VT != MVT::i16 && VT != MVT::i8)
       break;
 
-    SDValue LHS = Op.getOperand(0);
-    SDValue RHS = Op.getOperand(1);
     SDValue CC = Op.getOperand(2);
     auto *CCNode = dyn_cast<CondCodeSDNode>(CC);
     if (!CCNode)
