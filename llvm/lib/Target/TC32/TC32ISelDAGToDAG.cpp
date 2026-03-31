@@ -341,6 +341,35 @@ static bool decodeBooleanSelectCC(SDValue V, SDValue &LHS, SDValue &RHS,
   return false;
 }
 
+static bool isBooleanSelectTreeLike(SDValue V, unsigned Depth = 0) {
+  if (Depth > 8)
+    return false;
+
+  V = stripBoolCasts(V);
+  bool Invert = false;
+  V = stripBoolCond(V, Invert);
+  (void)Invert;
+
+  SDValue LHS, RHS;
+  ISD::CondCode CCVal = ISD::SETNE;
+  bool DummyInvert = false;
+  if (decodeBooleanSelectCC(V, LHS, RHS, CCVal, DummyInvert))
+    return true;
+
+  switch (V.getOpcode()) {
+  case ISD::SELECT:
+    return matchConstInt(V.getOperand(2), 0) &&
+           isBooleanSelectTreeLike(V.getOperand(0), Depth + 1) &&
+           isBooleanSelectTreeLike(V.getOperand(1), Depth + 1);
+  case ISD::AND:
+  case ISD::OR:
+    return isBooleanSelectTreeLike(V.getOperand(0), Depth + 1) &&
+           isBooleanSelectTreeLike(V.getOperand(1), Depth + 1);
+  default:
+    return false;
+  }
+}
+
 static SDValue materializeConstant(SelectionDAG *DAG, const SDLoc &DL,
                                    uint32_t Value) {
   auto getImm = [&](uint32_t Imm) {
@@ -852,6 +881,85 @@ public:
     return selectSetCCValue(DL, CC->get(), Node->getOperand(0), Node->getOperand(1));
   }
 
+  SDValue emitBooleanSelectTree(const SDLoc &DL, EVT VT, SDValue Cond,
+                                SDValue TrueVal, SDValue FalseVal,
+                                unsigned Depth = 0) {
+    if (Depth > 8)
+      return SDValue();
+
+    bool Invert = false;
+    Cond = stripBoolCond(Cond, Invert);
+    if (Invert)
+      std::swap(TrueVal, FalseVal);
+
+    if (Cond.getOpcode() == ISD::AND &&
+        isBooleanSelectTreeLike(Cond.getOperand(0), Depth + 1) &&
+        isBooleanSelectTreeLike(Cond.getOperand(1), Depth + 1)) {
+      SDValue Inner = emitBooleanSelectTree(DL, VT, Cond.getOperand(1), TrueVal,
+                                            FalseVal, Depth + 1);
+      if (!Inner)
+        return SDValue();
+      return emitBooleanSelectTree(DL, VT, Cond.getOperand(0), Inner, FalseVal,
+                                   Depth + 1);
+    }
+
+    if (Cond.getOpcode() == ISD::OR &&
+        isBooleanSelectTreeLike(Cond.getOperand(0), Depth + 1) &&
+        isBooleanSelectTreeLike(Cond.getOperand(1), Depth + 1)) {
+      SDValue Inner = emitBooleanSelectTree(DL, VT, Cond.getOperand(1), TrueVal,
+                                            FalseVal, Depth + 1);
+      if (!Inner)
+        return SDValue();
+      return emitBooleanSelectTree(DL, VT, Cond.getOperand(0), TrueVal, Inner,
+                                   Depth + 1);
+    }
+
+    if (Cond.getOpcode() == ISD::SELECT && matchConstInt(Cond.getOperand(2), 0) &&
+        isBooleanSelectTreeLike(Cond.getOperand(0), Depth + 1) &&
+        isBooleanSelectTreeLike(Cond.getOperand(1), Depth + 1)) {
+      SDValue Inner = emitBooleanSelectTree(DL, VT, Cond.getOperand(1), TrueVal,
+                                            FalseVal, Depth + 1);
+      if (!Inner)
+        return SDValue();
+      return emitBooleanSelectTree(DL, VT, Cond.getOperand(0), Inner, FalseVal,
+                                   Depth + 1);
+    }
+
+    auto materializeValue = [&](SDValue V) -> SDValue {
+      if (auto *CN = dyn_cast<ConstantSDNode>(V))
+        return materializeConstant(CurDAG, DL,
+                                   static_cast<uint32_t>(CN->getZExtValue()));
+      if (V.getValueType() == MVT::i8)
+        return SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, V), 0);
+      return ensureValueInRegister(V, DL);
+    };
+
+    SDValue LHS, RHS;
+    ISD::CondCode CCVal = ISD::SETNE;
+    bool CCInvert = false;
+    if (decodeBooleanSelectCC(Cond, LHS, RHS, CCVal, CCInvert)) {
+      if (CCInvert)
+        std::swap(TrueVal, FalseVal);
+      if (SDValue Res = trySelectCompareSignOrOne(DL, VT, LHS, RHS, TrueVal,
+                                                  FalseVal, CCVal))
+        return Res;
+      prepareCompareOperands(DL, CCVal, LHS, RHS);
+      unsigned BrOpc = getBranchOpcodeForCond(CCVal);
+      if (!BrOpc)
+        return SDValue();
+      SDValue Ops[] = {materializeValue(FalseVal), materializeValue(TrueVal),
+                       LHS, RHS,
+                       CurDAG->getTargetConstant(BrOpc, DL, MVT::i32)};
+      SDValue Res32 =
+          SDValue(CurDAG->getMachineNode(TC32::TSELECTCC, DL, MVT::i32, Ops), 0);
+      if (VT == MVT::i8)
+        Res32 = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i8, Res32), 0);
+      return Res32;
+    }
+
+    return SDValue();
+  }
+
   void Select(SDNode *Node) override {
     SDLoc DL(Node);
     auto getTargetImm = [&](const SDValue &Op) -> SDValue {
@@ -1332,6 +1440,13 @@ public:
       EVT VT = Node->getValueType(0);
       if (VT != MVT::i32 && VT != MVT::i8)
         break;
+
+      if (SDValue Res = emitBooleanSelectTree(DL, VT, Node->getOperand(0),
+                                              Node->getOperand(1),
+                                              Node->getOperand(2))) {
+        ReplaceNode(Node, Res.getNode());
+        return;
+      }
 
       bool Invert = false;
       SDValue Cond = stripBoolCasts(Node->getOperand(0));

@@ -147,6 +147,10 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setStackPointerRegisterToSaveRestore(TC32::R13);
   setBooleanContents(ZeroOrOneBooleanContent);
   setBooleanVectorContents(ZeroOrOneBooleanContent);
+  // TC32 has no native conditional move/select instructions. Branchless select
+  // formation tends to expand into cmp/boolean materialization/and chains that
+  // are larger than straightforward branches in size-sensitive firmware code.
+  PredictableSelectIsExpensive = true;
   // Vendor TC32 code aligns functions to 4 bytes. This matters for code that
   // uses many PC-relative literal loads, because the ISA treats code/data
   // layout more like Thumb-style aligned text than arbitrary 2-byte packing.
@@ -241,13 +245,15 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::SETCC, MVT::i8, Custom);
   setOperationAction(ISD::SETCC, MVT::i16, Custom);
   setOperationAction(ISD::SETCC, MVT::f64, Custom);
+  setOperationAction(ISD::SELECT, MVT::i1, Custom);
   setOperationAction(ISD::SELECT, MVT::i32, Custom);
-  setOperationAction(ISD::SELECT, MVT::i8, Promote);
+  setOperationAction(ISD::SELECT, MVT::i8, Custom);
   setOperationAction(ISD::SELECT, MVT::i16, Promote);
   setOperationAction(ISD::SELECT_CC, MVT::i32, Legal);
   setOperationAction(ISD::SELECT_CC, MVT::i8, Promote);
   setOperationAction(ISD::SELECT_CC, MVT::i16, Promote);
   setOperationAction(ISD::SELECT_CC, MVT::f64, Custom);
+  setTargetDAGCombine(ISD::SELECT);
   setOperationAction(ISD::BRCOND, MVT::Other, Custom);
   setOperationAction(ISD::BR_CC, MVT::i32, Custom);
   setOperationAction(ISD::BR_CC, MVT::i8, Custom);
@@ -556,6 +562,208 @@ static SDValue stripBooleanCastsForSelect(SDValue V) {
       return V;
     }
   }
+}
+
+static SDValue stripBooleanCondForBranch(SDValue V, bool &Invert);
+
+static bool isBooleanSelectCondLike(SDValue V, unsigned Depth = 0) {
+  if (Depth > 8)
+    return false;
+
+  V = stripBooleanCastsForSelect(V);
+  switch (V.getOpcode()) {
+  case ISD::SETCC:
+    return true;
+  case ISD::Constant:
+    return matchConstS32(V, 0) || matchConstS32(V, 1);
+  case ISD::AND:
+  case ISD::OR:
+    return isBooleanSelectCondLike(V.getOperand(0), Depth + 1) &&
+           isBooleanSelectCondLike(V.getOperand(1), Depth + 1);
+  case ISD::XOR:
+    if (matchConstS32(V.getOperand(0), 1))
+      return isBooleanSelectCondLike(V.getOperand(1), Depth + 1);
+    if (matchConstS32(V.getOperand(1), 1))
+      return isBooleanSelectCondLike(V.getOperand(0), Depth + 1);
+    return false;
+  default:
+    return false;
+  }
+}
+
+static SDValue extractBooleanAndCond(SelectionDAG &DAG, const SDLoc &DL,
+                                     SDValue V, unsigned Depth = 0) {
+  if (Depth > 8)
+    return SDValue();
+
+  V = stripBooleanCastsForSelect(V);
+  if (V.getOpcode() == ISD::SETCC)
+    return V;
+
+  if (matchConstS32(V, 1))
+    return DAG.getConstant(1, DL, MVT::i1);
+  if (matchConstS32(V, 0))
+    return DAG.getConstant(0, DL, MVT::i1);
+
+  if (V.getOpcode() != ISD::SELECT)
+    return SDValue();
+
+  SDValue InnerCond = stripBooleanCastsForSelect(V.getOperand(0));
+  SDValue TrueVal = V.getOperand(1);
+  SDValue FalseVal = V.getOperand(2);
+  if (!matchConstS32(FalseVal, 0))
+    return SDValue();
+
+  SDValue InnerTrue = extractBooleanAndCond(DAG, DL, TrueVal, Depth + 1);
+  if (!InnerTrue)
+    return SDValue();
+
+  if (matchConstS32(InnerCond, 1))
+    return InnerTrue;
+  if (matchConstS32(InnerTrue, 1))
+    return InnerCond;
+
+  if (InnerCond.getValueType() != MVT::i1)
+    InnerCond = DAG.getSetCC(DL, MVT::i1, InnerCond,
+                             DAG.getConstant(0, DL, InnerCond.getValueType()),
+                             ISD::SETNE);
+  if (InnerTrue.getValueType() != MVT::i1)
+    InnerTrue = DAG.getSetCC(DL, MVT::i1, InnerTrue,
+                             DAG.getConstant(0, DL, InnerTrue.getValueType()),
+                             ISD::SETNE);
+  return DAG.getNode(ISD::AND, DL, MVT::i1, InnerCond, InnerTrue);
+}
+
+static SDValue canonicalizeBooleanSelectCondForDAGCombine(SelectionDAG &DAG,
+                                                          const SDLoc &DL,
+                                                          SDValue V,
+                                                          unsigned Depth = 0) {
+  if (Depth > 8)
+    return SDValue();
+
+  V = stripBooleanCastsForSelect(V);
+  if (V.getOpcode() == ISD::SELECT) {
+    if (SDValue Res = extractBooleanAndCond(DAG, DL, V, Depth + 1))
+      return Res;
+  }
+  if (V.getOpcode() == ISD::AND || V.getOpcode() == ISD::OR) {
+    SDValue L = canonicalizeBooleanSelectCondForDAGCombine(
+        DAG, DL, V.getOperand(0), Depth + 1);
+    SDValue R = canonicalizeBooleanSelectCondForDAGCombine(
+        DAG, DL, V.getOperand(1), Depth + 1);
+    if (L && R)
+      return DAG.getNode(V.getOpcode(), DL, MVT::i1, L, R);
+  }
+  return SDValue();
+}
+
+static SDValue getBooleanValueAsI1(SelectionDAG &DAG, const SDLoc &DL,
+                                   SDValue V) {
+  V = stripBooleanCastsForSelect(V);
+  if (V.getValueType() == MVT::i1)
+    return V;
+
+  if (V.getOpcode() == ISD::SETCC)
+    return DAG.getSetCC(DL, MVT::i1, V,
+                        DAG.getConstant(0, DL, V.getValueType()),
+                        ISD::SETNE);
+
+  if (matchConstS32(V, 0))
+    return DAG.getConstant(0, DL, MVT::i1);
+  if (matchConstS32(V, 1))
+    return DAG.getConstant(1, DL, MVT::i1);
+
+  EVT VT = V.getValueType();
+  if (VT == MVT::i8 || VT == MVT::i16 || VT == MVT::i32)
+    return DAG.getSetCC(DL, MVT::i1, V, DAG.getConstant(0, DL, VT),
+                        ISD::SETNE);
+
+  return SDValue();
+}
+
+static SDValue lowerBooleanSelectCond(SelectionDAG &DAG, const SDLoc &DL, EVT VT,
+                                      SDValue Cond, SDValue TrueVal,
+                                      SDValue FalseVal, unsigned Depth = 0) {
+  if (Depth > 8)
+    return SDValue();
+
+  bool Invert = false;
+  Cond = stripBooleanCondForBranch(Cond, Invert);
+  if (Invert)
+    std::swap(TrueVal, FalseVal);
+
+  if (Cond.getOpcode() == ISD::AND &&
+      isBooleanSelectCondLike(Cond.getOperand(0), Depth + 1) &&
+      isBooleanSelectCondLike(Cond.getOperand(1), Depth + 1)) {
+    SDValue Inner = lowerBooleanSelectCond(DAG, DL, VT, Cond.getOperand(1),
+                                           TrueVal, FalseVal, Depth + 1);
+    if (!Inner)
+      return SDValue();
+    return lowerBooleanSelectCond(DAG, DL, VT, Cond.getOperand(0), Inner,
+                                  FalseVal, Depth + 1);
+  }
+
+  if (Cond.getOpcode() == ISD::OR &&
+      isBooleanSelectCondLike(Cond.getOperand(0), Depth + 1) &&
+      isBooleanSelectCondLike(Cond.getOperand(1), Depth + 1)) {
+    SDValue Inner = lowerBooleanSelectCond(DAG, DL, VT, Cond.getOperand(1),
+                                           TrueVal, FalseVal, Depth + 1);
+    if (!Inner)
+      return SDValue();
+    return lowerBooleanSelectCond(DAG, DL, VT, Cond.getOperand(0), TrueVal,
+                                  Inner, Depth + 1);
+  }
+
+  if (Cond.getOpcode() == ISD::SELECT && matchConstS32(Cond.getOperand(2), 0) &&
+      isBooleanSelectCondLike(Cond.getOperand(0), Depth + 1) &&
+      isBooleanSelectCondLike(Cond.getOperand(1), Depth + 1)) {
+    SDValue Inner = lowerBooleanSelectCond(DAG, DL, VT, Cond.getOperand(1),
+                                           TrueVal, FalseVal, Depth + 1);
+    if (!Inner)
+      return SDValue();
+    return lowerBooleanSelectCond(DAG, DL, VT, Cond.getOperand(0), Inner,
+                                  FalseVal, Depth + 1);
+  }
+
+  SDValue RawCond = stripBooleanCastsForSelect(Cond);
+  if (RawCond.getOpcode() == ISD::SETCC) {
+    if (auto *CC = dyn_cast<CondCodeSDNode>(RawCond.getOperand(2))) {
+      if (SDValue Res = lowerCompareSelectToNePowerOfTwo(
+              DAG, DL, VT, RawCond.getOperand(0), RawCond.getOperand(1),
+              CC->get(), TrueVal, FalseVal))
+        return Res;
+      if (SDValue Res = lowerCompareSelectToSignOrOne(
+              DAG, DL, VT, RawCond.getOperand(0), RawCond.getOperand(1),
+              CC->get(), TrueVal, FalseVal))
+        return Res;
+    }
+  }
+
+  if (Cond.getOpcode() == ISD::SETCC) {
+    if (auto *CC = dyn_cast<CondCodeSDNode>(Cond.getOperand(2))) {
+      if (SDValue Res = lowerCompareSelectToNePowerOfTwo(
+              DAG, DL, VT, Cond.getOperand(0), Cond.getOperand(1), CC->get(),
+              TrueVal, FalseVal))
+        return Res;
+      if (SDValue Res = lowerCompareSelectToSignOrOne(
+              DAG, DL, VT, Cond.getOperand(0), Cond.getOperand(1), CC->get(),
+              TrueVal, FalseVal))
+        return Res;
+    }
+    return DAG.getNode(ISD::SELECT_CC, DL, VT, Cond.getOperand(0),
+                       Cond.getOperand(1), TrueVal, FalseVal,
+                       Cond.getOperand(2));
+  }
+
+  EVT CondVT = Cond.getValueType();
+  if (CondVT == MVT::i1 || CondVT == MVT::i8 || CondVT == MVT::i16 ||
+      CondVT == MVT::i32) {
+    SDValue Zero = DAG.getConstant(0, DL, CondVT);
+    return DAG.getNode(ISD::SELECT_CC, DL, VT, Cond, Zero, TrueVal, FalseVal,
+                       DAG.getCondCode(ISD::SETNE));
+  }
+
+  return SDValue();
 }
 
 static unsigned getTC32BranchOpcodeForCond(ISD::CondCode CCVal) {
@@ -1026,43 +1234,9 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
     SDValue TrueVal = Op.getOperand(1);
     SDValue FalseVal = Op.getOperand(2);
 
-    SDValue RawCond = stripBooleanCastsForSelect(Cond);
-    if (RawCond.getOpcode() == ISD::SETCC) {
-      if (auto *CC = dyn_cast<CondCodeSDNode>(RawCond.getOperand(2))) {
-        if (SDValue Res = lowerCompareSelectToNePowerOfTwo(
-                DAG, DL, VT, RawCond.getOperand(0), RawCond.getOperand(1),
-                CC->get(), TrueVal, FalseVal))
-          return Res;
-        if (SDValue Res = lowerCompareSelectToSignOrOne(
-                DAG, DL, VT, RawCond.getOperand(0), RawCond.getOperand(1),
-                CC->get(), TrueVal, FalseVal))
-          return Res;
-      }
-    }
-
-    if (Cond.getOpcode() == ISD::SETCC) {
-      if (auto *CC = dyn_cast<CondCodeSDNode>(Cond.getOperand(2))) {
-        if (SDValue Res = lowerCompareSelectToNePowerOfTwo(
-                DAG, DL, VT, Cond.getOperand(0), Cond.getOperand(1), CC->get(),
-                TrueVal, FalseVal))
-          return Res;
-        if (SDValue Res = lowerCompareSelectToSignOrOne(
-                DAG, DL, VT, Cond.getOperand(0), Cond.getOperand(1), CC->get(),
-                TrueVal, FalseVal))
-          return Res;
-      }
-      return DAG.getNode(ISD::SELECT_CC, DL, VT, Cond.getOperand(0),
-                         Cond.getOperand(1), TrueVal, FalseVal,
-                         Cond.getOperand(2));
-    }
-
-    EVT CondVT = Cond.getValueType();
-    if (CondVT == MVT::i1 || CondVT == MVT::i8 || CondVT == MVT::i16 ||
-        CondVT == MVT::i32) {
-      SDValue Zero = DAG.getConstant(0, DL, CondVT);
-      return DAG.getNode(ISD::SELECT_CC, DL, VT, Cond, Zero, TrueVal,
-                         FalseVal, DAG.getCondCode(ISD::SETNE));
-    }
+    if (SDValue Res =
+            lowerBooleanSelectCond(DAG, DL, VT, Cond, TrueVal, FalseVal))
+      return Res;
     break;
   }
   case ISD::USUBSAT: {
@@ -1390,4 +1564,64 @@ SDValue TC32TargetLowering::LowerReturn(
     return DAG.getNode(TC32ISD::RET_FLAG, dl, MVT::Other, Chain, Glue);
   }
   return DAG.getNode(TC32ISD::RET_FLAG, dl, MVT::Other, Chain);
+}
+
+SDValue TC32TargetLowering::PerformDAGCombine(SDNode *N,
+                                              DAGCombinerInfo &DCI) const {
+  if (DCI.isBeforeLegalizeOps())
+    return SDValue();
+
+  switch (N->getOpcode()) {
+  case ISD::SELECT: {
+    SDLoc DL(N);
+    SDValue Cond = N->getOperand(0);
+    SDValue Canon =
+        canonicalizeBooleanSelectCondForDAGCombine(DCI.DAG, DL, Cond);
+    if (!Canon || Canon == Cond)
+      return SDValue();
+    return DCI.DAG.getNode(ISD::SELECT, DL, N->getValueType(0), Canon,
+                           N->getOperand(1), N->getOperand(2));
+  }
+  default:
+    return SDValue();
+  }
+}
+
+void TC32TargetLowering::ReplaceNodeResults(
+    SDNode *N, SmallVectorImpl<SDValue> &Results, SelectionDAG &DAG) const {
+  if (N->getOpcode() == ISD::SELECT && N->getValueType(0) == MVT::i1) {
+    SDLoc DL(N);
+    SDValue Cond = getBooleanValueAsI1(DAG, DL, N->getOperand(0));
+    SDValue TrueVal = getBooleanValueAsI1(DAG, DL, N->getOperand(1));
+    SDValue FalseVal = getBooleanValueAsI1(DAG, DL, N->getOperand(2));
+    if (Cond && TrueVal && FalseVal) {
+      if (matchConstS32(FalseVal, 0)) {
+        Results.push_back(DAG.getNode(ISD::AND, DL, MVT::i1, Cond, TrueVal));
+        return;
+      }
+      if (matchConstS32(TrueVal, 1)) {
+        Results.push_back(DAG.getNode(ISD::OR, DL, MVT::i1, Cond, FalseVal));
+        return;
+      }
+      if (matchConstS32(TrueVal, 0) && matchConstS32(FalseVal, 1)) {
+        Results.push_back(DAG.getNode(ISD::XOR, DL, MVT::i1, Cond,
+                                      DAG.getConstant(1, DL, MVT::i1)));
+        return;
+      }
+      if (matchConstS32(TrueVal, 1) && matchConstS32(FalseVal, 0)) {
+        Results.push_back(Cond);
+        return;
+      }
+    }
+
+    SDValue Res = lowerBooleanSelectCond(
+        DAG, DL, MVT::i32, N->getOperand(0),
+        DAG.getZExtOrTrunc(N->getOperand(1), DL, MVT::i32),
+        DAG.getZExtOrTrunc(N->getOperand(2), DL, MVT::i32));
+    if (Res)
+      Results.push_back(DAG.getSetCC(DL, MVT::i1, Res,
+                                     DAG.getConstant(0, DL, MVT::i32),
+                                     ISD::SETNE));
+    return;
+  }
 }
