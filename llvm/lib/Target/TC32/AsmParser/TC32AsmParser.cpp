@@ -616,8 +616,8 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       if (!ImmOp.isImm() || !extractAbsoluteImm(ImmOp.Expr, Imm))
         return Error(IDLoc, "immediate offset required");
       if (Name == "tloadr") {
-        if (Imm < 0 || Imm > 28 || (Imm & 3) != 0)
-          return Error(IDLoc, "word offset must be 0..28 step 4");
+        if (Imm < 0 || Imm > 124 || (Imm & 3) != 0)
+          return Error(IDLoc, "word offset must be 0..124 step 4");
         Inst.setOpcode(TC32::TLOADru3);
       } else {
         if (Imm < 0 || Imm > 31)
@@ -646,8 +646,8 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
       if (!ImmOp.isImm() || !extractAbsoluteImm(ImmOp.Expr, Imm))
         return Error(IDLoc, "immediate offset required");
       if (Name == "tstorer") {
-        if (Imm < 0 || Imm > 28 || (Imm & 3) != 0)
-          return Error(IDLoc, "word offset must be 0..28 step 4");
+        if (Imm < 0 || Imm > 124 || (Imm & 3) != 0)
+          return Error(IDLoc, "word offset must be 0..124 step 4");
         Inst.setOpcode(TC32::TSTOREru3);
       } else {
         if (Imm < 0 || Imm > 31)

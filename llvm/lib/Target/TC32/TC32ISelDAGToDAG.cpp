@@ -30,6 +30,26 @@ static bool matchBasePlusConst(SDValue Ptr, SDValue &Base, int64_t &Imm) {
   return false;
 }
 
+static bool matchGlobalBasePlusConst(SDValue Ptr, const GlobalValue *&GV,
+                                     int64_t &Imm) {
+  switch (Ptr.getOpcode()) {
+  case ISD::GlobalAddress: {
+    auto *GA = cast<GlobalAddressSDNode>(Ptr);
+    GV = GA->getGlobal();
+    Imm = GA->getOffset();
+    return true;
+  }
+  case ISD::TargetGlobalAddress: {
+    auto *GA = cast<GlobalAddressSDNode>(Ptr);
+    GV = GA->getGlobal();
+    Imm = GA->getOffset();
+    return true;
+  }
+  default:
+    return false;
+  }
+}
+
 static bool matchFrameIndexPlusConst(SDValue Ptr, int &FI, int64_t &Imm) {
   Imm = 0;
   if (Ptr.getOpcode() == ISD::FrameIndex || Ptr.getOpcode() == ISD::TargetFrameIndex) {
@@ -1636,6 +1656,7 @@ public:
       SDValue Base;
       int64_t Imm;
       int FI;
+      const GlobalValue *GV;
       if (Node->getValueType(0) == MVT::i32 && LD->getMemoryVT() == MVT::i32 &&
           LD->getAlign().value() >= 4 &&
           matchSPPlusConst(LD->getBasePtr(), Imm) &&
@@ -1676,8 +1697,20 @@ public:
       if (Node->getValueType(0) == MVT::i32 && LD->getMemoryVT() == MVT::i32 &&
           LD->getAlign().value() >= 4 &&
           LD->getBasePtr().getValueType() == MVT::i32) {
+        if (matchGlobalBasePlusConst(LD->getBasePtr(), GV, Imm) &&
+            Imm >= 0 && Imm <= 124 && (Imm & 3) == 0) {
+          SDValue BaseAddr = CurDAG->getTargetGlobalAddress(GV, DL, MVT::i32, 0);
+          SDValue BaseReg =
+              SDValue(CurDAG->getMachineNode(TC32::TLOADaddr, DL, MVT::i32, BaseAddr), 0);
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADru3, DL,
+                                                   {MVT::i32, MVT::Other},
+                                                   {BaseReg,
+                                                    CurDAG->getTargetConstant(Imm, DL, MVT::i32),
+                                                    LD->getChain()}));
+          return;
+        }
         if (matchFrameIndexPlusConst(LD->getBasePtr(), FI, Imm) &&
-            Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {
+            Imm >= 0 && Imm <= 124 && (Imm & 3) == 0) {
           SDValue FIBase = CurDAG->getTargetFrameIndex(FI, MVT::i32);
           ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADru3, DL,
                                                    {MVT::i32, MVT::Other},
@@ -1695,7 +1728,7 @@ public:
           return;
         }
         if (matchBasePlusConst(LD->getBasePtr(), Base, Imm) &&
-            Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {
+            Imm >= 0 && Imm <= 124 && (Imm & 3) == 0) {
           ReplaceNode(Node, CurDAG->getMachineNode(TC32::TLOADru3, DL,
                                                    {MVT::i32, MVT::Other},
                                                    {Base,
@@ -1716,6 +1749,7 @@ public:
       SDValue Base;
       int64_t Imm;
       int FI;
+      const GlobalValue *GV;
       if (ST->getMemoryVT() == MVT::i16 &&
           (ST->getValue().getValueType() == MVT::i16 ||
            ST->getValue().getValueType() == MVT::i32) &&
@@ -1792,8 +1826,19 @@ public:
           ST->getMemoryVT() == MVT::i32 &&
           ST->getAlign().value() >= 4 &&
           ST->getBasePtr().getValueType() == MVT::i32) {
+        if (matchGlobalBasePlusConst(ST->getBasePtr(), GV, Imm) &&
+            Imm >= 0 && Imm <= 124 && (Imm & 3) == 0) {
+          SDValue BaseAddr = CurDAG->getTargetGlobalAddress(GV, DL, MVT::i32, 0);
+          SDValue BaseReg =
+              SDValue(CurDAG->getMachineNode(TC32::TLOADaddr, DL, MVT::i32, BaseAddr), 0);
+          SmallVector<SDValue, 4> Ops = {ST->getValue(), BaseReg,
+                                         CurDAG->getTargetConstant(Imm, DL, MVT::i32),
+                                         ST->getChain()};
+          ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSTOREru3, DL, MVT::Other, Ops));
+          return;
+        }
         if (matchFrameIndexPlusConst(ST->getBasePtr(), FI, Imm) &&
-            Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {
+            Imm >= 0 && Imm <= 124 && (Imm & 3) == 0) {
           SDValue FIBase = CurDAG->getTargetFrameIndex(FI, MVT::i32);
           SmallVector<SDValue, 4> Ops = {ST->getValue(), FIBase,
                                          CurDAG->getTargetConstant(Imm, DL, MVT::i32),
@@ -1810,7 +1855,7 @@ public:
           return;
         }
         if (matchBasePlusConst(ST->getBasePtr(), Base, Imm) &&
-            Imm >= 0 && Imm <= 28 && (Imm & 3) == 0) {
+            Imm >= 0 && Imm <= 124 && (Imm & 3) == 0) {
           SmallVector<SDValue, 4> Ops = {ST->getValue(), Base,
                                          CurDAG->getTargetConstant(Imm, DL, MVT::i32),
                                          ST->getChain()};

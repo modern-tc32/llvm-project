@@ -264,8 +264,8 @@ class TC32MCCodeEmitter : public MCCodeEmitter {
     unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
     int64_t Imm = MI.getOperand(2).getImm();
     check(Dst < 8 && Base < 8, "tloadr [reg,#imm] form requires low registers");
-    check(Imm >= 0 && Imm <= 28 && (Imm & 3) == 0,
-          "tloadr [reg,#imm] word offset must be 0..28 step 4");
+    check(Imm >= 0 && Imm <= 124 && (Imm & 3) == 0,
+          "tloadr [reg,#imm] word offset must be 0..124 step 4");
     return static_cast<uint16_t>(0x5800u | (((unsigned)Imm >> 2) << 6) |
                                  (Base << 3) | Dst);
   }
@@ -340,8 +340,8 @@ class TC32MCCodeEmitter : public MCCodeEmitter {
     unsigned Base = getRegEncoding(MI.getOperand(1).getReg());
     int64_t Imm = MI.getOperand(2).getImm();
     check(Src < 8 && Base < 8, "tstorer [reg,#imm] form requires low registers");
-    check(Imm >= 0 && Imm <= 28 && (Imm & 3) == 0,
-          "tstorer [reg,#imm] word offset must be 0..28 step 4");
+    check(Imm >= 0 && Imm <= 124 && (Imm & 3) == 0,
+          "tstorer [reg,#imm] word offset must be 0..124 step 4");
     return static_cast<uint16_t>(0x5000u | (((unsigned)Imm >> 2) << 6) |
                                  (Base << 3) | Src);
   }

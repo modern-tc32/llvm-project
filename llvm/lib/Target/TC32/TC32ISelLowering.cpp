@@ -779,7 +779,7 @@ bool TC32TargetLowering::isLegalAddressingMode(const DataLayout &DL,
     return Offs <= 62 && (Offs & 1) == 0;
   case MVT::i32:
   case MVT::f32:
-    return Offs <= 28 && (Offs & 3) == 0;
+    return Offs <= 124 && (Offs & 3) == 0;
   case MVT::i64:
   case MVT::f64:
     return Offs == 0;
@@ -862,6 +862,8 @@ TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
     Register RHS = MI.getOperand(4).getReg();
     unsigned BrOpc = getBranchOpcode(MI.getOperand(5).getImm());
     unsigned InvBrOpc = getInverseBranchOpcode(BrOpc);
+    Register FalseCopy = MRI.createVirtualRegister(RC);
+    Register TrueCopy = MRI.createVirtualRegister(RC);
 
     MachineBasicBlock *ThisMBB = MBB;
     MachineFunction::iterator It = ++ThisMBB->getIterator();
@@ -880,12 +882,17 @@ TC32TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
     ThisMBB->addSuccessor(SinkMBB);
     TrueMBB->addSuccessor(SinkMBB);
 
-    BuildMI(*ThisMBB, MII, DL, TII.get(TargetOpcode::COPY), Dst)
+    BuildMI(*ThisMBB, MII, DL, TII.get(TargetOpcode::COPY), FalseCopy)
         .addReg(FalseVal);
     BuildMI(*ThisMBB, MII, DL, TII.get(TC32::TCMPrr)).addReg(LHS).addReg(RHS);
     BuildMI(*ThisMBB, MII, DL, TII.get(InvBrOpc)).addMBB(SinkMBB);
-    BuildMI(*TrueMBB, TrueMBB->end(), DL, TII.get(TargetOpcode::COPY), Dst)
+    BuildMI(*TrueMBB, TrueMBB->end(), DL, TII.get(TargetOpcode::COPY), TrueCopy)
         .addReg(TrueVal);
+    BuildMI(*SinkMBB, SinkMBB->begin(), DL, TII.get(TargetOpcode::PHI), Dst)
+        .addReg(FalseCopy)
+        .addMBB(ThisMBB)
+        .addReg(TrueCopy)
+        .addMBB(TrueMBB);
 
     MI.eraseFromParent();
     return SinkMBB;
