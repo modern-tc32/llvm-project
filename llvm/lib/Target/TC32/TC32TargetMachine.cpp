@@ -9,9 +9,7 @@
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
-#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Passes.h"
-#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -112,71 +110,25 @@ public:
                                      MachineInstr &BrMI,
                                      MachineBasicBlock &DestMBB) {
       MachineFunction &MF = *SrcMBB.getParent();
-      MachineRegisterInfo &MRI = MF.getRegInfo();
-      const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
-      auto *TFI = MF.getInfo<TC32MachineFunctionInfo>();
 
       MachineBasicBlock *LongBrMBB =
           MF.CreateMachineBasicBlock(SrcMBB.getBasicBlock());
       MF.insert(std::next(SrcMBB.getIterator()), LongBrMBB);
 
-      Register ScratchVReg = MRI.createVirtualRegister(&TC32::LoGR32RegClass);
-      MachineInstr &LoadAddr =
-          *BuildMI(*LongBrMBB, LongBrMBB->end(), BrMI.getDebugLoc(),
-                   TII->get(TC32::TLOADaddr), ScratchVReg)
-               .addMBB(&DestMBB);
+      BuildMI(*LongBrMBB, LongBrMBB->end(), BrMI.getDebugLoc(),
+              TII->get(TC32::TLOADaddr), TC32::R6)
+          .addMBB(&DestMBB);
       BuildMI(*LongBrMBB, LongBrMBB->end(), BrMI.getDebugLoc(),
               TII->get(TC32::TJEXr))
-          .addReg(ScratchVReg, RegState::Kill);
+          .addReg(TC32::R6, RegState::Kill);
 
-      RegScavenger RS;
-      RS.enterBasicBlockEnd(*LongBrMBB);
-      Register ScratchReg = RS.scavengeRegisterBackwards(
-          TC32::LoGR32RegClass, LoadAddr.getIterator(),
-          /*RestoreAfter=*/false, /*SpAdj=*/0, /*AllowSpill=*/false);
-
-      MachineBasicBlock *PhiPred = LongBrMBB;
-      if (ScratchReg) {
-        RS.setRegUsed(ScratchReg);
-      } else {
-        int FI = TFI->getBranchRelaxationScratchFrameIndex();
-        if (FI == -1)
-          report_fatal_error(
-              "TC32 long branch scratch slot missing for oversized function");
-
-        ScratchReg = TC32::R6;
-        MachineBasicBlock *RestoreMBB =
-            MF.CreateMachineBasicBlock(SrcMBB.getBasicBlock());
-        MF.insert(DestMBB.getIterator(), RestoreMBB);
-
-        TII->storeRegToStackSlot(*LongBrMBB, LoadAddr, ScratchReg,
-                                 /*IsKill=*/false, FI,
-                                 &TC32::LoGR32RegClass, Register(),
-                                 MachineInstr::NoFlags);
-        TRI->eliminateFrameIndex(*std::prev(LoadAddr.getIterator()),
-                                 /*SPAdj=*/0, /*FIOperandNum=*/1);
-
-        LoadAddr.getOperand(1).setMBB(RestoreMBB);
-
-        TII->loadRegFromStackSlot(*RestoreMBB, RestoreMBB->end(), ScratchReg, FI,
-                                  &TC32::LoGR32RegClass, Register(),
-                                  /*SubReg=*/0, MachineInstr::NoFlags);
-        TRI->eliminateFrameIndex(RestoreMBB->back(),
-                                 /*SPAdj=*/0, /*FIOperandNum=*/1);
-
-        LongBrMBB->addSuccessor(RestoreMBB);
-        RestoreMBB->addSuccessor(&DestMBB);
-        PhiPred = RestoreMBB;
-      }
-
-      MRI.replaceRegWith(ScratchVReg, ScratchReg);
-      MRI.clearVirtRegs();
+      // Late long-branch expansion does not have reliable edge liveness. Use
+      // r6 as a dedicated scratch register, but reserve it only in oversized
+      // functions so the allocator never carries live values across this edge.
+      LongBrMBB->addSuccessor(&DestMBB);
 
       SrcMBB.replaceSuccessor(&DestMBB, LongBrMBB);
-      DestMBB.replacePhiUsesWith(&SrcMBB, PhiPred);
       BrMI.getOperand(0).setMBB(LongBrMBB);
-      if (PhiPred == LongBrMBB)
-        LongBrMBB->addSuccessor(&DestMBB);
     };
 
     auto getInstSize = [&](const MachineInstr &MI, uint64_t Offset) {

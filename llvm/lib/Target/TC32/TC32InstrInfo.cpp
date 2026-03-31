@@ -1,6 +1,8 @@
 #include "TC32InstrInfo.h"
 #include "MCTargetDesc/TC32MCTargetDesc.h"
 #include "TC32Subtarget.h"
+#include "llvm/ADT/BitVector.h"
+#include "llvm/CodeGen/LiveRegUnits.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -28,6 +30,33 @@ static bool isLowValueReg(Register Reg, const MachineRegisterInfo &MRI) {
   if (!Reg.isVirtual())
     return false;
   return MRI.getRegClass(Reg) == &TC32::LoGR32RegClass;
+}
+
+static Register findFreeLowPhysReg(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator InsertPt,
+                                   const TargetRegisterInfo &TRI,
+                                   Register AvoidReg) {
+  MachineFunction &MF = *MBB.getParent();
+  LiveRegUnits UsedRegs(TRI);
+  UsedRegs.addLiveOuts(MBB);
+
+  auto ScanIt = MBB.end();
+  while (ScanIt != InsertPt)
+    UsedRegs.stepBackward(*--ScanIt);
+
+  // The scratch instruction is inserted immediately before InsertPt, so the
+  // chosen register must be dead at MI entry, not merely after MI executes.
+  if (InsertPt != MBB.end())
+    UsedRegs.stepBackward(*InsertPt);
+
+  BitVector Allocatable = TRI.getAllocatableSet(MF, &TC32::LoGR32RegClass);
+  for (Register Reg : Allocatable.set_bits()) {
+    if (Reg == AvoidReg)
+      continue;
+    if (UsedRegs.available(Reg))
+      return Reg;
+  }
+  return Register();
 }
 
 TC32InstrInfo::TC32InstrInfo(const TC32Subtarget &STI)
@@ -107,11 +136,14 @@ void TC32InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
     report_fatal_error("TC32 spill only supports GPRs");
 
   if (!isLowValueReg(SrcReg, MRI)) {
-    Register SpillReg = MF.getProperties().hasNoVRegs()
-                            ? Register(TC32::R6)
-                            : MRI.createVirtualRegister(&TC32::LoGR32RegClass);
-    assert((!SpillReg.isPhysical() || SrcReg != TC32::R6) &&
-           "reserved low scratch register spilled unexpectedly");
+    Register SpillReg;
+    if (MF.getProperties().hasNoVRegs()) {
+      SpillReg = findFreeLowPhysReg(MBB, MI, RI, SrcReg);
+      if (!SpillReg)
+        report_fatal_error("unable to find free TC32 low register for spill");
+    } else {
+      SpillReg = MRI.createVirtualRegister(&TC32::LoGR32RegClass);
+    }
     BuildMI(MBB, MI, DebugLoc(), get(TC32::TMOVrr), SpillReg)
         .addReg(SrcReg, getKillRegState(IsKill))
         .setMIFlags(Flags);
@@ -139,11 +171,14 @@ void TC32InstrInfo::loadRegFromStackSlot(MachineBasicBlock &MBB,
     report_fatal_error("TC32 reload only supports GPRs");
 
   if (!isLowValueReg(DestReg, MRI)) {
-    Register ReloadReg = MF.getProperties().hasNoVRegs()
-                             ? Register(TC32::R6)
-                             : MRI.createVirtualRegister(&TC32::LoGR32RegClass);
-    assert((!ReloadReg.isPhysical() || DestReg != TC32::R6) &&
-           "reserved low scratch register reloaded unexpectedly");
+    Register ReloadReg;
+    if (MF.getProperties().hasNoVRegs()) {
+      ReloadReg = findFreeLowPhysReg(MBB, MI, RI, DestReg);
+      if (!ReloadReg)
+        report_fatal_error("unable to find free TC32 low register for reload");
+    } else {
+      ReloadReg = MRI.createVirtualRegister(&TC32::LoGR32RegClass);
+    }
     BuildMI(MBB, MI, DebugLoc(), get(TC32::TLOADrr), ReloadReg)
         .addFrameIndex(FrameIndex)
         .setMIFlags(Flags);
