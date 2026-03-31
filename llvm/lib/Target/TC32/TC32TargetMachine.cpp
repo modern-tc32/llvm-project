@@ -2,13 +2,16 @@
 #include "TC32TargetTransformInfo.h"
 #include "TC32.h"
 #include "TC32InstrInfo.h"
+#include "TC32MachineFunctionInfo.h"
 #include "TC32Subtarget.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 #include "TargetInfo/TC32TargetInfo.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Passes.h"
+#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -105,6 +108,77 @@ public:
       }
     };
 
+    auto createLongBranchBlock = [&](MachineBasicBlock &SrcMBB,
+                                     MachineInstr &BrMI,
+                                     MachineBasicBlock &DestMBB) {
+      MachineFunction &MF = *SrcMBB.getParent();
+      MachineRegisterInfo &MRI = MF.getRegInfo();
+      const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+      auto *TFI = MF.getInfo<TC32MachineFunctionInfo>();
+
+      MachineBasicBlock *LongBrMBB =
+          MF.CreateMachineBasicBlock(SrcMBB.getBasicBlock());
+      MF.insert(std::next(SrcMBB.getIterator()), LongBrMBB);
+
+      Register ScratchVReg = MRI.createVirtualRegister(&TC32::LoGR32RegClass);
+      MachineInstr &LoadAddr =
+          *BuildMI(*LongBrMBB, LongBrMBB->end(), BrMI.getDebugLoc(),
+                   TII->get(TC32::TLOADaddr), ScratchVReg)
+               .addMBB(&DestMBB);
+      BuildMI(*LongBrMBB, LongBrMBB->end(), BrMI.getDebugLoc(),
+              TII->get(TC32::TJEXr))
+          .addReg(ScratchVReg, RegState::Kill);
+
+      RegScavenger RS;
+      RS.enterBasicBlockEnd(*LongBrMBB);
+      Register ScratchReg = RS.scavengeRegisterBackwards(
+          TC32::LoGR32RegClass, LoadAddr.getIterator(),
+          /*RestoreAfter=*/false, /*SpAdj=*/0, /*AllowSpill=*/false);
+
+      MachineBasicBlock *PhiPred = LongBrMBB;
+      if (ScratchReg) {
+        RS.setRegUsed(ScratchReg);
+      } else {
+        int FI = TFI->getBranchRelaxationScratchFrameIndex();
+        if (FI == -1)
+          report_fatal_error(
+              "TC32 long branch scratch slot missing for oversized function");
+
+        ScratchReg = TC32::R6;
+        MachineBasicBlock *RestoreMBB =
+            MF.CreateMachineBasicBlock(SrcMBB.getBasicBlock());
+        MF.insert(DestMBB.getIterator(), RestoreMBB);
+
+        TII->storeRegToStackSlot(*LongBrMBB, LoadAddr, ScratchReg,
+                                 /*IsKill=*/false, FI,
+                                 &TC32::LoGR32RegClass, Register(),
+                                 MachineInstr::NoFlags);
+        TRI->eliminateFrameIndex(*std::prev(LoadAddr.getIterator()),
+                                 /*SPAdj=*/0, /*FIOperandNum=*/1);
+
+        LoadAddr.getOperand(1).setMBB(RestoreMBB);
+
+        TII->loadRegFromStackSlot(*RestoreMBB, RestoreMBB->end(), ScratchReg, FI,
+                                  &TC32::LoGR32RegClass, Register(),
+                                  /*SubReg=*/0, MachineInstr::NoFlags);
+        TRI->eliminateFrameIndex(RestoreMBB->back(),
+                                 /*SPAdj=*/0, /*FIOperandNum=*/1);
+
+        LongBrMBB->addSuccessor(RestoreMBB);
+        RestoreMBB->addSuccessor(&DestMBB);
+        PhiPred = RestoreMBB;
+      }
+
+      MRI.replaceRegWith(ScratchVReg, ScratchReg);
+      MRI.clearVirtRegs();
+
+      SrcMBB.replaceSuccessor(&DestMBB, LongBrMBB);
+      DestMBB.replacePhiUsesWith(&SrcMBB, PhiPred);
+      BrMI.getOperand(0).setMBB(LongBrMBB);
+      if (PhiPred == LongBrMBB)
+        LongBrMBB->addSuccessor(&DestMBB);
+    };
+
     auto getInstSize = [&](const MachineInstr &MI, uint64_t Offset) {
       if (MI.getOpcode() == TC32::TLOADaddr) {
         (void)Offset;
@@ -194,14 +268,7 @@ public:
               static_cast<int64_t>(JumpTargetOff) - static_cast<int64_t>(JumpOff);
           int64_t JumpImm = (JumpDelta - 4) >> 1;
           if (!isInt<11>(JumpImm)) {
-            auto InsertPt = UncondBr->getIterator();
-            constexpr Register JumpReg = TC32::R6;
-            BuildMI(MBB, InsertPt, UncondBr->getDebugLoc(),
-                    TII->get(TC32::TLOADaddr), JumpReg)
-                .addMBB(JumpTarget);
-            BuildMI(MBB, InsertPt, UncondBr->getDebugLoc(), TII->get(TC32::TJEXr))
-                .addReg(JumpReg);
-            UncondBr->eraseFromParent();
+            createLongBranchBlock(MBB, *UncondBr, *JumpTarget);
             LocalChange = true;
             Changed = true;
             continue;
@@ -318,6 +385,7 @@ public:
         MBB.addSuccessor(ShimMBB);
         MBB.addSuccessor(TrueMBB);
         ShimMBB->addSuccessor(FalseMBB);
+        FalseMBB->replacePhiUsesWith(&MBB, ShimMBB);
 
         LocalChange = true;
         Changed = true;
@@ -574,6 +642,13 @@ public:
 
 TargetPassConfig *TC32TargetMachine::createPassConfig(PassManagerBase &PM) {
   return new TC32PassConfig(*this, PM);
+}
+
+MachineFunctionInfo *TC32TargetMachine::createMachineFunctionInfo(
+    BumpPtrAllocator &Allocator, const Function &F,
+    const TargetSubtargetInfo *STI) const {
+  return TC32MachineFunctionInfo::create<TC32MachineFunctionInfo>(Allocator, F,
+                                                                  STI);
 }
 
 const TargetSubtargetInfo *TC32TargetMachine::getSubtargetImpl(const Function &F) const {

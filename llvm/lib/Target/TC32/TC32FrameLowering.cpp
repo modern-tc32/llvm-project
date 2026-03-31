@@ -1,5 +1,6 @@
 #include "TC32FrameLowering.h"
 #include "MCTargetDesc/TC32MCTargetDesc.h"
+#include "TC32MachineFunctionInfo.h"
 #include "TC32Subtarget.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
@@ -72,6 +73,29 @@ void TC32FrameLowering::determineCalleeSaves(MachineFunction &MF,
   const TargetRegisterClass &RC = TC32::LoGR32RegClass;
   RS->addScavengingFrameIndex(
       MFI.CreateSpillStackObject(TRI->getSpillSize(RC), TRI->getSpillAlign(RC)));
+}
+
+void TC32FrameLowering::processFunctionBeforeFrameFinalized(
+    MachineFunction &MF, RegScavenger *RS) const {
+  if (!RS)
+    return;
+
+  // TJ encodes an 11-bit signed halfword offset, so functions larger than
+  // about 2 KiB may need a late long-branch scratch spill slot.
+  if (MF.estimateFunctionSizeInBytes() <= 2046)
+    return;
+
+  auto *TFI = MF.getInfo<TC32MachineFunctionInfo>();
+  if (TFI->getBranchRelaxationScratchFrameIndex() != -1)
+    return;
+
+  MachineFrameInfo &MFI = MF.getFrameInfo();
+  const TargetRegisterInfo *TRI = MF.getSubtarget().getRegisterInfo();
+  const TargetRegisterClass &RC = TC32::LoGR32RegClass;
+  int FI = MFI.CreateSpillStackObject(TRI->getSpillSize(RC),
+                                      TRI->getSpillAlign(RC));
+  RS->addScavengingFrameIndex(FI);
+  TFI->setBranchRelaxationScratchFrameIndex(FI);
 }
 
 void TC32FrameLowering::emitPrologue(MachineFunction &MF,

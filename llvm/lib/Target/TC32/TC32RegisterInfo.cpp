@@ -39,10 +39,6 @@ const uint32_t *TC32RegisterInfo::getCallPreservedMask(const MachineFunction &MF
 BitVector TC32RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
   Reserved.set(TC32::CPSR);
-  // Keep one low register permanently reserved for late branch relaxation.
-  // Unlike ARM, TC32 cannot rely on a high scratch register for literal-load
-  // long branches, and post-RA scavenging here has no emergency spill slot.
-  Reserved.set(TC32::R6);
   if (MF.getSubtarget<TC32Subtarget>().isR7Reserved(MF))
     Reserved.set(TC32::R7);
   Reserved.set(TC32::R8);

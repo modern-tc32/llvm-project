@@ -15,6 +15,7 @@ add_llvm_target(TC32CodeGen
   TC32ISelDAGToDAG.cpp
   TC32ISelLowering.cpp
   TC32InstrInfo.cpp
+  TC32MachineFunctionInfo.h
   TC32MCInstLower.cpp
   TC32RegisterInfo.cpp
   TC32Subtarget.cpp
