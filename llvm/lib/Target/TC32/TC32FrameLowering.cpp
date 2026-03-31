@@ -10,6 +10,20 @@
 
 using namespace llvm;
 
+static void emitStackAdjust(MachineBasicBlock &MBB,
+                            MachineBasicBlock::iterator I, const DebugLoc &DL,
+                            const MCInstrDesc &Desc, int Amount,
+                            MachineInstr::MIFlag Flag = MachineInstr::NoFlags) {
+  assert(Amount >= 0 && "stack adjustment must be non-negative");
+  while (Amount > 0) {
+    const int Chunk = std::min(Amount, 508);
+    auto MIB = BuildMI(MBB, I, DL, Desc).addImm(Chunk);
+    if (Flag != MachineInstr::NoFlags)
+      MIB.setMIFlag(Flag);
+    Amount -= Chunk;
+  }
+}
+
 TC32FrameLowering::TC32FrameLowering(const TC32Subtarget &STI)
     : TargetFrameLowering(StackGrowsDown, Align(4), 0, Align(4)) {
   (void)STI;
@@ -84,9 +98,9 @@ void TC32FrameLowering::emitPrologue(MachineFunction &MF,
 
   int StackSize = MF.getFrameInfo().getStackSize();
   if (StackSize > 0)
-    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TSUBspu8))
-        .addImm(StackSize)
-        .setMIFlag(MachineInstr::FrameSetup);
+    emitStackAdjust(MBB, I, DL,
+                    MF.getSubtarget().getInstrInfo()->get(TC32::TSUBspu8),
+                    StackSize, MachineInstr::FrameSetup);
 
   if (UseFP) {
     BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TADDdstspu8),
@@ -118,8 +132,9 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
 
   int StackSize = MF.getFrameInfo().getStackSize();
   if (StackSize > 0)
-    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TADDspu8))
-        .addImm(StackSize);
+    emitStackAdjust(MBB, I, DL,
+                    MF.getSubtarget().getInstrInfo()->get(TC32::TADDspu8),
+                    StackSize);
 
   if (I != MBB.end() &&
       (I->getOpcode() == TC32::TRET || I->getOpcode() == TC32::TRET_R0))
@@ -184,8 +199,8 @@ MachineBasicBlock::iterator TC32FrameLowering::eliminateCallFramePseudoInstr(
       unsigned Opc = MI->getOpcode() == TC32::ADJCALLSTACKDOWN
                          ? TC32::TSUBspu8
                          : TC32::TADDspu8;
-      BuildMI(MBB, MI, DL, MF.getSubtarget().getInstrInfo()->get(Opc))
-          .addImm(Amount);
+      emitStackAdjust(MBB, MI, DL, MF.getSubtarget().getInstrInfo()->get(Opc),
+                      Amount);
     }
   }
 

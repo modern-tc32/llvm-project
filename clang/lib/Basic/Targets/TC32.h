@@ -25,9 +25,11 @@ public:
     PointerWidth = PointerAlign = 32;
     SuitableAlign = 32;
     FloatWidth = FloatAlign = 32;
-    DoubleWidth = DoubleAlign = 32;
-    LongDoubleWidth = LongDoubleAlign = 32;
-    LongDoubleFormat = &llvm::APFloat::IEEEsingle();
+    DoubleWidth = 64;
+    DoubleAlign = 32;
+    LongDoubleWidth = 64;
+    LongDoubleAlign = 32;
+    LongDoubleFormat = &llvm::APFloat::IEEEdouble();
     SizeType = UnsignedInt;
     PtrDiffType = SignedInt;
     IntPtrType = SignedInt;

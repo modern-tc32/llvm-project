@@ -133,6 +133,7 @@ TC32TargetLowering::TC32TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::BRIND, MVT::Other, Legal);
   setOperationAction(ISD::FrameIndex, MVT::i32, Custom);
   setOperationAction(ISD::VASTART, MVT::Other, Custom);
+  setOperationAction(ISD::VAARG, MVT::Other, Expand);
   setMinimumJumpTableEntries(4);
   setLoadExtAction(ISD::ZEXTLOAD, MVT::i8, MVT::i1, Promote);
   setLoadExtAction(ISD::EXTLOAD, MVT::i8, MVT::i1, Promote);

@@ -1,4 +1,5 @@
 ; RUN: llc -mtriple=tc32 -O2 -o - %s | FileCheck %s
+; RUN: llc -mtriple=tc32 -O2 -filetype=obj -o /dev/null %s
 
 target triple = "tc32"
 
@@ -17,15 +18,19 @@ entry:
 
 ; CHECK-LABEL: f:
 ; CHECK: tloadr	r0, [pc, #.Ltmp
-; CHECK-NEXT: tloadr	r0, [r0]
-; CHECK-NEXT: tloadr	r0, [r0]
-; CHECK: tloadr	r1, [pc, #.Ltmp
-; CHECK-NEXT: tloadr	r1, [r1]
-; CHECK-NEXT: tloadr	r1, [r1]
-; CHECK-NOT: tj
-; CHECK: tmov	pc, lr
+; CHECK-NEXT: tj	.Ltmp
 ; CHECK-NEXT: .p2align	2, 0x0
 ; CHECK-NEXT: .Ltmp
 ; CHECK-NEXT: .long
 ; CHECK-NEXT: .Ltmp
+; CHECK-NEXT: tloadr	r0, [r0]
+; CHECK-NEXT: tloadr	r0, [r0]
+; CHECK: tloadr	r1, [pc, #.Ltmp
+; CHECK-NEXT: tj	.Ltmp
+; CHECK-NEXT: .p2align	2, 0x0
+; CHECK-NEXT: .Ltmp
 ; CHECK-NEXT: .long
+; CHECK-NEXT: .Ltmp
+; CHECK-NEXT: tloadr	r1, [r1]
+; CHECK-NEXT: tloadr	r1, [r1]
+; CHECK: tmov	pc, lr

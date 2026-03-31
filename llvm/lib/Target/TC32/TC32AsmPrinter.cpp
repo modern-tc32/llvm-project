@@ -119,6 +119,28 @@ private:
     return Value.getExpr();
   }
 
+  void emitNearbyLiteralLoad(Register DstReg, const MCExpr *Value) {
+    MCSymbol *PoolLabel = OutContext.createTempSymbol();
+    MCSymbol *AfterLabel = OutContext.createTempSymbol();
+
+    MCInst Load;
+    Load.setOpcode(TC32::TLOADpcu8);
+    Load.addOperand(MCOperand::createReg(DstReg));
+    Load.addOperand(MCOperand::createExpr(
+        MCSymbolRefExpr::create(PoolLabel, OutContext)));
+    EmitToStreamer(*OutStreamer, Load);
+
+    // Keep each PC-relative literal immediately adjacent to its load until
+    // TC32 grows full constant-island placement like ARM.
+    EmitToStreamer(*OutStreamer,
+                   MCInstBuilder(TC32::TJ)
+                       .addExpr(MCSymbolRefExpr::create(AfterLabel, OutContext)));
+    OutStreamer->emitValueToAlignment(Align(4));
+    OutStreamer->emitLabel(PoolLabel);
+    OutStreamer->emitValue(Value, 4);
+    OutStreamer->emitLabel(AfterLabel);
+  }
+
   void emitInstruction(const MachineInstr *MI) override {
     if (MI->getOpcode() == TC32::TINDCALL_R12) {
       if (!IndirectCallR3Pad)
@@ -136,15 +158,14 @@ private:
     }
 
     if (MI->getOpcode() == TC32::TLOADaddr) {
-      MCSymbol *PoolLabel = OutContext.createTempSymbol();
+      emitNearbyLiteralLoad(MI->getOperand(0).getReg(),
+                            getAddrLiteralValue(MI, MI->getOperand(1)));
+      return;
+    }
 
-      MCInst Load;
-      Load.setOpcode(TC32::TLOADpcu8);
-      Load.addOperand(MCOperand::createReg(MI->getOperand(0).getReg()));
-      Load.addOperand(MCOperand::createExpr(MCSymbolRefExpr::create(PoolLabel, OutContext)));
-      EmitToStreamer(*OutStreamer, Load);
-      PendingAddrLiterals.push_back(
-          {PoolLabel, getAddrLiteralValue(MI, MI->getOperand(1))});
+    if (MI->getOpcode() == TC32::TLOADpcu8 && !MI->getOperand(1).isImm()) {
+      emitNearbyLiteralLoad(MI->getOperand(0).getReg(),
+                            getAddrLiteralValue(MI, MI->getOperand(1)));
       return;
     }
 
