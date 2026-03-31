@@ -36,6 +36,15 @@ class TC32MCCodeEmitter : public MCCodeEmitter {
     return static_cast<uint16_t>(((0xA8u + Src) << 8));
   }
 
+  uint16_t encodeTCMPri8(const MCInst &MI) const {
+    unsigned Src = getRegEncoding(MI.getOperand(0).getReg());
+    int64_t Imm = MI.getOperand(1).getImm();
+    check(Src < 8, "tcmp immediate form requires low register");
+    check(Imm >= 0 && Imm <= 255, "tcmp immediate out of range");
+    return static_cast<uint16_t>(((0xA8u + Src) << 8) |
+                                 static_cast<uint16_t>(Imm));
+  }
+
   uint16_t encodeTCMPrr(const MCInst &MI) const {
     unsigned LHS = getRegEncoding(MI.getOperand(0).getReg());
     unsigned RHS = getRegEncoding(MI.getOperand(1).getReg());
@@ -144,6 +153,30 @@ class TC32MCCodeEmitter : public MCCodeEmitter {
     unsigned Src = getRegEncoding(MI.getOperand(1).getReg());
     check(Dst < 8 && Src < 8, "tsub immediate form requires low registers");
     return static_cast<uint16_t>(0xEE40u | (Src << 3) | Dst);
+  }
+
+  uint16_t encodeTSUBrru3(const MCInst &MI) const {
+    unsigned Dst = getRegEncoding(MI.getOperand(0).getReg());
+    unsigned Src = getRegEncoding(MI.getOperand(1).getReg());
+    int64_t Imm = MI.getOperand(2).getImm();
+
+    check(Dst < 8 && Src < 8, "tsub immediate form requires low registers");
+    check(Imm >= 0 && Imm <= 7, "three-operand tsub immediate out of range");
+    unsigned Enc = Dst | (Src << 3) | (static_cast<unsigned>(Imm) << 6);
+    return static_cast<uint16_t>(((0xEEu + (Enc >> 8)) << 8) |
+                                 static_cast<uint16_t>(Enc & 0xFF));
+  }
+
+  uint16_t encodeTSUBri8(const MCInst &MI) const {
+    unsigned Dst = getRegEncoding(MI.getOperand(0).getReg());
+    unsigned Src = getRegEncoding(MI.getOperand(1).getReg());
+    int64_t Imm = MI.getOperand(2).getImm();
+
+    check(Dst < 8 && Src < 8, "tsub immediate form requires low registers");
+    check(Dst == Src, "same-register tsub immediate requires two-address form");
+    check(Imm >= 0 && Imm <= 255, "same-register tsub immediate out of range");
+    return static_cast<uint16_t>(((0xB8u + Dst) << 8) |
+                                 static_cast<uint16_t>(Imm));
   }
 
   uint16_t encodeTSUBCrr(const MCInst &MI) const {
@@ -425,6 +458,9 @@ public:
     case TC32::TCMPri0:
       Bits = encodeTCMPri0(MI);
       break;
+    case TC32::TCMPri8:
+      Bits = encodeTCMPri8(MI);
+      break;
     case TC32::TCMPrr:
       Bits = encodeTCMPrr(MI);
       break;
@@ -509,6 +545,12 @@ public:
       break;
     case TC32::TSUBri1:
       Bits = encodeTSUBri1(MI);
+      break;
+    case TC32::TSUBrru3:
+      Bits = encodeTSUBrru3(MI);
+      break;
+    case TC32::TSUBri8:
+      Bits = encodeTSUBri8(MI);
       break;
     case TC32::TSUBCrr:
       Bits = encodeTSUBCrr(MI);

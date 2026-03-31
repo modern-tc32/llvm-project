@@ -443,6 +443,37 @@ public:
     }
   }
 
+  MachineSDNode *selectCompareNode(const SDLoc &DL, SDValue LHS, SDValue RHS,
+                                   unsigned &BrOpc) {
+    if (auto *RC = dyn_cast<ConstantSDNode>(RHS)) {
+      int64_t Imm = RC->getSExtValue();
+      if (Imm == 0)
+        return CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
+
+      if (Imm == -1) {
+        switch (BrOpc) {
+        case TC32::TJGT:
+          BrOpc = TC32::TJGE;
+          return CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
+        case TC32::TJLE:
+          BrOpc = TC32::TJLT;
+          return CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
+        default:
+          break;
+        }
+      }
+
+      if (Imm >= 0 && Imm <= 255)
+        return CurDAG->getMachineNode(TC32::TCMPri8, DL, MVT::Glue, LHS,
+                                      CurDAG->getTargetConstant(Imm, DL,
+                                                                MVT::i32));
+    } else if (auto *LC = dyn_cast<ConstantSDNode>(LHS); LC && LC->isZero()) {
+      return CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, RHS);
+    }
+
+    return CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
+  }
+
   SDValue ensureValueInRegister(SDValue Value, const SDLoc &DL) {
     if (const auto *CN = dyn_cast<ConstantSDNode>(Value))
       return materializeConstant(CurDAG, DL, static_cast<uint32_t>(CN->getZExtValue()));
@@ -944,28 +975,7 @@ public:
       if (BrOpc == 0)
         break;
 
-      if (auto *RC = dyn_cast<ConstantSDNode>(RHS)) {
-        if (RC->isZero()) {
-          Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
-        } else if (RC->getSExtValue() == -1) {
-          switch (CCVal) {
-          case ISD::SETGT:
-            Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
-            BrOpc = TC32::TJGE;
-            break;
-          case ISD::SETLE:
-            Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
-            BrOpc = TC32::TJLT;
-            break;
-          default:
-            break;
-          }
-        }
-      } else if (auto *LC = dyn_cast<ConstantSDNode>(LHS); LC && LC->isZero()) {
-        Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, RHS);
-      }
-      if (!Cmp)
-        Cmp = CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
+      Cmp = selectCompareNode(DL, LHS, RHS, BrOpc);
 
       ReplaceNode(Node, CurDAG->getMachineNode(BrOpc, DL, MVT::Other, Dest,
                                                Chain, SDValue(Cmp, 0)));
@@ -990,28 +1000,7 @@ public:
         if (BrOpc == 0)
           break;
 
-        if (auto *RC = dyn_cast<ConstantSDNode>(RHS)) {
-          if (RC->isZero()) {
-            Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
-          } else if (RC->getSExtValue() == -1) {
-            switch (CCVal) {
-            case ISD::SETGT:
-              Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
-              BrOpc = TC32::TJGE;
-              break;
-            case ISD::SETLE:
-              Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
-              BrOpc = TC32::TJLT;
-              break;
-            default:
-              break;
-            }
-          }
-        } else if (auto *LC = dyn_cast<ConstantSDNode>(LHS); LC && LC->isZero()) {
-          Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, RHS);
-        }
-        if (!Cmp)
-          Cmp = CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
+        Cmp = selectCompareNode(DL, LHS, RHS, BrOpc);
 
         ReplaceNode(Node, CurDAG->getMachineNode(BrOpc, DL, MVT::Other, Dest,
                                                  Chain, SDValue(Cmp, 0)));
@@ -1116,28 +1105,7 @@ public:
       SDValue RHS = Node->getOperand(4);
       MachineSDNode *Cmp = nullptr;
 
-      if (auto *RC = dyn_cast<ConstantSDNode>(RHS)) {
-        if (RC->isZero()) {
-          Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
-        } else if (RC->getSExtValue() == -1) {
-          switch (BrOpc) {
-          case TC32::TJGT:
-            Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
-            BrOpc = TC32::TJGE;
-            break;
-          case TC32::TJLE:
-            Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, LHS);
-            BrOpc = TC32::TJLT;
-            break;
-          default:
-            break;
-          }
-        }
-      } else if (auto *LC = dyn_cast<ConstantSDNode>(LHS); LC && LC->isZero()) {
-        Cmp = CurDAG->getMachineNode(TC32::TCMPri0, DL, MVT::Glue, RHS);
-      }
-      if (!Cmp)
-        Cmp = CurDAG->getMachineNode(TC32::TCMPrr, DL, MVT::Glue, LHS, RHS);
+      Cmp = selectCompareNode(DL, LHS, RHS, BrOpc);
 
       ReplaceNode(Node, CurDAG->getMachineNode(BrOpc, DL, MVT::Other, Dest,
                                                Chain, SDValue(Cmp, 0)));
@@ -1429,6 +1397,30 @@ public:
       if (VT == MVT::i32 || VT == MVT::i8) {
         SDValue LHS = Node->getOperand(0);
         SDValue RHS = Node->getOperand(1);
+        if (auto *RC = dyn_cast<ConstantSDNode>(RHS)) {
+          int64_t Imm = RC->getSExtValue();
+          if (Imm == 1) {
+            ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSUBri1, DL, VT,
+                                                     ensureValueInRegister(LHS, DL)));
+            return;
+          }
+          if (Imm >= 0 && Imm <= 7) {
+            LHS = ensureValueInRegister(LHS, DL);
+            ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSUBrru3, DL, VT,
+                                                     LHS,
+                                                     CurDAG->getTargetConstant(Imm, DL,
+                                                                               MVT::i32)));
+            return;
+          }
+          if (Imm >= 0 && Imm <= 255) {
+            LHS = ensureValueInRegister(LHS, DL);
+            ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSUBri8, DL, VT,
+                                                     LHS,
+                                                     CurDAG->getTargetConstant(Imm, DL,
+                                                                               MVT::i32)));
+            return;
+          }
+        }
         LHS = ensureValueInRegister(LHS, DL);
         RHS = ensureValueInRegister(RHS, DL);
         ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSUBrrr, DL, VT, LHS, RHS));

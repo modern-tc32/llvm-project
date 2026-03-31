@@ -147,6 +147,12 @@ def TCMPri0 : TC32Inst<(outs), (ins LoGR32:$src), "tcmp\t$src, #0"> {
   let Defs = [CPSR];
 }
 
+def TCMPri8 : TC32Inst<(outs), (ins LoGR32:$src, uimm8:$imm),
+                       "tcmp\t$src, #$imm"> {
+  let isCompare = 1;
+  let Defs = [CPSR];
+}
+
 def TCMPrr : TC32Inst<(outs), (ins LoGR32:$lhs, LoGR32:$rhs),
                       "tcmp\t$lhs, $rhs"> {
   let isCompare = 1;
@@ -329,6 +335,17 @@ def TSUBrrr : TC32Inst<(outs LoGR32:$dst),
 
 def TSUBri1 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src),
                        "tsub\t$dst, $src, #1"> {
+  let Defs = [CPSR];
+}
+
+def TSUBrru3 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src, uimm3:$imm),
+                        "tsub\t$dst, $src, #$imm"> {
+  let Defs = [CPSR];
+}
+
+let Constraints = "$dst = $src" in
+def TSUBri8 : TC32Inst<(outs LoGR32:$dst), (ins LoGR32:$src, uimm8:$imm),
+                       "tsub\t$dst, $src, #$imm"> {
   let Defs = [CPSR];
 }
 

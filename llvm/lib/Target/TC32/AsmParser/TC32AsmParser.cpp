@@ -555,10 +555,21 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
         Inst.addOperand(MCOperand::createReg(Dst.getReg()));
         Inst.addOperand(MCOperand::createReg(Src.getReg()));
         Inst.addOperand(MCOperand::createReg(Op3.getReg()));
-      } else if (Op3.isImm() && extractAbsoluteImm(Op3.Expr, Imm) && Imm == 1) {
-        Inst.setOpcode(TC32::TSUBri1);
-        Inst.addOperand(MCOperand::createReg(Dst.getReg()));
-        Inst.addOperand(MCOperand::createReg(Src.getReg()));
+      } else if (Op3.isImm() && extractAbsoluteImm(Op3.Expr, Imm)) {
+        if (Dst.getReg() == Src.getReg() && Imm >= 0 && Imm <= 255) {
+          Inst.setOpcode(Imm == 1 ? TC32::TSUBri1 : TC32::TSUBri8);
+          Inst.addOperand(MCOperand::createReg(Dst.getReg()));
+          Inst.addOperand(MCOperand::createReg(Src.getReg()));
+          if (Imm != 1)
+            Inst.addOperand(MCOperand::createImm(Imm));
+        } else if (Imm >= 0 && Imm <= 7) {
+          Inst.setOpcode(TC32::TSUBrru3);
+          Inst.addOperand(MCOperand::createReg(Dst.getReg()));
+          Inst.addOperand(MCOperand::createReg(Src.getReg()));
+          Inst.addOperand(MCOperand::createImm(Imm));
+        } else {
+          return Error(IDLoc, "unsupported tsub form");
+        }
       } else {
         return Error(IDLoc, "unsupported tsub form");
       }
@@ -582,10 +593,12 @@ bool TC32AsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
     } else if (Op2.isImm()) {
       if (!isLoReg(Op1.getReg()))
         return Error(IDLoc, "lo register required");
-      if (!extractAbsoluteImm(Op2.Expr, Imm) || Imm != 0)
-        return Error(IDLoc, "only tcmp reg, #0 is supported");
-      Inst.setOpcode(TC32::TCMPri0);
+      if (!extractAbsoluteImm(Op2.Expr, Imm) || Imm < 0 || Imm > 255)
+        return Error(IDLoc, "tcmp immediate must be 0..255");
+      Inst.setOpcode(Imm == 0 ? TC32::TCMPri0 : TC32::TCMPri8);
       Inst.addOperand(MCOperand::createReg(Op1.getReg()));
+      if (Imm != 0)
+        Inst.addOperand(MCOperand::createImm(Imm));
     } else {
       return Error(IDLoc, "invalid operands for tcmp");
     }

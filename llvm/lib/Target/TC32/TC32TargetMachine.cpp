@@ -359,7 +359,8 @@ public:
   }
 
   static bool isCompare(const MachineInstr &MI) {
-    return MI.getOpcode() == TC32::TCMPri0 || MI.getOpcode() == TC32::TCMPrr;
+    return MI.getOpcode() == TC32::TCMPri0 || MI.getOpcode() == TC32::TCMPri8 ||
+           MI.getOpcode() == TC32::TCMPrr;
   }
 
   static bool isLateCopy(const MachineInstr &MI) {
