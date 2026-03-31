@@ -9,6 +9,26 @@ using namespace llvm;
 #define PRINT_ALIAS_INSTR
 #include "TC32GenAsmWriter.inc"
 
+void TC32InstPrinter::printPushPopMask(raw_ostream &O, uint64_t Mask,
+                                       bool IncludePCOrLR) {
+  O << "{";
+  bool First = true;
+  for (unsigned Reg = 0; Reg != 8; ++Reg) {
+    if (((Mask >> Reg) & 1u) == 0)
+      continue;
+    if (!First)
+      O << ", ";
+    O << "r" << Reg;
+    First = false;
+  }
+  if (IncludePCOrLR) {
+    if (!First)
+      O << ", ";
+    O << ((Mask & 0x100) ? "pc" : "lr");
+  }
+  O << "}";
+}
+
 void TC32InstPrinter::printRegName(raw_ostream &O, MCRegister Reg) {
   O << getRegisterName(Reg);
 }
@@ -19,6 +39,16 @@ void TC32InstPrinter::printInst(const MCInst *MI, uint64_t Address,
   switch (MI->getOpcode()) {
   case TC32::TPUSH_R0_R1_R2_R3:
     O << "tpush\t{r0, r1, r2, r3}";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TPUSH_MASK:
+    O << "tpush\t";
+    printPushPopMask(O, MI->getOperand(0).getImm(), false);
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TPUSH_MASK_LR:
+    O << "tpush\t";
+    printPushPopMask(O, MI->getOperand(0).getImm(), true);
     printAnnotation(O, Annot);
     return;
   case TC32::TPUSH_LR:
@@ -37,8 +67,18 @@ void TC32InstPrinter::printInst(const MCInst *MI, uint64_t Address,
     O << "tpop\t{r3}";
     printAnnotation(O, Annot);
     return;
+  case TC32::TPOP_MASK:
+    O << "tpop\t";
+    printPushPopMask(O, MI->getOperand(0).getImm(), false);
+    printAnnotation(O, Annot);
+    return;
   case TC32::TPOP_PC:
     O << "tpop\t{pc}";
+    printAnnotation(O, Annot);
+    return;
+  case TC32::TPOP_MASK_PC:
+    O << "tpop\t";
+    printPushPopMask(O, MI->getOperand(0).getImm() | 0x100, true);
     printAnnotation(O, Annot);
     return;
   case TC32::TPOP_R7_PC:

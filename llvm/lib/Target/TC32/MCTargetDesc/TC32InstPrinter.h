@@ -24,6 +24,7 @@ public:
   static const char *getRegisterName(MCRegister Reg);
 
 private:
+  void printPushPopMask(raw_ostream &O, uint64_t Mask, bool IncludePCOrLR);
   void printOperand(const MCInst *MI, unsigned OpNo, raw_ostream &O);
 };
 

@@ -2,6 +2,7 @@
 #include "MCTargetDesc/TC32MCTargetDesc.h"
 #include "TC32MachineFunctionInfo.h"
 #include "TC32Subtarget.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -98,6 +99,43 @@ void TC32FrameLowering::processFunctionBeforeFrameFinalized(
   TFI->setBranchRelaxationScratchFrameIndex(FI);
 }
 
+bool TC32FrameLowering::spillCalleeSavedRegisters(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+    ArrayRef<CalleeSavedInfo> CSI, const TargetRegisterInfo *TRI) const {
+  (void)MBB;
+  (void)MI;
+  (void)TRI;
+
+  auto *TFI = MBB.getParent()->getInfo<TC32MachineFunctionInfo>();
+  TFI->setPackedCalleeSavedMask(0);
+  TFI->setPackedCalleeSavedBytes(0);
+  if (CSI.empty())
+    return false;
+
+  uint8_t Mask = 0;
+  for (const CalleeSavedInfo &CS : CSI) {
+    unsigned Reg = CS.getReg();
+    if (Reg < TC32::R4 || Reg > TC32::R7)
+      return false;
+    Mask |= uint8_t(1u << (Reg - TC32::R0));
+  }
+
+  TFI->setPackedCalleeSavedMask(Mask);
+  TFI->setPackedCalleeSavedBytes(uint8_t(4 * popcount(Mask)));
+  return true;
+}
+
+bool TC32FrameLowering::restoreCalleeSavedRegisters(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator MI,
+    MutableArrayRef<CalleeSavedInfo> CSI, const TargetRegisterInfo *TRI) const {
+  (void)MBB;
+  (void)MI;
+  (void)CSI;
+  (void)TRI;
+  return MBB.getParent()->getInfo<TC32MachineFunctionInfo>()
+             ->getPackedCalleeSavedMask() != 0;
+}
+
 void TC32FrameLowering::emitPrologue(MachineFunction &MF,
                                      MachineBasicBlock &MBB) const {
   MachineBasicBlock::iterator I = MBB.begin();
@@ -108,6 +146,8 @@ void TC32FrameLowering::emitPrologue(MachineFunction &MF,
   const bool UseFP = hasFP(MF);
   const bool PushLR = usesPushLR(MF);
   const bool PushR7LR = usesPushR7LR(MF);
+  auto *TFI = MF.getInfo<TC32MachineFunctionInfo>();
+  const uint8_t SavedMask = TFI->getPackedCalleeSavedMask();
   assert((!PushR7LR || isR7Reserved(MF)) &&
          "TC32 push {r7,lr} requires reserved r7");
 
@@ -115,12 +155,23 @@ void TC32FrameLowering::emitPrologue(MachineFunction &MF,
     BuildMI(MBB, I, DL,
             MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_R0_R1_R2_R3));
 
+  uint8_t PushMask = SavedMask;
   if (PushR7LR)
-    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_R7_LR));
-  else if (PushLR)
+    PushMask |= 0x80;
+  if (PushMask) {
+    BuildMI(MBB, I, DL,
+            MF.getSubtarget().getInstrInfo()->get(PushLR || PushR7LR
+                                                      ? TC32::TPUSH_MASK_LR
+                                                      : TC32::TPUSH_MASK))
+        .addImm(PushMask);
+  } else if (PushR7LR) {
+    BuildMI(MBB, I, DL,
+            MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_R7_LR));
+  } else if (PushLR) {
     BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPUSH_LR));
+  }
 
-  int StackSize = MF.getFrameInfo().getStackSize();
+  int StackSize = MF.getFrameInfo().getStackSize() - TFI->getPackedCalleeSavedBytes();
   if (StackSize > 0)
     emitStackAdjust(MBB, I, DL,
                     MF.getSubtarget().getInstrInfo()->get(TC32::TSUBspu8),
@@ -143,6 +194,10 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
   const bool UseFP = hasFP(MF);
   const bool PushLR = usesPushLR(MF);
   const bool PushR7LR = usesPushR7LR(MF);
+  auto *TFI = MF.getInfo<TC32MachineFunctionInfo>();
+  uint8_t PopMask = TFI->getPackedCalleeSavedMask();
+  if (PushR7LR)
+    PopMask |= 0x80;
   assert((!PushR7LR || isR7Reserved(MF)) &&
          "TC32 pop {r7,pc} requires reserved r7");
   const bool ReturnsR0 =
@@ -154,7 +209,7 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
         .addReg(TC32::R7);
   }
 
-  int StackSize = MF.getFrameInfo().getStackSize();
+  int StackSize = MF.getFrameInfo().getStackSize() - TFI->getPackedCalleeSavedBytes();
   if (StackSize > 0)
     emitStackAdjust(MBB, I, DL,
                     MF.getSubtarget().getInstrInfo()->get(TC32::TADDspu8),
@@ -164,7 +219,7 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
       (I->getOpcode() == TC32::TRET || I->getOpcode() == TC32::TRET_R0))
     I = MBB.erase(I);
 
-  if (!PushLR) {
+  if (!PushLR && !PopMask) {
     auto MIB = BuildMI(
         MBB, I, DL,
         MF.getSubtarget().getInstrInfo()->get(ReturnsR0 ? TC32::TRET_R0
@@ -174,7 +229,19 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
     return;
   }
 
-  if (!PushR7LR) {
+  if (!PushLR && PopMask) {
+    BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_MASK))
+        .addImm(PopMask);
+    auto MIB = BuildMI(
+        MBB, I, DL,
+        MF.getSubtarget().getInstrInfo()->get(ReturnsR0 ? TC32::TRET_R0
+                                                        : TC32::TRET));
+    if (ReturnsR0)
+      MIB.addReg(TC32::R0, RegState::Implicit);
+    return;
+  }
+
+  if (!PopMask && !PushR7LR) {
     auto MIB =
         BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_PC));
     if (ReturnsR0)
@@ -182,7 +249,7 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
     return;
   }
 
-  if (!UseFP) {
+  if (!PopMask) {
     auto MIB =
         BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R7_PC));
     if (ReturnsR0)
@@ -190,20 +257,9 @@ void TC32FrameLowering::emitEpilogue(MachineFunction &MF,
     return;
   }
 
-  if (!MF.getFunction().isVarArg()) {
-    auto MIB =
-        BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R7_PC));
-    if (ReturnsR0)
-      MIB.addReg(TC32::R0, RegState::Implicit);
-    return;
-  }
-
-  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R7));
-  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_R3));
-  BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TADDspu8))
-      .addImm(16);
-  auto MIB = BuildMI(MBB, I, DL, MF.getSubtarget().getInstrInfo()->get(TC32::TRETjr))
-                 .addReg(TC32::R3);
+  auto MIB = BuildMI(MBB, I, DL,
+                     MF.getSubtarget().getInstrInfo()->get(TC32::TPOP_MASK_PC))
+                 .addImm(PopMask);
   if (ReturnsR0)
     MIB.addReg(TC32::R0, RegState::Implicit);
 }

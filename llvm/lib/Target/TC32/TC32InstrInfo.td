@@ -75,6 +75,16 @@ def TPUSH_R0_R1_R2_R3 : TC32Inst<(outs), (ins), "tpush\t{r0, r1, r2, r3}"> {
   let Uses = [R0, R1, R2, R3, R13];
 }
 
+def TPUSH_MASK : TC32Inst<(outs), (ins uimm8:$mask), "tpush\t{$mask}"> {
+  let Defs = [R13];
+  let Uses = [R13];
+}
+
+def TPUSH_MASK_LR : TC32Inst<(outs), (ins uimm8:$mask), "tpush\t{$mask, lr}"> {
+  let Defs = [R13];
+  let Uses = [R13, R14];
+}
+
 def TPOP_R7_PC : TC32Inst<(outs), (ins), "tpop\t{r7, pc}"> {
   let Defs = [R7, R13, R15];
   let Uses = [R13];
@@ -93,7 +103,20 @@ def TPOP_R3 : TC32Inst<(outs), (ins), "tpop\t{r3}"> {
   let Uses = [R13];
 }
 
+def TPOP_MASK : TC32Inst<(outs), (ins uimm8:$mask), "tpop\t{$mask}"> {
+  let Defs = [R13];
+  let Uses = [R13];
+}
+
 def TPOP_PC : TC32Inst<(outs), (ins), "tpop\t{pc}"> {
+  let Defs = [R13, R15];
+  let Uses = [R13];
+  let isReturn = 1;
+  let isTerminator = 1;
+  let isBarrier = 1;
+}
+
+def TPOP_MASK_PC : TC32Inst<(outs), (ins uimm8:$mask), "tpop\t{$mask, pc}"> {
   let Defs = [R13, R15];
   let Uses = [R13];
   let isReturn = 1;

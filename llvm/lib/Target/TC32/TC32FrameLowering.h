@@ -21,6 +21,14 @@ public:
                             RegScavenger *RS) const override;
   void processFunctionBeforeFrameFinalized(MachineFunction &MF,
                                            RegScavenger *RS) const override;
+  bool spillCalleeSavedRegisters(MachineBasicBlock &MBB,
+                                 MachineBasicBlock::iterator MI,
+                                 ArrayRef<CalleeSavedInfo> CSI,
+                                 const TargetRegisterInfo *TRI) const override;
+  bool restoreCalleeSavedRegisters(MachineBasicBlock &MBB,
+                                   MachineBasicBlock::iterator MI,
+                                   MutableArrayRef<CalleeSavedInfo> CSI,
+                                   const TargetRegisterInfo *TRI) const override;
 
   void emitPrologue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
   void emitEpilogue(MachineFunction &MF, MachineBasicBlock &MBB) const override;
