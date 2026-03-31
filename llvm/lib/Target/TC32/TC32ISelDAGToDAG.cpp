@@ -341,6 +341,40 @@ static bool decodeBooleanSelectCC(SDValue V, SDValue &LHS, SDValue &RHS,
   return false;
 }
 
+static bool matchZeroExtendCleanupShift(SDValue V, unsigned Shift,
+                                        SDValue &Base) {
+  if (V.getOpcode() != ISD::SHL)
+    return false;
+  auto *ShlAmt = dyn_cast<ConstantSDNode>(V.getOperand(1));
+  if (!ShlAmt || ShlAmt->getZExtValue() != Shift)
+    return false;
+
+  SDValue Inner = V.getOperand(0);
+  if (Inner.getOpcode() == ISD::ZERO_EXTEND ||
+      Inner.getOpcode() == ISD::ANY_EXTEND) {
+    EVT SrcVT = Inner.getOperand(0).getValueType();
+    if ((Shift == 24 && SrcVT == MVT::i8) || (Shift == 16 && SrcVT == MVT::i16)) {
+      Base = Inner.getOperand(0);
+      return true;
+    }
+  }
+
+  unsigned Bits = getIntegerVTBits(Inner.getValueType());
+  if ((Shift == 24 && Bits == 8) || (Shift == 16 && Bits == 16)) {
+    Base = Inner;
+    return true;
+  }
+
+  SDValue Peeled;
+  if (peelNarrowCompareValue(Inner, Peeled, Bits) &&
+      ((Shift == 24 && Bits == 8) || (Shift == 16 && Bits == 16))) {
+    Base = Peeled;
+    return true;
+  }
+
+  return false;
+}
+
 static bool isBooleanSelectTreeLike(SDValue V, unsigned Depth = 0) {
   if (Depth > 8)
     return false;
@@ -594,6 +628,8 @@ public:
   void prepareCompareOperands(const SDLoc &DL, ISD::CondCode CCVal,
                               SDValue &LHS, SDValue &RHS) {
     bool SignExtend = isSignedCompare(CCVal);
+    if (CCVal == ISD::SETEQ || CCVal == ISD::SETNE)
+      SignExtend = false;
     LHS = extendIntegerForCompare(LHS, DL, SignExtend);
     RHS = extendIntegerForCompare(RHS, DL, SignExtend);
   }
@@ -1720,6 +1756,15 @@ public:
       EVT VT = Node->getValueType(0);
       if (VT == MVT::i32 || VT == MVT::i8) {
         auto *RC = dyn_cast<ConstantSDNode>(Node->getOperand(1));
+        if (VT == MVT::i32 && RC && (RC->getZExtValue() == 24 || RC->getZExtValue() == 16)) {
+          SDValue Base;
+          if (matchZeroExtendCleanupShift(Node->getOperand(0), RC->getZExtValue(), Base)) {
+            if (Base.getValueType() != MVT::i32)
+              Base = SDValue(CurDAG->getMachineNode(TC32::TMOVrr, DL, MVT::i32, Base), 0);
+            ReplaceNode(Node, Base.getNode());
+            return;
+          }
+        }
         if (RC && RC->getZExtValue() == 31) {
           ReplaceNode(Node, CurDAG->getMachineNode(TC32::TSHFTRi31, DL, VT,
                                                    Node->getOperand(0)));

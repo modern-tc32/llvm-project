@@ -435,6 +435,15 @@ static SDValue extendForCompare(SelectionDAG &DAG, const SDLoc &DL, SDValue V,
       return DAG.getNode(ISD::AND, DL, MVT::i32, Wide,
                          DAG.getConstant(Mask, DL, MVT::i32));
     }
+
+    // Equality compares only care about the low bits of the narrow value.
+    // Canonicalize them as zero-extended so the backend can use byte/halfword
+    // compares directly instead of manufacturing sign-cleanup shift pairs.
+    if (CC == ISD::SETEQ || CC == ISD::SETNE) {
+      uint32_t Mask = VT == MVT::i8 ? 0xffu : 0xffffu;
+      return DAG.getNode(ISD::AND, DL, MVT::i32, Wide,
+                         DAG.getConstant(Mask, DL, MVT::i32));
+    }
   }
 
   return DAG.getNode(ISD::ANY_EXTEND, DL, MVT::i32, V);

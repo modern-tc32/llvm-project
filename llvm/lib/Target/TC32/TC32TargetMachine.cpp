@@ -9,6 +9,7 @@
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
@@ -513,6 +514,119 @@ public:
   }
 };
 
+class TC32NarrowComparePeepholePass : public MachineFunctionPass {
+public:
+  static char ID;
+
+  TC32NarrowComparePeepholePass() : MachineFunctionPass(ID) {}
+
+  StringRef getPassName() const override {
+    return "TC32 Narrow Compare Peephole";
+  }
+
+  static bool isByteLoad(const MachineInstr &MI) {
+    return MI.getOpcode() == TC32::TLOADBrr || MI.getOpcode() == TC32::TLOADBru3;
+  }
+
+  static bool isShiftImm(const MachineInstr &MI, unsigned Opc, unsigned Imm) {
+    return MI.getOpcode() == Opc && MI.getNumOperands() >= 3 &&
+           MI.getOperand(2).isImm() &&
+           static_cast<unsigned>(MI.getOperand(2).getImm()) == Imm;
+  }
+
+  static bool isZeroAddCopy(const MachineInstr &MI) {
+    if (MI.getOpcode() == TC32::TMOVrr)
+      return true;
+    return MI.getOpcode() == TC32::TADDSri8 && MI.getNumOperands() >= 3 &&
+           MI.getOperand(2).isImm() && MI.getOperand(2).getImm() == 0;
+  }
+
+  static Register getDefReg(const MachineInstr &MI) {
+    if (MI.getNumOperands() < 1 || !MI.getOperand(0).isReg() || !MI.getOperand(0).isDef())
+      return Register();
+    return MI.getOperand(0).getReg();
+  }
+
+  static Register getPrimarySrcReg(const MachineInstr &MI) {
+    if (MI.getNumOperands() < 2 || !MI.getOperand(1).isReg())
+      return Register();
+    return MI.getOperand(1).getReg();
+  }
+
+  static bool matchCleanupChain(Register Reg, MachineRegisterInfo &MRI,
+                                Register &LoadReg,
+                                SmallVectorImpl<MachineInstr *> &DeadInstrs) {
+    if (!Reg.isVirtual())
+      return false;
+    MachineInstr *Srl = MRI.getUniqueVRegDef(Reg);
+    if (!Srl || !MRI.hasOneNonDBGUse(Reg) ||
+        !isShiftImm(*Srl, TC32::TSHFTRi5, 24))
+      return false;
+
+    Register ShlReg = getPrimarySrcReg(*Srl);
+    if (!ShlReg.isVirtual())
+      return false;
+    MachineInstr *Shl = MRI.getUniqueVRegDef(ShlReg);
+    if (!Shl || !MRI.hasOneNonDBGUse(ShlReg) ||
+        !isShiftImm(*Shl, TC32::TSHFTLi5, 24))
+      return false;
+
+    Register CopyReg = getPrimarySrcReg(*Shl);
+    if (!CopyReg.isVirtual())
+      return false;
+    MachineInstr *Copy = MRI.getUniqueVRegDef(CopyReg);
+    if (!Copy || !MRI.hasOneNonDBGUse(CopyReg) || !isZeroAddCopy(*Copy))
+      return false;
+
+    Register BaseReg = getPrimarySrcReg(*Copy);
+    if (!BaseReg.isVirtual())
+      return false;
+    MachineInstr *Load = MRI.getUniqueVRegDef(BaseReg);
+    if (!Load || !isByteLoad(*Load))
+      return false;
+
+    LoadReg = BaseReg;
+    DeadInstrs.push_back(Srl);
+    DeadInstrs.push_back(Shl);
+    DeadInstrs.push_back(Copy);
+    return true;
+  }
+
+  bool runOnMachineFunction(MachineFunction &MF) override {
+    MachineRegisterInfo &MRI = MF.getRegInfo();
+    bool Changed = false;
+
+    for (MachineBasicBlock &MBB : MF) {
+      for (MachineInstr &MI : MBB) {
+        if (MI.getOpcode() != TC32::TCMPrr && MI.getOpcode() != TC32::TCMPri8)
+          continue;
+
+        for (unsigned OpIdx = 0; OpIdx < MI.getNumOperands(); ++OpIdx) {
+          MachineOperand &MO = MI.getOperand(OpIdx);
+          if (!MO.isReg() || !MO.isUse())
+            continue;
+
+          SmallVector<MachineInstr *, 4> DeadInstrs;
+          Register LoadReg;
+          if (!matchCleanupChain(MO.getReg(), MRI, LoadReg, DeadInstrs))
+            continue;
+
+          MO.setReg(LoadReg);
+          Changed = true;
+
+          for (MachineInstr *Dead : DeadInstrs) {
+            Register DeadReg = getDefReg(*Dead);
+            if (DeadReg && MRI.use_nodbg_empty(DeadReg))
+              Dead->eraseFromParent();
+          }
+        }
+      }
+    }
+
+    return Changed;
+  }
+};
+
 class TC32CallMaskPass : public MachineFunctionPass {
 public:
   static char ID;
@@ -555,6 +669,7 @@ public:
 
 char TC32CallMaskPass::ID = 0;
 char TC32CompareBranchRepairPass::ID = 0;
+char TC32NarrowComparePeepholePass::ID = 0;
 
 class TC32PassConfig : public TargetPassConfig {
 public:
@@ -582,7 +697,10 @@ public:
     return false;
   }
 
-  void addPreRegAlloc() override { addPass(new TC32CallMaskPass()); }
+  void addPreRegAlloc() override {
+    addPass(new TC32CallMaskPass());
+    addPass(new TC32NarrowComparePeepholePass());
+  }
 
   void addPreEmitPass() override {
     addPass(new TC32CompareBranchRepairPass());
