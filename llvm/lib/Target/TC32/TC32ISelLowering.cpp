@@ -339,6 +339,8 @@ const char *TC32TargetLowering::getTargetNodeName(unsigned Opcode) const {
     return "TC32ISD::WRAPPER_JT";
   case TC32ISD::BRCOND:
     return "TC32ISD::BRCOND";
+  case TC32ISD::SELECT_NE_POW2:
+    return "TC32ISD::SELECT_NE_POW2";
   case TC32ISD::ULOAD:
     return "TC32ISD::ULOAD";
   case TC32ISD::USTORE:
@@ -489,6 +491,46 @@ static SDValue lowerCompareSelectToSignOrOne(SelectionDAG &DAG, const SDLoc &DL,
                              DAG.getConstant(31, DL, MVT::i32));
   return DAG.getNode(ISD::OR, DL, MVT::i32, Sign,
                      DAG.getConstant(1, DL, MVT::i32));
+}
+
+static SDValue lowerCompareSelectToNePowerOfTwo(SelectionDAG &DAG,
+                                                const SDLoc &DL, EVT VT,
+                                                SDValue LHS, SDValue RHS,
+                                                ISD::CondCode CC,
+                                                SDValue TrueVal,
+                                                SDValue FalseVal) {
+  if (VT != MVT::i32)
+    return SDValue();
+
+  const auto *TrueCN = dyn_cast<ConstantSDNode>(TrueVal);
+  const auto *FalseCN = dyn_cast<ConstantSDNode>(FalseVal);
+  if (!TrueCN || !FalseCN)
+    return SDValue();
+
+  const ConstantSDNode *PowCN = nullptr;
+  switch (CC) {
+  case ISD::SETEQ:
+    if (!TrueCN->isZero())
+      return SDValue();
+    PowCN = FalseCN;
+    break;
+  case ISD::SETNE:
+    if (!FalseCN->isZero())
+      return SDValue();
+    PowCN = TrueCN;
+    break;
+  default:
+    return SDValue();
+  }
+
+  const APInt &Pow = PowCN->getAPIntValue();
+  if (!Pow.isPowerOf2())
+    return SDValue();
+
+  LHS = canonicalizeCompareOperand(DAG, DL, LHS, CC);
+  RHS = canonicalizeCompareOperand(DAG, DL, RHS, CC);
+  return DAG.getNode(TC32ISD::SELECT_NE_POW2, DL, MVT::i32, LHS, RHS,
+                     DAG.getConstant(Pow.logBase2(), DL, MVT::i32));
 }
 
 static SDValue stripBooleanCastsForSelect(SDValue V) {
@@ -980,6 +1022,10 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
     SDValue RawCond = stripBooleanCastsForSelect(Cond);
     if (RawCond.getOpcode() == ISD::SETCC) {
       if (auto *CC = dyn_cast<CondCodeSDNode>(RawCond.getOperand(2))) {
+        if (SDValue Res = lowerCompareSelectToNePowerOfTwo(
+                DAG, DL, VT, RawCond.getOperand(0), RawCond.getOperand(1),
+                CC->get(), TrueVal, FalseVal))
+          return Res;
         if (SDValue Res = lowerCompareSelectToSignOrOne(
                 DAG, DL, VT, RawCond.getOperand(0), RawCond.getOperand(1),
                 CC->get(), TrueVal, FalseVal))
@@ -989,6 +1035,10 @@ SDValue TC32TargetLowering::LowerOperation(SDValue Op,
 
     if (Cond.getOpcode() == ISD::SETCC) {
       if (auto *CC = dyn_cast<CondCodeSDNode>(Cond.getOperand(2))) {
+        if (SDValue Res = lowerCompareSelectToNePowerOfTwo(
+                DAG, DL, VT, Cond.getOperand(0), Cond.getOperand(1), CC->get(),
+                TrueVal, FalseVal))
+          return Res;
         if (SDValue Res = lowerCompareSelectToSignOrOne(
                 DAG, DL, VT, Cond.getOperand(0), Cond.getOperand(1), CC->get(),
                 TrueVal, FalseVal))

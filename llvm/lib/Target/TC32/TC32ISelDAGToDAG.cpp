@@ -563,6 +563,31 @@ public:
     return SDValue(CurDAG->getMachineNode(Opcode, DL, VT, LHS, RHS, Glue), 0);
   }
 
+  SDValue emitSubValue(const SDLoc &DL, SDValue LHS, SDValue RHS) {
+    LHS = ensureValueInRegister(LHS, DL);
+    if (const auto *RC = dyn_cast<ConstantSDNode>(RHS)) {
+      int64_t Imm = RC->getSExtValue();
+      if (Imm == 0)
+        return LHS;
+      if (Imm == 1)
+        return SDValue(CurDAG->getMachineNode(TC32::TSUBri1, DL, MVT::i32, LHS), 0);
+      if (Imm >= 0 && Imm <= 7) {
+        return SDValue(CurDAG->getMachineNode(
+                           TC32::TSUBrru3, DL, MVT::i32, LHS,
+                           CurDAG->getTargetConstant(Imm, DL, MVT::i32)),
+                       0);
+      }
+      if (Imm >= 0 && Imm <= 255) {
+        return SDValue(CurDAG->getMachineNode(
+                           TC32::TSUBri8, DL, MVT::i32, LHS,
+                           CurDAG->getTargetConstant(Imm, DL, MVT::i32)),
+                       0);
+      }
+    }
+    RHS = ensureValueInRegister(RHS, DL);
+    return SDValue(CurDAG->getMachineNode(TC32::TSUBrrr, DL, MVT::i32, LHS, RHS), 0);
+  }
+
   SDValue emitByteLoad(SDValue Ptr, SDValue Chain, unsigned Offset,
                        const SDLoc &DL) {
     SDValue Base;
@@ -819,6 +844,34 @@ public:
 
     if (Node->isMachineOpcode()) {
       Node->setNodeId(-1);
+      return;
+    }
+
+    if (Node->getOpcode() == TC32ISD::SELECT_NE_POW2) {
+      auto preparePow2CmpOperand = [&](SDValue V) {
+        if (isa<ConstantSDNode>(V))
+          return V;
+        return extendIntegerForCompare(V, DL, false);
+      };
+      SDValue LHS = preparePow2CmpOperand(Node->getOperand(0));
+      SDValue RHS = preparePow2CmpOperand(Node->getOperand(1));
+      unsigned ShiftAmount =
+          cast<ConstantSDNode>(Node->getOperand(2))->getZExtValue();
+
+      SDValue Diff = matchConstInt(RHS, 0) ? ensureValueInRegister(LHS, DL)
+                                           : emitSubValue(DL, LHS, RHS);
+      SDValue OneLess =
+          emitSubValue(DL, Diff, CurDAG->getConstant(1, DL, MVT::i32));
+      SDValue Res = SDValue(
+          CurDAG->getMachineNode(TC32::TSUBCrr, DL, MVT::i32, Diff, OneLess),
+          0);
+      if (ShiftAmount != 0) {
+        Res = SDValue(CurDAG->getMachineNode(
+                          TC32::TSHFTLi5, DL, MVT::i32, Res,
+                          CurDAG->getTargetConstant(ShiftAmount, DL, MVT::i32)),
+                      0);
+      }
+      ReplaceNode(Node, Res.getNode());
       return;
     }
 
@@ -1223,7 +1276,6 @@ public:
       SDValue TrueVal = Node->getOperand(2);
       SDValue FalseVal = Node->getOperand(3);
       ISD::CondCode CCVal = CC->get();
-
       if (SDValue Res = trySelectCompareSignOrOne(DL, VT, LHS, RHS, TrueVal,
                                                   FalseVal, CCVal)) {
         ReplaceNode(Node, Res.getNode());
@@ -1276,7 +1328,6 @@ public:
       }
       SDValue TrueVal = Node->getOperand(1);
       SDValue FalseVal = Node->getOperand(2);
-
       unsigned BrOpc = 0;
 
       if (LHS.getNode()) {

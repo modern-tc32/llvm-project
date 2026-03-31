@@ -29,3 +29,28 @@ entry:
   %y = sub i32 %x, 200
   ret i32 %y
 }
+
+define i32 @select_ne_pow2_i32(i32 %x) {
+; CHECK-LABEL: select_ne_pow2_i32:
+; CHECK: tsub	r0, r0, #2
+; CHECK-NEXT: tsub	r1, r0, #1
+; CHECK-NEXT: tsubc	r0, r1
+; CHECK-NEXT: tshftl	r0, r0, #2
+entry:
+  %cmp = icmp eq i32 %x, 2
+  %sel = select i1 %cmp, i32 0, i32 4
+  ret i32 %sel
+}
+
+define i32 @select_ne_pow2_i8(i8 %x) {
+; CHECK-LABEL: select_ne_pow2_i8:
+; CHECK: tshftl	r0, r0, #24
+; CHECK: tshftr	r0, r0, #24
+; CHECK: tsub	r1, r0, #1
+; CHECK: tsubc	r0, r1
+; CHECK: tshftl	r0, r0, #2
+entry:
+  %cmp = icmp eq i8 %x, 0
+  %sel = select i1 %cmp, i32 0, i32 4
+  ret i32 %sel
+}

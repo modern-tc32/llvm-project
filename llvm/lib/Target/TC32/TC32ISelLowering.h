@@ -15,6 +15,7 @@ enum NodeType : unsigned {
   FRAMEADDR,
   WRAPPER_JT,
   BRCOND,
+  SELECT_NE_POW2,
   ULOAD,
   USTORE,
   CALL,
