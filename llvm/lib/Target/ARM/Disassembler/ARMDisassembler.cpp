@@ -6561,6 +6561,8 @@ LLVMInitializeARMDisassembler() {
                                          createARMDisassembler);
   TargetRegistry::RegisterMCDisassembler(getTheARMBETarget(),
                                          createARMDisassembler);
+  TargetRegistry::RegisterMCDisassembler(getTheTC32Target(),
+                                         createARMDisassembler);
   TargetRegistry::RegisterMCDisassembler(getTheThumbLETarget(),
                                          createARMDisassembler);
   TargetRegistry::RegisterMCDisassembler(getTheThumbBETarget(),

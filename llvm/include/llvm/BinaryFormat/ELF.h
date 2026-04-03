@@ -215,6 +215,7 @@ enum {
                          // spelling/synonym: EM_ARC_A5)
   EM_XTENSA = 94,        // Tensilica Xtensa Architecture
   EM_VIDEOCORE = 95,     // Alphamosaic VideoCore processor
+  EM_TC32 = 0x8800,      // Telink TC32
   EM_TMM_GPP = 96,       // Thompson Multimedia General Purpose Processor
   EM_NS32K = 97,         // National Semiconductor 32000 series
   EM_TPC = 98,           // Tenor Network TPC processor

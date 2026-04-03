@@ -2976,6 +2976,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void
 LLVMInitializeARMAsmPrinter() {
   RegisterAsmPrinter<ARMAsmPrinter> X(getTheARMLETarget());
   RegisterAsmPrinter<ARMAsmPrinter> Y(getTheARMBETarget());
+  RegisterAsmPrinter<ARMAsmPrinter> T(getTheTC32Target());
   RegisterAsmPrinter<ARMAsmPrinter> A(getTheThumbLETarget());
   RegisterAsmPrinter<ARMAsmPrinter> B(getTheThumbBETarget());
 }
