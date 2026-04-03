@@ -37,7 +37,7 @@ public:
   TC32IRFixupPass() : FunctionPass(ID) {}
 
   bool runOnFunction(Function &F) override {
-    if (!F.getParent()->getTargetTriple().isThumb())
+    if (!F.getParent()->getTargetTriple().isTC32())
       return false;
 
     bool Changed = false;

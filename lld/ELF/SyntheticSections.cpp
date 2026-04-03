@@ -108,7 +108,8 @@ Defined *elf::addSyntheticLocal(Ctx &ctx, StringRef name, uint8_t type,
   if (ctx.in.symTab)
     ctx.in.symTab->addSymbol(s);
 
-  if (ctx.arg.emachine == EM_ARM && !ctx.arg.isLE && ctx.arg.armBe8 &&
+  if ((ctx.arg.emachine == EM_ARM || ctx.arg.emachine == EM_TC32) &&
+      !ctx.arg.isLE && ctx.arg.armBe8 &&
       (section.flags & SHF_EXECINSTR))
     // Adding Linker generated mapping symbols to the arm specific mapping
     // symbols list.
@@ -1058,7 +1059,7 @@ bool GotPltSection::isNeeded() const {
 
 static StringRef getIgotPltName(Ctx &ctx) {
   // On ARM the IgotPltSection is part of the GotSection.
-  if (ctx.arg.emachine == EM_ARM)
+  if (ctx.arg.emachine == EM_ARM || ctx.arg.emachine == EM_TC32)
     return ".got";
 
   // On PowerPC64 the GotPltSection is renamed to '.plt' so the IgotPltSection
@@ -4489,7 +4490,7 @@ template <class ELFT> void elf::createSyntheticSections(Ctx &ctx) {
     ctx.in.ehFrame = std::make_unique<EhFrameSection>(ctx);
     add(*ctx.in.ehFrame);
 
-    if (ctx.arg.emachine == EM_ARM) {
+    if (ctx.arg.emachine == EM_ARM || ctx.arg.emachine == EM_TC32) {
       // This section replaces all the individual .ARM.exidx InputSections.
       ctx.in.armExidx = std::make_unique<ARMExidxSyntheticSection>(ctx);
       add(*ctx.in.armExidx);
