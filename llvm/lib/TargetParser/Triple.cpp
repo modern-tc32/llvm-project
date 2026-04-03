@@ -106,50 +106,28 @@ StringRef Triple::getArchTypeName(ArchType Kind) {
     return "riscv32be";
   case riscv64be:
     return "riscv64be";
-  case shave:
-    return "shave";
-  case sparc:
-    return "sparc";
-  case sparcel:
-    return "sparcel";
-  case sparcv9:
-    return "sparcv9";
-  case spir64:
-    return "spir64";
-  case spir:
-    return "spir";
-  case spirv:
-    return "spirv";
-  case spirv32:
-    return "spirv32";
-  case spirv64:
-    return "spirv64";
-  case systemz:
-    return "s390x";
-  case tce:
-    return "tce";
-  case tcele:
-    return "tcele";
-  case tcele64:
-    return "tcele64";
-  case thumb:
-    return "thumb";
-  case thumbeb:
-    return "thumbeb";
-  case ve:
-    return "ve";
-  case wasm32:
-    return "wasm32";
-  case wasm64:
-    return "wasm64";
-  case x86:
-    return "i386";
-  case x86_64:
-    return "x86_64";
-  case xcore:
-    return "xcore";
-  case xtensa:
-    return "xtensa";
+  case shave:          return "shave";
+  case sparc:          return "sparc";
+  case sparcel:        return "sparcel";
+  case sparcv9:        return "sparcv9";
+  case spir64:         return "spir64";
+  case spir:           return "spir";
+  case spirv:          return "spirv";
+  case spirv32:        return "spirv32";
+  case spirv64:        return "spirv64";
+  case systemz:        return "s390x";
+  case tce:            return "tce";
+  case tcele:          return "tcele";
+  case tc32:           return "tc32";
+  case thumb:          return "thumb";
+  case thumbeb:        return "thumbeb";
+  case ve:             return "ve";
+  case wasm32:         return "wasm32";
+  case wasm64:         return "wasm64";
+  case x86:            return "i386";
+  case x86_64:         return "x86_64";
+  case xcore:          return "xcore";
+  case xtensa:         return "xtensa";
   }
 
   llvm_unreachable("Invalid ArchType!");
@@ -321,12 +299,10 @@ StringRef Triple::getArchTypePrefix(ArchType Kind) {
   case spirv64:
     return "spv";
 
-  case kalimba:
-    return "kalimba";
-  case lanai:
-    return "lanai";
-  case shave:
-    return "shave";
+  case kalimba:     return "kalimba";
+  case lanai:       return "lanai";
+  case shave:       return "shave";
+  case tc32:        return "arm";
   case wasm32:
   case wasm64:
     return "wasm";
@@ -694,6 +670,7 @@ Triple::ArchType Triple::getArchTypeForLLVMName(StringRef Name) {
       .Case("tce", tce)
       .Case("tcele", tcele)
       .Case("tcele64", tcele64)
+      .Case("tc32", tc32)
       .Case("thumb", thumb)
       .Case("thumbeb", thumbeb)
       .Case("x86", x86)
@@ -845,6 +822,7 @@ Triple::ArchType Triple::parseArch(StringRef ArchName) {
           .Case("tce", Triple::tce)
           .Case("tcele", Triple::tcele)
           .Case("tcele64", Triple::tcele64)
+          .Case("tc32", Triple::tc32)
           .Case("xcore", Triple::xcore)
           .Case("nvptx", Triple::nvptx)
           .Case("nvptx64", Triple::nvptx64)
@@ -1183,6 +1161,7 @@ static Triple::ObjectFormatType getDefaultFormat(const Triple &T) {
   case Triple::aarch64:
   case Triple::aarch64_32:
   case Triple::arm:
+  case Triple::tc32:
   case Triple::thumb:
   case Triple::x86:
   case Triple::x86_64:
@@ -1970,6 +1949,7 @@ unsigned Triple::getArchPointerBitWidth(llvm::Triple::ArchType Arch) {
   case llvm::Triple::spirv32:
   case llvm::Triple::tce:
   case llvm::Triple::tcele:
+  case llvm::Triple::tc32:
   case llvm::Triple::thumb:
   case llvm::Triple::thumbeb:
   case llvm::Triple::wasm32:
@@ -2081,6 +2061,7 @@ Triple Triple::get32BitArchVariant() const {
   case Triple::spirv32:
   case Triple::tce:
   case Triple::tcele:
+  case Triple::tc32:
   case Triple::thumb:
   case Triple::thumbeb:
   case Triple::wasm32:
@@ -2256,18 +2237,11 @@ Triple Triple::get64BitArchVariant() const {
   case Triple::tcele:
     T.setArch(Triple::tcele64);
     break;
-  case Triple::thumb:
-    T.setArch(Triple::aarch64);
-    break;
-  case Triple::thumbeb:
-    T.setArch(Triple::aarch64_be);
-    break;
-  case Triple::wasm32:
-    T.setArch(Triple::wasm64);
-    break;
-  case Triple::x86:
-    T.setArch(Triple::x86_64);
-    break;
+  case Triple::tc32:
+  case Triple::thumb:           T.setArch(Triple::aarch64);    break;
+  case Triple::thumbeb:         T.setArch(Triple::aarch64_be); break;
+  case Triple::wasm32:          T.setArch(Triple::wasm64);     break;
+  case Triple::x86:             T.setArch(Triple::x86_64);     break;
   }
   return T;
 }
@@ -2449,6 +2423,7 @@ bool Triple::isLittleEndian() const {
   case Triple::spirv64:
   case Triple::tcele:
   case Triple::tcele64:
+  case Triple::tc32:
   case Triple::thumb:
   case Triple::ve:
   case Triple::wasm32:
@@ -2480,6 +2455,10 @@ bool Triple::isCompatibleWith(const Triple &Other) const {
 
   // ARM and Thumb triples are compatible, if subarch, vendor and OS match.
   if ((getArch() == Triple::thumb && Other.getArch() == Triple::arm) ||
+      (getArch() == Triple::tc32 && Other.getArch() == Triple::arm) ||
+      (getArch() == Triple::arm && Other.getArch() == Triple::tc32) ||
+      (getArch() == Triple::tc32 && Other.getArch() == Triple::thumb) ||
+      (getArch() == Triple::thumb && Other.getArch() == Triple::tc32) ||
       (getArch() == Triple::arm && Other.getArch() == Triple::thumb) ||
       (getArch() == Triple::thumbeb && Other.getArch() == Triple::armeb) ||
       (getArch() == Triple::armeb && Other.getArch() == Triple::thumbeb)) {

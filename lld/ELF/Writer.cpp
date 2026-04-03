@@ -449,7 +449,7 @@ static bool shouldKeepInSymtab(Ctx &ctx, const Defined &sym) {
   // sections. After merging the .ARM.exidx sections, some of these symbols
   // may become dangling. The easiest way to avoid the issue is not to add
   // them to the symbol table from the beginning.
-  if (ctx.arg.emachine == EM_ARM && sym.section &&
+  if ((ctx.arg.emachine == EM_ARM || ctx.arg.emachine == EM_TC32) && sym.section &&
       sym.section->type == SHT_ARM_EXIDX)
     return false;
 
@@ -1442,7 +1442,8 @@ template <class ELFT> void Writer<ELFT>::resolveShfLinkOrder() {
 
     // The ARM.exidx section use SHF_LINK_ORDER, but we have consolidated
     // this processing inside the ARMExidxsyntheticsection::finalizeContents().
-    if (!ctx.arg.relocatable && ctx.arg.emachine == EM_ARM &&
+    if (!ctx.arg.relocatable &&
+        (ctx.arg.emachine == EM_ARM || ctx.arg.emachine == EM_TC32) &&
         sec->type == SHT_ARM_EXIDX)
       continue;
 
@@ -2052,7 +2053,7 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
     for (Partition &part : ctx.partitions) {
       part.phdrs = ctx.script->hasPhdrsCommands() ? ctx.script->createPhdrs()
                                                   : createPhdrs(part);
-      if (ctx.arg.emachine == EM_ARM) {
+      if (ctx.arg.emachine == EM_ARM || ctx.arg.emachine == EM_TC32) {
         // PT_ARM_EXIDX is the ARM EHABI equivalent of PT_GNU_EH_FRAME
         addPhdrForSection(part, SHT_ARM_EXIDX, PT_ARM_EXIDX, PF_R);
       }
@@ -2177,7 +2178,8 @@ template <class ELFT> void Writer<ELFT>::finalizeSections() {
 
   ctx.script->checkFinalScriptConditions();
 
-  if (ctx.arg.emachine == EM_ARM && !ctx.arg.isLE && ctx.arg.armBe8) {
+  if ((ctx.arg.emachine == EM_ARM || ctx.arg.emachine == EM_TC32) &&
+      !ctx.arg.isLE && ctx.arg.armBe8) {
     addArmInputSectionMappingSymbols(ctx);
     sortArmMappingSymbols(ctx);
   }

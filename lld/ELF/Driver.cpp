@@ -371,7 +371,7 @@ static void checkOptions(Ctx &ctx) {
     ErrAlways(ctx)
         << "the .gnu.hash section is not compatible with the MIPS target";
 
-  if (ctx.arg.emachine == EM_ARM) {
+  if (ctx.arg.emachine == EM_ARM || ctx.arg.emachine == EM_TC32) {
     if (!ctx.arg.cmseImplib) {
       if (!ctx.arg.cmseInputLib.empty())
         ErrAlways(ctx) << "--in-implib may not be used without --cmse-implib";
@@ -416,6 +416,7 @@ static void checkOptions(Ctx &ctx) {
   }
 
   if (ctx.arg.emachine != EM_AARCH64 && ctx.arg.emachine != EM_ARM &&
+      ctx.arg.emachine != EM_TC32 &&
       ctx.arg.zExecuteOnlyReport != ReportPolicy::None)
     ErrAlways(ctx)
         << "-z execute-only-report only supported on AArch64 and ARM";

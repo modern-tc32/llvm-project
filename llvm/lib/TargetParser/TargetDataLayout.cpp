@@ -544,6 +544,7 @@ std::string Triple::computeDataLayout(StringRef ABIName) const {
   switch (getArch()) {
   case Triple::arm:
   case Triple::armeb:
+  case Triple::tc32:
   case Triple::thumb:
   case Triple::thumbeb:
     return computeARMDataLayout(*this, ABIName);

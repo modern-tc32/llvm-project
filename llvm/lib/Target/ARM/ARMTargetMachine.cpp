@@ -87,6 +87,7 @@ namespace llvm {
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARMTarget() {
   // Register the target.
   RegisterTargetMachine<ARMLETargetMachine> X(getTheARMLETarget());
+  RegisterTargetMachine<ARMLETargetMachine> T(getTheTC32Target());
   RegisterTargetMachine<ARMLETargetMachine> A(getTheThumbLETarget());
   RegisterTargetMachine<ARMBETargetMachine> Y(getTheARMBETarget());
   RegisterTargetMachine<ARMBETargetMachine> B(getTheThumbBETarget());
@@ -356,7 +357,7 @@ std::unique_ptr<CSEConfigBase> ARMPassConfig::getCSEConfig() const {
 
 void ARMPassConfig::addIRPasses() {
   // TC32: Fix unsupported intrinsics and inline asm before anything else
-  if (TM->getTargetTriple().isThumb())
+  if (TM->getTargetTriple().isTC32())
     addPass(createTC32IRFixupPass());
 
   if (TM->Options.ThreadModel == ThreadModel::Single)

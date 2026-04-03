@@ -29,7 +29,7 @@ class ARMELFObjectWriter : public MCELFObjectTargetWriter {
   enum { DefaultEABIVersion = 0x05000000U };
 
 public:
-  ARMELFObjectWriter(uint8_t OSABI);
+  ARMELFObjectWriter(uint8_t OSABI, bool IsTC32);
 
   ~ARMELFObjectWriter() override = default;
 
@@ -42,9 +42,9 @@ public:
 
 } // end anonymous namespace
 
-ARMELFObjectWriter::ARMELFObjectWriter(uint8_t OSABI)
+ARMELFObjectWriter::ARMELFObjectWriter(uint8_t OSABI, bool IsTC32)
   : MCELFObjectTargetWriter(/*Is64Bit*/ false, OSABI,
-                            ELF::EM_ARM,
+                            IsTC32 ? ELF::EM_TC32 : ELF::EM_ARM,
                             /*HasRelocationAddend*/ false) {}
 
 bool ARMELFObjectWriter::needsRelocateWithSymbol(const MCValue &V,
@@ -325,6 +325,6 @@ unsigned ARMELFObjectWriter::getRelocType(const MCFixup &Fixup,
 }
 
 std::unique_ptr<MCObjectTargetWriter>
-llvm::createARMELFObjectWriter(uint8_t OSABI) {
-  return std::make_unique<ARMELFObjectWriter>(OSABI);
+llvm::createARMELFObjectWriter(uint8_t OSABI, bool IsTC32) {
+  return std::make_unique<ARMELFObjectWriter>(OSABI, IsTC32);
 }
