@@ -12715,6 +12715,7 @@ bool ARMAsmParser::parseDirectiveSEHCustom(SMLoc L) {
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARMAsmParser() {
   RegisterMCAsmParser<ARMAsmParser> X(getTheARMLETarget());
   RegisterMCAsmParser<ARMAsmParser> Y(getTheARMBETarget());
+  RegisterMCAsmParser<ARMAsmParser> T(getTheTC32Target());
   RegisterMCAsmParser<ARMAsmParser> A(getTheThumbLETarget());
   RegisterMCAsmParser<ARMAsmParser> B(getTheThumbBETarget());
 }

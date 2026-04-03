@@ -566,7 +566,7 @@ void MCAsmStreamer::switchSection(MCSection *Section, uint32_t Subsection) {
     EmittedSectionDirective = true;
 
     // TC32: Track the current section and handle pending object injection
-    if (getContext().getTargetTriple().isThumb() && getContext().isELF()) {
+    if (getContext().getTargetTriple().isTC32() && getContext().isELF()) {
       auto *ElfSec = static_cast<MCSectionELF *>(Section);
       {
         StringRef SecName = ElfSec->getName();
@@ -634,7 +634,7 @@ bool MCAsmStreamer::popSection() {
   MAI->printSwitchToSection(*Sec, Subsec, getContext().getTargetTriple(), OS);
 
   // TC32: Update section tracking state to match the restored section
-  if (getContext().getTargetTriple().isThumb() && getContext().isELF()) {
+  if (getContext().getTargetTriple().isTC32() && getContext().isELF()) {
     auto *ElfSec = static_cast<MCSectionELF *>(Sec);
     {
       StringRef SecName = ElfSec->getName();
@@ -690,7 +690,7 @@ void MCAsmStreamer::emitLabel(MCSymbol *Symbol, SMLoc Loc) {
     Symbol->setOffset(0);
 
   // TC32: Flush pending object section injection before the label
-  if (getContext().getTargetTriple().isThumb() &&
+  if (getContext().getTargetTriple().isTC32() &&
       !TC32PendingObjectSymbol.empty()) {
     OS << "\t.section " << TC32LastSectionName << "."
        << TC32PendingObjectSymbol << TC32LastSectionExtra << "\n";
@@ -871,7 +871,7 @@ bool MCAsmStreamer::emitSymbolAttribute(MCSymbol *Symbol,
     EmitEOL();
 
     // TC32: Inject .section directive after .type for functions and objects
-    if (getContext().getTargetTriple().isThumb()) {
+    if (getContext().getTargetTriple().isTC32()) {
       std::string SymName = Symbol->getName().str();
       if (Attribute == MCSA_ELF_TypeFunction && !TC32SectionSeen) {
         if (TC32LastSectionName != ".ram_code") {
@@ -885,7 +885,7 @@ bool MCAsmStreamer::emitSymbolAttribute(MCSymbol *Symbol,
     return true;
   case MCSA_Global: // .globl/.global
     // TC32: Flush pending object section injection before .global
-    if (getContext().getTargetTriple().isThumb() &&
+    if (getContext().getTargetTriple().isTC32() &&
         !TC32PendingObjectSymbol.empty()) {
       std::string SecName = TC32LastSectionName;
       OS << "\t.section " << SecName << "." << TC32PendingObjectSymbol
@@ -1209,7 +1209,7 @@ void MCAsmStreamer::emitELFSize(MCSymbol *Symbol, const MCExpr *Value) {
 void MCAsmStreamer::emitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                                      Align ByteAlignment) {
   // TC32: .comm objects belong to .data — flush pending object with .data parent
-  if (getContext().getTargetTriple().isThumb() &&
+  if (getContext().getTargetTriple().isTC32() &&
       !TC32PendingObjectSymbol.empty()) {
     if (TC32LastSectionName != ".ram_code") {
       OS << "\t.section .data." << TC32PendingObjectSymbol << "\n";
@@ -1622,7 +1622,7 @@ void MCAsmStreamer::emitAlignmentDirective(uint64_t ByteAlignment,
                                            unsigned ValueSize,
                                            unsigned MaxBytesToEmit) {
   // TC32: Flush pending object section injection before .align
-  if (getContext().getTargetTriple().isThumb() &&
+  if (getContext().getTargetTriple().isTC32() &&
       !TC32PendingObjectSymbol.empty()) {
     if (TC32LastSectionName != ".ram_code") {
       OS << "\t.section " << TC32LastSectionName << "."
@@ -1649,7 +1649,7 @@ void MCAsmStreamer::emitAlignmentDirective(uint64_t ByteAlignment,
       llvm_unreachable("Invalid size for machine code value!");
     case 1:
       // TC32: Use .align instead of .p2align
-      if (getContext().getTargetTriple().isThumb())
+      if (getContext().getTargetTriple().isTC32())
         OS << "\t.align\t";
       else
         OS << "\t.p2align\t";

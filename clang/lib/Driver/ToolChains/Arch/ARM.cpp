@@ -54,7 +54,8 @@ bool arm::isARMAProfile(const llvm::Triple &Triple) {
 /// Is the triple {arm,armeb,thumb,thumbeb}-none-none-{eabi,eabihf} ?
 bool arm::isARMEABIBareMetal(const llvm::Triple &Triple) {
   auto arch = Triple.getArch();
-  if (arch != llvm::Triple::arm && arch != llvm::Triple::thumb &&
+  if (arch != llvm::Triple::arm && arch != llvm::Triple::tc32 &&
+      arch != llvm::Triple::thumb &&
       arch != llvm::Triple::armeb && arch != llvm::Triple::thumbeb)
     return false;
 
@@ -262,6 +263,11 @@ arm::ReadTPMode arm::getReadTPMode(const Driver &D, const ArgList &Args,
 
 void arm::setArchNameInTriple(const Driver &D, const ArgList &Args,
                               types::ID InputType, llvm::Triple &Triple) {
+  if (Triple.isTC32()) {
+    Triple.setArchName("tc32");
+    return;
+  }
+
   StringRef MCPU, MArch;
   if (const Arg *A = Args.getLastArg(options::OPT_mcpu_EQ))
     MCPU = A->getValue();
@@ -405,6 +411,9 @@ arm::FloatABI arm::getARMFloatABI(const ToolChain &TC, const ArgList &Args) {
 }
 
 arm::FloatABI arm::getDefaultFloatABI(const llvm::Triple &Triple) {
+  if (Triple.isTC32())
+    return FloatABI::Soft;
+
   auto SubArch = getARMSubArchVersionNumber(Triple);
   switch (Triple.getOS()) {
   case llvm::Triple::Darwin:

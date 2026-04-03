@@ -646,6 +646,7 @@ template <class ELFT> void ObjFile<ELFT>::parse(bool ignoreComdats) {
 
     switch (ctx.arg.emachine) {
     case EM_ARM:
+    case EM_TC32:
       if (sec.sh_type == SHT_ARM_ATTRIBUTES) {
         ARMAttributeParser attributes;
         ArrayRef<uint8_t> contents =
@@ -1758,6 +1759,8 @@ static uint16_t getBitcodeMachineKind(Ctx &ctx, StringRef path,
     return EM_AMDGPU;
   case Triple::arm:
   case Triple::armeb:
+  case Triple::tc32:
+    return EM_TC32;
   case Triple::thumb:
   case Triple::thumbeb:
     return EM_ARM;

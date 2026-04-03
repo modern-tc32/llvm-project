@@ -85,6 +85,7 @@ public:
     systemz,     // SystemZ: s390x
     tce,         // TCE (http://tce.cs.tut.fi/): tce
     tcele,       // TCE little endian (http://tce.cs.tut.fi/): tcele
+    tc32,        // TC32 (little endian): tc32
     thumb,       // Thumb (little endian): thumb, thumbv.*
     thumbeb,     // Thumb (big endian): thumbeb
     x86,         // X86: i[3-9]86
@@ -957,13 +958,17 @@ public:
 
   /// Tests whether the target is Thumb (little and big endian).
   bool isThumb() const {
-    return getArch() == Triple::thumb || getArch() == Triple::thumbeb;
+    return getArch() == Triple::thumb || getArch() == Triple::thumbeb ||
+           getArch() == Triple::tc32;
   }
 
   /// Tests whether the target is ARM (little and big endian).
   bool isARM() const {
     return getArch() == Triple::arm || getArch() == Triple::armeb;
   }
+
+  /// Tests whether the target is TC32.
+  bool isTC32() const { return getArch() == Triple::tc32; }
 
   /// Tests whether the target is LFI.
   bool isLFI() const {

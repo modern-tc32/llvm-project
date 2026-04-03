@@ -208,6 +208,7 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
     }
 
   case llvm::Triple::arm:
+  case llvm::Triple::tc32:
   case llvm::Triple::thumb:
     if (Triple.isOSBinFormatMachO())
       return std::make_unique<DarwinARMTargetInfo>(Triple, Opts);

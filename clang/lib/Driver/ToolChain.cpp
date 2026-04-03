@@ -367,6 +367,7 @@ ToolChain::getMultilibFlags(const llvm::opt::ArgList &Args) const {
     break;
   case llvm::Triple::arm:
   case llvm::Triple::armeb:
+  case llvm::Triple::tc32:
   case llvm::Triple::thumb:
   case llvm::Triple::thumbeb:
     getARMMultilibFlags(D, Triple, RelocationModel, Args, Result);
@@ -1210,10 +1211,13 @@ bool ToolChain::isCrossCompiling() const {
   // context.
   case llvm::Triple::arm:
   case llvm::Triple::armeb:
+  case llvm::Triple::tc32:
   case llvm::Triple::thumb:
   case llvm::Triple::thumbeb:
     return getArch() != llvm::Triple::arm && getArch() != llvm::Triple::thumb &&
-           getArch() != llvm::Triple::armeb && getArch() != llvm::Triple::thumbeb;
+           getArch() != llvm::Triple::armeb &&
+           getArch() != llvm::Triple::thumbeb &&
+           getArch() != llvm::Triple::tc32;
   default:
     return HostTriple.getArch() != getArch();
   }
@@ -1234,6 +1238,7 @@ bool ToolChain::isThreadModelSupported(const StringRef Model) const {
     // FIXME: 'single' is only supported on ARM and WebAssembly so far.
     return Triple.getArch() == llvm::Triple::arm ||
            Triple.getArch() == llvm::Triple::armeb ||
+           Triple.getArch() == llvm::Triple::tc32 ||
            Triple.getArch() == llvm::Triple::thumb ||
            Triple.getArch() == llvm::Triple::thumbeb || Triple.isWasm();
   } else if (Model == "posix")
@@ -1285,6 +1290,7 @@ std::string ToolChain::ComputeLLVMTriple(const ArgList &Args,
   }
   case llvm::Triple::arm:
   case llvm::Triple::armeb:
+  case llvm::Triple::tc32:
   case llvm::Triple::thumb:
   case llvm::Triple::thumbeb: {
     llvm::Triple Triple = getTriple();

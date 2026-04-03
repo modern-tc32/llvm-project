@@ -20,6 +20,10 @@ Target &llvm::getTheARMBETarget() {
   static Target TheARMBETarget;
   return TheARMBETarget;
 }
+Target &llvm::getTheTC32Target() {
+  static Target TheTC32Target;
+  return TheTC32Target;
+}
 Target &llvm::getTheThumbLETarget() {
   static Target TheThumbLETarget;
   return TheThumbLETarget;
@@ -35,6 +39,8 @@ LLVMInitializeARMTargetInfo() {
                                                  "ARM", "ARM");
   RegisterTarget<Triple::armeb, /*HasJIT=*/true> Y(getTheARMBETarget(), "armeb",
                                                    "ARM (big endian)", "ARM");
+  RegisterTarget<Triple::tc32, /*HasJIT=*/true> T(getTheTC32Target(), "tc32",
+                                                  "TC32", "ARM");
 
   RegisterTarget<Triple::thumb, /*HasJIT=*/true> A(getTheThumbLETarget(),
                                                    "thumb", "Thumb", "ARM");

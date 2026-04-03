@@ -17,12 +17,14 @@ namespace llvm {
 class ARMAsmBackendELF : public ARMAsmBackend {
 public:
   uint8_t OSABI;
-  ARMAsmBackendELF(const Target &T, uint8_t OSABI, llvm::endianness Endian)
-      : ARMAsmBackend(T, Endian), OSABI(OSABI) {}
+  bool IsTC32;
+  ARMAsmBackendELF(const Target &T, uint8_t OSABI, bool IsTC32,
+                   llvm::endianness Endian)
+      : ARMAsmBackend(T, Endian), OSABI(OSABI), IsTC32(IsTC32) {}
 
   std::unique_ptr<MCObjectTargetWriter>
   createObjectTargetWriter() const override {
-    return createARMELFObjectWriter(OSABI);
+    return createARMELFObjectWriter(OSABI, IsTC32);
   }
 
   std::optional<MCFixupKind> getFixupKind(StringRef Name) const override;

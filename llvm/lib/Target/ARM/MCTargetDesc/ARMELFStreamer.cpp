@@ -206,7 +206,7 @@ void ARMTargetAsmStreamer::emitTextAttribute(unsigned Attribute,
                                              StringRef String) {
   switch (Attribute) {
   case ARMBuildAttrs::CPU_name:
-    if (getStreamer().getContext().getTargetTriple().isThumb())
+    if (getStreamer().getContext().getTargetTriple().isTC32())
       OS << "@ \t.cpu\t" << String.lower();
     else
       OS << "\t.cpu\t" << String.lower();
@@ -272,7 +272,7 @@ void ARMTargetAsmStreamer::annotateTLSDescriptorSequence(
 
 void ARMTargetAsmStreamer::emitSyntaxUnified() {
   // TC32: Comment out .syntax unified — the TC32 assembler doesn't support it
-  if (Streamer.getContext().getTargetTriple().isThumb())
+  if (Streamer.getContext().getTargetTriple().isTC32())
     OS << "@ \t.syntax\tunified\n";
   else
     OS << "\t.syntax\tunified\n";
@@ -284,7 +284,7 @@ void ARMTargetAsmStreamer::emitCode32() { OS << "\t.code\t32\n"; }
 
 void ARMTargetAsmStreamer::emitThumbFunc(MCSymbol *Symbol) {
   const MCAsmInfo *MAI = Streamer.getContext().getAsmInfo();
-  if (getStreamer().getContext().getTargetTriple().isThumb())
+  if (getStreamer().getContext().getTargetTriple().isTC32())
     OS << "\t.tc32_func";
   else
     OS << "\t.thumb_func";

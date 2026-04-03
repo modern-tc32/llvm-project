@@ -1380,7 +1380,8 @@ static MCAsmBackend *createARMAsmBackend(const Target &T,
     uint8_t OSABI = Options.FDPIC
                         ? static_cast<uint8_t>(ELF::ELFOSABI_ARM_FDPIC)
                         : MCELFObjectTargetWriter::getOSABI(TheTriple.getOS());
-    return new ARMAsmBackendELF(T, OSABI, Endian);
+    return new ARMAsmBackendELF(T, OSABI, STI.getTargetTriple().isTC32(),
+                                Endian);
   }
 }
 
