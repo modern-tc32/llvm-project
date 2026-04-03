@@ -209,7 +209,8 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
     CPUString = "generic";
 
     if (isTargetDarwin()) {
-      StringRef ArchName = TargetTriple.getArchName();
+      StringRef ArchName =
+          TargetTriple.isTC32() ? StringRef("thumbv4t") : TargetTriple.getArchName();
       ARM::ArchKind AK = ARM::parseArch(ArchName);
       if (AK == ARM::ArchKind::ARMV7S)
         // Default to the Swift CPU when targeting armv7s/thumbv7s.
@@ -295,7 +296,8 @@ void ARMSubtarget::initSubtargetFeatures(StringRef CPU, StringRef FS) {
       (isTargetDarwin() || DM == DenormalMode::getPreserveSign()))
     HasNEONForFP = true;
 
-  const ARM::ArchKind Arch = ARM::parseArch(TargetTriple.getArchName());
+  const ARM::ArchKind Arch = ARM::parseArch(
+      TargetTriple.isTC32() ? StringRef("thumbv4t") : TargetTriple.getArchName());
   if (isRWPI() ||
       (isTargetIOS() &&
        (Arch == ARM::ArchKind::ARMV6K || Arch == ARM::ArchKind::ARMV6) &&

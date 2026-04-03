@@ -75,7 +75,7 @@ void MCAsmInfoELF::printSwitchToSection(const MCSection &Section,
                                         uint32_t Subsection, const Triple &T,
                                         raw_ostream &OS) const {
   auto &Sec = static_cast<const MCSectionELF &>(Section);
-  bool IsTC32 = T.isThumb();
+  bool IsTC32 = T.isTC32();
   StringRef SecName = Sec.getName();
 
   // TC32: Comment out all section directives except .ram_code and .note
@@ -147,7 +147,7 @@ void MCAsmInfoELF::printSwitchToSection(const MCSection &Section,
       OS << 'c';
     if (Sec.Flags & ELF::XCORE_SHF_DP_SECTION)
       OS << 'd';
-  } else if (T.isARM() || T.isThumb()) {
+  } else if (T.isARM() || T.isThumb() || T.isTC32()) {
     if (Sec.Flags & ELF::SHF_ARM_PURECODE)
       OS << 'y';
   } else if (T.isAArch64()) {

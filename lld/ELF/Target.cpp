@@ -60,6 +60,7 @@ void elf::setTarget(Ctx &ctx) {
   case EM_AMDGPU:
     return setAMDGPUTargetInfo(ctx);
   case EM_ARM:
+  case EM_TC32:
     return setARMTargetInfo(ctx);
   case EM_AVR:
     return setAVRTargetInfo(ctx);

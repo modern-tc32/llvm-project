@@ -96,7 +96,8 @@ MCStreamer *createARMWinCOFFStreamer(MCContext &Context,
                                      std::unique_ptr<MCCodeEmitter> &&Emitter);
 
 /// Construct an ELF Mach-O object writer.
-std::unique_ptr<MCObjectTargetWriter> createARMELFObjectWriter(uint8_t OSABI);
+std::unique_ptr<MCObjectTargetWriter> createARMELFObjectWriter(uint8_t OSABI,
+                                                               bool IsTC32);
 
 /// Construct an ARM Mach-O object writer.
 std::unique_ptr<MCObjectTargetWriter>

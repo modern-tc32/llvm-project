@@ -71,11 +71,15 @@ void ARMTargetInfo::setABIAPCS(bool IsAAPCS16) {
 }
 
 void ARMTargetInfo::setArchInfo() {
-  StringRef ArchName = getTriple().getArchName();
+  StringRef ArchName = getTriple().isTC32() ? StringRef("thumbv4t")
+                                            : getTriple().getArchName();
 
-  ArchISA = llvm::ARM::parseArchISA(ArchName);
+  ArchISA = getTriple().isTC32() ? llvm::ARM::ISAKind::THUMB
+                                 : llvm::ARM::parseArchISA(ArchName);
   CPU = std::string(llvm::ARM::getDefaultCPU(ArchName));
-  llvm::ARM::ArchKind AK = llvm::ARM::parseArch(ArchName);
+  llvm::ARM::ArchKind AK = getTriple().isTC32()
+                               ? llvm::ARM::ArchKind::ARMV4T
+                               : llvm::ARM::parseArch(ArchName);
   if (AK != llvm::ARM::ArchKind::INVALID)
     ArchKind = AK;
   setArchInfo(ArchKind);
@@ -355,7 +359,8 @@ bool ARMTargetInfo::setABI(const std::string &Name) {
 bool ARMTargetInfo::isBranchProtectionSupportedArch(StringRef Arch) const {
   llvm::ARM::ArchKind CPUArch = llvm::ARM::parseCPUArch(Arch);
   if (CPUArch == llvm::ARM::ArchKind::INVALID)
-    CPUArch = llvm::ARM::parseArch(getTriple().getArchName());
+    CPUArch = getTriple().isTC32() ? llvm::ARM::ArchKind::ARMV4T
+                                   : llvm::ARM::parseArch(getTriple().getArchName());
 
   if (CPUArch == llvm::ARM::ArchKind::INVALID)
     return false;
@@ -404,7 +409,9 @@ bool ARMTargetInfo::initFeatureMap(
 
   std::string ArchFeature;
   std::vector<StringRef> TargetFeatures;
-  llvm::ARM::ArchKind Arch = llvm::ARM::parseArch(getTriple().getArchName());
+  llvm::ARM::ArchKind Arch = getTriple().isTC32()
+                                 ? llvm::ARM::ArchKind::ARMV4T
+                                 : llvm::ARM::parseArch(getTriple().getArchName());
 
   // Map the base architecture to an appropriate target feature, so we don't
   // rely on the target triple.
