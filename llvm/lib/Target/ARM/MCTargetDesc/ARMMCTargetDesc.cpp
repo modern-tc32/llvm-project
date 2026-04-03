@@ -142,7 +142,8 @@ static bool getARMLoadDeprecationInfo(MCInst &MI, const MCSubtargetInfo &STI,
 std::string ARM_MC::ParseARMTriple(const Triple &TT, StringRef CPU) {
   std::string ARMArchFeature;
 
-  ARM::ArchKind ArchID = ARM::parseArch(TT.getArchName());
+  ARM::ArchKind ArchID =
+      TT.isTC32() ? ARM::ArchKind::ARMV4T : ARM::parseArch(TT.getArchName());
   if (ArchID != ARM::ArchKind::INVALID &&  (CPU.empty() || CPU == "generic"))
     ARMArchFeature = (ARMArchFeature + "+" + ARM::getArchName(ArchID)).str();
 
@@ -357,7 +358,8 @@ static MCStreamer *createELFStreamer(const Triple &T, MCContext &Ctx,
                                      std::unique_ptr<MCCodeEmitter> &&Emitter) {
   return createARMELFStreamer(
       Ctx, std::move(MAB), std::move(OW), std::move(Emitter),
-      (T.getArch() == Triple::thumb || T.getArch() == Triple::thumbeb),
+      (T.getArch() == Triple::thumb || T.getArch() == Triple::thumbeb ||
+       T.isTC32()),
       T.isAndroid());
 }
 
@@ -767,7 +769,8 @@ bool ARM::isCDECoproc(size_t Coproc, const MCSubtargetInfo &STI) {
 // Force static initialization.
 extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARMTargetMC() {
   for (Target *T : {&getTheARMLETarget(), &getTheARMBETarget(),
-                    &getTheThumbLETarget(), &getTheThumbBETarget()}) {
+                    &getTheTC32Target(), &getTheThumbLETarget(),
+                    &getTheThumbBETarget()}) {
     // Register the MC asm info.
     RegisterMCAsmInfoFn X(*T, createARMMCAsmInfo);
 
@@ -804,10 +807,12 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARMTargetMC() {
 
   // Register the MC instruction analyzer.
   for (Target *T : {&getTheARMLETarget(), &getTheARMBETarget(),
-                    &getTheThumbLETarget(), &getTheThumbBETarget()})
+                    &getTheTC32Target(), &getTheThumbLETarget(),
+                    &getTheThumbBETarget()})
     TargetRegistry::RegisterMCInstrAnalysis(*T, createARMMCInstrAnalysis);
 
-  for (Target *T : {&getTheARMLETarget(), &getTheThumbLETarget()}) {
+  for (Target *T : {&getTheARMLETarget(), &getTheTC32Target(),
+                    &getTheThumbLETarget()}) {
     TargetRegistry::RegisterMCCodeEmitter(*T, createARMLEMCCodeEmitter);
     TargetRegistry::RegisterMCAsmBackend(*T, createARMLEAsmBackend);
   }

@@ -302,7 +302,7 @@ static unsigned parseSectionFlags(const Triple &TT, StringRef flagsStr,
       flags |= ELF::XCORE_SHF_DP_SECTION;
       break;
     case 'y':
-      if (TT.isARM() || TT.isThumb())
+      if (TT.isARM() || TT.isThumb() || TT.isTC32())
         flags |= ELF::SHF_ARM_PURECODE;
       else if (TT.isAArch64())
         flags |= ELF::SHF_AARCH64_PURECODE;

@@ -15,6 +15,7 @@ class Target;
 
 Target &getTheARMLETarget();
 Target &getTheARMBETarget();
+Target &getTheTC32Target();
 Target &getTheThumbLETarget();
 Target &getTheThumbBETarget();
 

@@ -88,7 +88,7 @@ void ARMInstPrinter::printRegName(raw_ostream &OS, MCRegister Reg) {
 void ARMInstPrinter::printInst(const MCInst *MI, uint64_t Address,
                                StringRef Annot, const MCSubtargetInfo &STI,
                                raw_ostream &O) {
-  if (!STI.getTargetTriple().isThumb()) {
+  if (!STI.getTargetTriple().isTC32()) {
     printInstInner(MI, Address, Annot, STI, O);
     return;
   }
