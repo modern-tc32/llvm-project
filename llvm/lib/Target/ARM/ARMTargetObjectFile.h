@@ -19,6 +19,7 @@ class ARMElfTargetObjectFile : public TargetLoweringObjectFileELF {
 public:
   ARMElfTargetObjectFile();
   void Initialize(MCContext &Ctx, const TargetMachine &TM) override;
+  unsigned getTextSectionAlignment() const override;
 
   MCRegister getStaticBase() const override;
 
