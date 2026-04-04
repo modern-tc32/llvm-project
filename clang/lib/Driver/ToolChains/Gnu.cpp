@@ -31,6 +31,7 @@
 #include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/TargetParser/RISCVISAInfo.h"
 #include "llvm/TargetParser/TargetParser.h"
+#include <optional>
 #include <system_error>
 
 using namespace clang::driver;
@@ -40,6 +41,16 @@ using namespace llvm::opt;
 
 using tools::addMultilibFlag;
 using tools::addPathIfExists;
+
+static std::optional<std::string> getTC32VendorBinPath(const Driver &D) {
+  SmallString<256> Path(D.Dir);
+  llvm::sys::path::remove_filename(Path);
+  llvm::sys::path::remove_filename(Path);
+  llvm::sys::path::append(Path, "tc32-vendor", "bin");
+  if (D.getVFS().exists(Path))
+    return std::string(Path);
+  return std::nullopt;
+}
 
 static bool forwardToGCC(const Option &O) {
   // LinkerInput options have been forwarded. Don't duplicate.
@@ -603,6 +614,8 @@ void tools::gnutools::Assembler::ConstructJob(Compilation &C,
   unsigned PICLevel;
   bool IsPIE;
   const char *DefaultAssembler = "as";
+  if (getToolChain().getTriple().getArch() == llvm::Triple::tc32)
+    DefaultAssembler = "tc32-elf-as";
   // Enforce GNU as on Solaris; the native assembler's input syntax isn't fully
   // compatible.
   if (getToolChain().getTriple().isOSSolaris())
@@ -3029,6 +3042,10 @@ Generic_GCC::Generic_GCC(const Driver &D, const llvm::Triple &Triple,
       CudaInstallation(D, Triple, Args), RocmInstallation(D, Triple, Args),
       SYCLInstallation(D, Triple, Args) {
   getProgramPaths().push_back(getDriver().Dir);
+  if (Triple.getArch() == llvm::Triple::tc32) {
+    if (std::optional<std::string> VendorBin = getTC32VendorBinPath(D))
+      getProgramPaths().push_back(*VendorBin);
+  }
 }
 
 Generic_GCC::~Generic_GCC() {}
@@ -3106,6 +3123,7 @@ bool Generic_GCC::IsIntegratedAssemblerDefault() const {
   switch (getTriple().getArch()) {
   case llvm::Triple::nvptx:
   case llvm::Triple::nvptx64:
+  case llvm::Triple::tc32:
   case llvm::Triple::xcore:
     return false;
   default:
