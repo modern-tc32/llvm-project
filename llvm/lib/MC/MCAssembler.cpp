@@ -24,8 +24,10 @@
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCSFrame.h"
 #include "llvm/MC/MCSection.h"
+#include "llvm/MC/MCSectionELF.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCValue.h"
+#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
@@ -373,7 +375,18 @@ const MCSymbol *MCAssembler::getBaseSymbol(const MCSymbol &Symbol) const {
 uint64_t MCAssembler::getSectionAddressSize(const MCSection &Sec) const {
   const MCFragment &F = *Sec.curFragList()->Tail;
   assert(HasLayout && F.getKind() == MCFragment::FT_Data);
-  return getFragmentOffset(F) + F.getSize();
+  uint64_t Size = getFragmentOffset(F) + F.getSize();
+
+  if (!getContext().getTargetTriple().isTC32())
+    return Size;
+
+  auto *ELFSec = static_cast<const MCSectionELF *>(&Sec);
+
+  const unsigned Flags = ELFSec->getFlags();
+  if (!(Flags & ELF::SHF_ALLOC) || (Flags & ELF::SHF_EXECINSTR))
+    return Size;
+
+  return alignTo(Size, ELFSec->getAlign());
 }
 
 uint64_t MCAssembler::getSectionFileSize(const MCSection &Sec) const {
@@ -646,8 +659,9 @@ void MCAssembler::writeSectionData(raw_ostream &OS,
   uint64_t Start = OS.tell();
   (void)Start;
 
-  for (const MCFragment &F : *Sec)
+  for (const MCFragment &F : *Sec) {
     writeFragment(OS, *this, F);
+  }
 
   flushPendingErrors();
   assert(getContext().hadError() ||

@@ -61,10 +61,13 @@ const ARMBaseTargetMachine &ARMAsmPrinter::getTM() const {
 void ARMAsmPrinter::emitFunctionBodyEnd() {
   // Make sure to terminate any constant pools that were at the end
   // of the function.
-  if (!InConstantPool)
-    return;
-  InConstantPool = false;
-  OutStreamer->emitDataRegion(MCDR_DataRegionEnd);
+  if (InConstantPool) {
+    InConstantPool = false;
+    OutStreamer->emitDataRegion(MCDR_DataRegionEnd);
+  }
+
+  if (TM.getTargetTriple().isTC32())
+    emitAlignment(Align(4));
 }
 
 void ARMAsmPrinter::emitFunctionEntryLabel() {
