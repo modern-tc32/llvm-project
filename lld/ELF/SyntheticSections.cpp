@@ -54,6 +54,10 @@ using llvm::support::endian::read32le;
 using llvm::support::endian::write32le;
 using llvm::support::endian::write64le;
 
+static StringRef getExidxSectionName(Ctx &ctx) {
+  return ctx.arg.emachine == EM_TC32 ? ".TC32.exidx" : ".ARM.exidx";
+}
+
 static uint64_t readUint(Ctx &ctx, uint8_t *buf) {
   return ctx.arg.is64 ? read64(ctx, buf) : read32(ctx, buf);
 }
@@ -3857,7 +3861,7 @@ void elf::combineEhSections(Ctx &ctx) {
 }
 
 ARMExidxSyntheticSection::ARMExidxSyntheticSection(Ctx &ctx)
-    : SyntheticSection(ctx, ".ARM.exidx", SHT_ARM_EXIDX,
+    : SyntheticSection(ctx, getExidxSectionName(ctx), SHT_ARM_EXIDX,
                        SHF_ALLOC | SHF_LINK_ORDER, ctx.arg.wordsize) {}
 
 static InputSection *findExidxSection(InputSection *isec) {

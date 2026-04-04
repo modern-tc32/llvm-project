@@ -11,7 +11,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "ARMMCAsmInfo.h"
+#include "llvm/BinaryFormat/ELF.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCSectionELF.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -71,12 +74,15 @@ ARMMCAsmInfoDarwin::ARMMCAsmInfoDarwin(const Triple &TheTriple) {
 void ARMELFMCAsmInfo::anchor() { }
 
 ARMELFMCAsmInfo::ARMELFMCAsmInfo(const Triple &TheTriple) {
+  IsTC32Triple = TheTriple.isTC32();
   if ((TheTriple.getArch() == Triple::armeb) ||
       (TheTriple.getArch() == Triple::thumbeb))
     IsLittleEndian = false;
 
   if (TheTriple.isTC32())
     GlobalDirective = "\t.global\t";
+  if (TheTriple.isTC32())
+    HasSingleParameterDotFile = true;
 
   // ".comm align is in bytes but .align is pow-2."
   AlignmentIsInBytes = false;
@@ -90,19 +96,32 @@ ARMELFMCAsmInfo::ARMELFMCAsmInfo(const Triple &TheTriple) {
   MaxInstLength = 6;
 
   // Exceptions handling
-  switch (TheTriple.getOS()) {
-  case Triple::NetBSD:
-    ExceptionsType = ExceptionHandling::DwarfCFI;
-    break;
-  default:
-    ExceptionsType = ExceptionHandling::ARM;
-    break;
+  if (TheTriple.isTC32()) {
+    ExceptionsType = ExceptionHandling::None;
+  } else {
+    switch (TheTriple.getOS()) {
+    case Triple::NetBSD:
+      ExceptionsType = ExceptionHandling::DwarfCFI;
+      break;
+    default:
+      ExceptionsType = ExceptionHandling::ARM;
+      break;
+    }
   }
 
   initializeAtSpecifiers(atSpecifiers);
   // foo(plt) instead of foo@plt
   UseAtForSpecifier = false;
   UseParensForSpecifier = true;
+}
+
+MCSection *ARMELFMCAsmInfo::getStackSection(MCContext &Ctx, bool Exec) const {
+  if (IsTC32Triple && !useIntegratedAssembler())
+    return nullptr;
+  if (Ctx.getTargetTriple().isOSSolaris())
+    return nullptr;
+  return Ctx.getELFSection(".note.GNU-stack", ELF::SHT_PROGBITS,
+                           Exec ? ELF::SHF_EXECINSTR : 0U);
 }
 
 void ARMELFMCAsmInfo::setUseIntegratedAssembler(bool Value) {
@@ -113,6 +132,12 @@ void ARMELFMCAsmInfo::setUseIntegratedAssembler(bool Value) {
     // See https://sourceware.org/bugzilla/show_bug.cgi?id=16694
     DwarfRegNumForCFI = true;
   }
+
+  if (Value || !IsTC32Triple)
+    return;
+
+  SupportsDebugInformation = false;
+  HasIdentDirective = false;
 }
 
 void ARMCOFFMCAsmInfoMicrosoft::anchor() { }

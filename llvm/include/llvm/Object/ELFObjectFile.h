@@ -413,6 +413,9 @@ protected:
     case ELF::EM_ARM:
       Type = ELF::SHT_ARM_ATTRIBUTES;
       break;
+    case ELF::EM_TC32:
+      Type = ELF::SHT_ARM_ATTRIBUTES;
+      break;
     case ELF::EM_AARCH64:
       Type = ELF::SHT_AARCH64_ATTRIBUTES;
       break;
