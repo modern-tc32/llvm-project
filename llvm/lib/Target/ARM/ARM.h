@@ -59,7 +59,6 @@ FunctionPass *createARMIndirectThunks();
 Pass *createMVELaneInterleavingPass();
 FunctionPass *createARMFixCortexA57AES1742098Pass();
 FunctionPass *createTC32IRFixupPass();
-FunctionPass *createTC32PackedByteLoadStorePass();
 
 void LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
                                   ARMAsmPrinter &AP);
@@ -84,7 +83,6 @@ void initializeMVEVPTBlockPass(PassRegistry &);
 void initializeThumb2ITBlockPass(PassRegistry &);
 void initializeThumb2SizeReducePass(PassRegistry &);
 void initializeTC32IRFixupPassPass(PassRegistry &);
-void initializeTC32PackedByteLoadStorePassPass(PassRegistry &);
 
 class ARMPreAllocLoadStoreOptPass
     : public PassInfoMixin<ARMPreAllocLoadStoreOptPass> {
