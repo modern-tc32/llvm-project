@@ -118,6 +118,9 @@ ARM::ARM(Ctx &ctx) : TargetInfo(ctx) {
 }
 
 uint32_t ARM::calcEFlags() const {
+  if (ctx.arg.emachine == EM_TC32)
+    return 0;
+
   // The ABIFloatType is used by loaders to detect the floating point calling
   // convention.
   uint32_t abiFloatType = 0;
@@ -575,6 +578,18 @@ uint32_t ARM::getThunkSectionSpacing() const {
 }
 
 bool ARM::inBranchRange(RelType type, uint64_t src, uint64_t dst) const {
+  if (ctx.arg.emachine == EM_TC32) {
+    int64_t offset = llvm::SignExtend64<32>(dst - src);
+    switch (type) {
+    case R_ARM_THM_JUMP11:
+      return llvm::isInt<12>(offset - 4);
+    case R_ARM_THM_CALL:
+      return llvm::isInt<23>(offset - 4);
+    default:
+      return true;
+    }
+  }
+
   if ((dst & 0x1) == 0)
     // Destination is ARM, if ARM caller then Src is already 4-byte aligned.
     // If Thumb Caller (BLX) the Src address has bottom 2 bits cleared to ensure
@@ -795,6 +810,14 @@ void ARM::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
                 ((val >> 1) & 0x07ff)); // imm11
     break;
   case R_ARM_THM_CALL: {
+    if (ctx.arg.emachine == EM_TC32) {
+      checkInt(ctx, loc, val - 4, 23, rel);
+      uint32_t encImm = static_cast<uint32_t>((val - 4) >> 1) & 0x003fffff;
+      write16(ctx, loc, 0x9000 | ((encImm >> 11) & 0x07ff));
+      write16(ctx, loc + 2, 0x9800 | (encImm & 0x07ff));
+      break;
+    }
+
     // R_ARM_THM_CALL is used for BL and BLX instructions, for symbols of type
     // STT_FUNC we choose whether to write a BL or BLX depending on the
     // value of bit 0 of Val. With bit 0 == 0 denoting ARM, if the symbol is
@@ -1031,6 +1054,12 @@ int64_t ARM::getImplicitAddend(const uint8_t *buf, RelType type) const {
                             ((lo & 0x07ff) << 1));  // imm11:0
   }
   case R_ARM_THM_CALL:
+    if (ctx.arg.emachine == EM_TC32) {
+      uint16_t hi = read16(ctx, buf);
+      uint16_t lo = read16(ctx, buf + 2);
+      uint32_t encImm = ((hi & 0x07ff) << 11) | (lo & 0x07ff);
+      return (SignExtend64<22>(encImm) << 1) + 4;
+    }
     if (!ctx.arg.armJ1J2BranchEncoding) {
       // Older Arm architectures do not support R_ARM_THM_JUMP24 and have
       // different encoding rules and range due to J1 and J2 always being 1.
