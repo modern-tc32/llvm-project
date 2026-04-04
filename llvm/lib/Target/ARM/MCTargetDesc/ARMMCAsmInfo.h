@@ -44,10 +44,12 @@ public:
 
 class ARMELFMCAsmInfo : public MCAsmInfoELF {
   void anchor() override;
+  bool IsTC32Triple = false;
 
 public:
   explicit ARMELFMCAsmInfo(const Triple &TT, const MCTargetOptions &Options);
 
+  MCSection *getStackSection(MCContext &Ctx, bool Exec) const override;
   void setUseIntegratedAssembler(bool Value) override;
   void printSpecifierExpr(raw_ostream &OS,
                           const MCSpecifierExpr &Expr) const override {

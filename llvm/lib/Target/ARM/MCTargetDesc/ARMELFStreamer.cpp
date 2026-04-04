@@ -63,6 +63,18 @@ static std::string GetAEABIUnwindPersonalityName(unsigned Index) {
   return (Twine("__aeabi_unwind_cpp_pr") + Twine(Index)).str();
 }
 
+static StringRef GetAttributeSectionName(const Triple &TT) {
+  return TT.isTC32() ? ".TC32.attributes" : ".ARM.attributes";
+}
+
+static StringRef GetExidxSectionPrefix(const Triple &TT) {
+  return TT.isTC32() ? ".TC32.exidx" : ".ARM.exidx";
+}
+
+static StringRef GetExtabSectionPrefix(const Triple &TT) {
+  return TT.isTC32() ? ".TC32.extab" : ".ARM.extab";
+}
+
 namespace {
 
 class ARMELFStreamer;
@@ -192,6 +204,8 @@ void ARMTargetAsmStreamer::emitRegSave(
 void ARMTargetAsmStreamer::switchVendor(StringRef Vendor) {}
 
 void ARMTargetAsmStreamer::emitAttribute(unsigned Attribute, unsigned Value) {
+  if (getStreamer().getContext().getTargetTriple().isTC32())
+    return;
   OS << "\t.eabi_attribute\t" << Attribute << ", " << Twine(Value);
   if (IsVerboseAsm) {
     StringRef Name = ELFAttrs::attrTypeAsString(
@@ -204,6 +218,8 @@ void ARMTargetAsmStreamer::emitAttribute(unsigned Attribute, unsigned Value) {
 
 void ARMTargetAsmStreamer::emitTextAttribute(unsigned Attribute,
                                              StringRef String) {
+  if (getStreamer().getContext().getTargetTriple().isTC32())
+    return;
   switch (Attribute) {
   case ARMBuildAttrs::CPU_name:
     if (getStreamer().getContext().getTargetTriple().isTC32())
@@ -232,6 +248,8 @@ void ARMTargetAsmStreamer::emitTextAttribute(unsigned Attribute,
 void ARMTargetAsmStreamer::emitIntTextAttribute(unsigned Attribute,
                                                 unsigned IntValue,
                                                 StringRef StringValue) {
+  if (getStreamer().getContext().getTargetTriple().isTC32())
+    return;
   switch (Attribute) {
   default: llvm_unreachable("unsupported multi-value attribute in asm mode");
   case ARMBuildAttrs::compatibility:
@@ -470,7 +488,9 @@ private:
 
 public:
   ARMTargetELFStreamer(MCStreamer &S)
-    : ARMTargetStreamer(S), CurrentVendor("aeabi") {}
+    : ARMTargetStreamer(S),
+      CurrentVendor(S.getContext().getTargetTriple().isTC32() ? "tc32"
+                                                              : "aeabi") {}
 };
 
 /// Extend the generic ELFStreamer class so that it can emit mapping symbols at
@@ -813,7 +833,7 @@ void ARMTargetELFStreamer::switchVendor(StringRef Vendor) {
     finishAttributeSection();
 
   assert(getStreamer().Contents.empty() &&
-         ".ARM.attributes should be flushed before changing vendor");
+         "attributes section should be flushed before changing vendor");
   CurrentVendor = Vendor;
 
 }
@@ -1104,7 +1124,8 @@ void ARMTargetELFStreamer::finishAttributeSection() {
   };
   llvm::sort(S.Contents, LessTag);
 
-  S.emitAttributesSection(CurrentVendor, ".ARM.attributes",
+  S.emitAttributesSection(CurrentVendor,
+                          GetAttributeSectionName(getContext().getTargetTriple()),
                           ELF::SHT_ARM_ATTRIBUTES, AttributeSection);
 
   FPU = ARM::FK_INVALID;
@@ -1206,7 +1227,7 @@ inline void ARMELFStreamer::SwitchToEHSection(StringRef Prefix,
     EHSecName += FnSecName;
   }
 
-  // Get .ARM.extab or .ARM.exidx section
+  // Get the target unwind section (.ARM.* or .TC32.*).
   const MCSymbolELF *Group = FnSection.getGroup();
   if (Group)
     Flags |= ELF::SHF_GROUP;
@@ -1217,18 +1238,20 @@ inline void ARMELFStreamer::SwitchToEHSection(StringRef Prefix,
 
   assert(EHSection && "Failed to get the required EH section");
 
-  // Switch to .ARM.extab or .ARM.exidx section
+  // Switch to the target unwind section (.ARM.* or .TC32.*).
   switchSection(EHSection);
   emitValueToAlignment(Align(4), 0, 1, 0);
 }
 
 inline void ARMELFStreamer::SwitchToExTabSection(const MCSymbol &FnStart) {
-  SwitchToEHSection(".ARM.extab", ELF::SHT_PROGBITS, ELF::SHF_ALLOC,
+  SwitchToEHSection(GetExtabSectionPrefix(getContext().getTargetTriple()),
+                    ELF::SHT_PROGBITS, ELF::SHF_ALLOC,
                     SectionKind::getData(), FnStart);
 }
 
 inline void ARMELFStreamer::SwitchToExIdxSection(const MCSymbol &FnStart) {
-  SwitchToEHSection(".ARM.exidx", ELF::SHT_ARM_EXIDX,
+  SwitchToEHSection(GetExidxSectionPrefix(getContext().getTargetTriple()),
+                    ELF::SHT_ARM_EXIDX,
                     ELF::SHF_ALLOC | ELF::SHF_LINK_ORDER,
                     SectionKind::getData(), FnStart);
 }
@@ -1281,7 +1304,7 @@ void ARMELFStreamer::emitFnEnd() {
   if (CantUnwind) {
     emitInt32(ARM::EHABI::EXIDX_CANTUNWIND);
   } else if (ExTab) {
-    // Emit a reference to the unwind opcodes in the ".ARM.extab" section.
+    // Emit a reference to the unwind opcodes in the target extab section.
     const MCSymbolRefExpr *ExTabEntryRef =
         MCSymbolRefExpr::create(ExTab, ARM::S_PREL31, getContext());
     emitValue(ExTabEntryRef, 4);
@@ -1340,16 +1363,16 @@ void ARMELFStreamer::FlushUnwindOpcodes(bool NoHandlerData) {
   // Finalize the unwind opcode sequence
   UnwindOpAsm.Finalize(PersonalityIndex, Opcodes);
 
-  // For compact model 0, we have to emit the unwind opcodes in the .ARM.exidx
-  // section.  Thus, we don't have to create an entry in the .ARM.extab
+  // For compact model 0, we have to emit the unwind opcodes in the exidx
+  // section. Thus, we don't have to create an entry in the extab
   // section.
   if (NoHandlerData && PersonalityIndex == ARM::EHABI::AEABI_UNWIND_CPP_PR0)
     return;
 
-  // Switch to .ARM.extab section.
+  // Switch to the target extab section.
   SwitchToExTabSection(*FnStart);
 
-  // Create .ARM.extab label for offset in .ARM.exidx
+  // Create an extab label for offset in the target exidx section.
   assert(!ExTab);
   ExTab = getContext().createTempSymbol();
   emitLabel(ExTab);

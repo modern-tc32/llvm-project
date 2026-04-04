@@ -178,7 +178,7 @@ static bool isV8M(const MCSubtargetInfo &STI) {
 /// Emit the build attributes that only depend on the hardware that we expect
 // /to be available, and not on the ABI, or any source-language choices.
 void ARMTargetStreamer::emitTargetAttributes(const MCSubtargetInfo &STI) {
-  switchVendor("aeabi");
+  switchVendor(STI.getTargetTriple().isTC32() ? "tc32" : "aeabi");
 
   const StringRef CPUString = STI.getCPU();
   if (!CPUString.empty() && !CPUString.starts_with("generic")) {
