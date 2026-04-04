@@ -626,7 +626,9 @@ bool AsmPrinter::doInitialization(Module &M) {
     OutStreamer->addBlankLine();
   }
 
-  if (MAI.doesSupportDebugInformation()) {
+  bool SuppressTC32TextDebug =
+      TM.getTargetTriple().isTC32() && OutStreamer->hasRawTextSupport();
+  if (MAI.doesSupportDebugInformation() && !SuppressTC32TextDebug) {
     bool EmitCodeView = M.getCodeViewFlag();
     // On Windows targets, emit minimal CodeView compiler info even when debug
     // info is disabled.
@@ -3152,7 +3154,9 @@ bool AsmPrinter::doFinalization(Module &M) {
   Function *InitTrampolineIntrinsic = M.getFunction("llvm.init.trampoline");
   bool HasTrampolineUses =
       InitTrampolineIntrinsic && !InitTrampolineIntrinsic->use_empty();
-  MCSection *S = MAI.getStackSection(OutContext, /*Exec=*/HasTrampolineUses);
+  MCSection *S = nullptr;
+  if (!(TM.getTargetTriple().isTC32() && OutStreamer->hasRawTextSupport()))
+    S = MAI.getStackSection(OutContext, /*Exec=*/HasTrampolineUses);
   if (S)
     OutStreamer->switchSection(S);
 
@@ -3769,6 +3773,8 @@ void AsmPrinter::emitXXStructorList(const DataLayout &DL, const Constant *List,
 
 void AsmPrinter::emitModuleIdents(Module &M) {
   if (!MAI.hasIdentDirective())
+    return;
+  if (TM.getTargetTriple().isTC32() && OutStreamer->hasRawTextSupport())
     return;
 
   if (const NamedMDNode *NMD = M.getNamedMetadata("llvm.ident")) {
