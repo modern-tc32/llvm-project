@@ -110,6 +110,7 @@ StringRef LinkerScript::getOutputSectionName(const InputSectionBase *s) const {
                       ".lrodata",     ".lbss",       ".gcc_except_table",
                       ".init_array",  ".fini_array", ".tbss",
                       ".tdata",       ".ARM.exidx",  ".ARM.extab",
+                      ".TC32.exidx",  ".TC32.extab",
                       ".ctors",       ".dtors",      ".sbss",
                       ".sdata",       ".srodata"})
     if (isSectionPrefix(v, s->name))

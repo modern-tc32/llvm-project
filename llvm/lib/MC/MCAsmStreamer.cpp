@@ -2727,11 +2727,15 @@ void MCAsmStreamer::emitRelocDirective(const MCExpr &Offset, StringRef Name,
 }
 
 void MCAsmStreamer::emitAddrsig() {
+  if (getContext().getTargetTriple().isTC32())
+    return;
   OS << "\t.addrsig";
   EmitEOL();
 }
 
 void MCAsmStreamer::emitAddrsigSym(const MCSymbol *Sym) {
+  if (getContext().getTargetTriple().isTC32())
+    return;
   OS << "\t.addrsig_sym ";
   Sym->print(OS, MAI);
   EmitEOL();

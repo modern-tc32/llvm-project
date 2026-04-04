@@ -45,6 +45,10 @@ using namespace lld;
 using namespace lld::elf;
 
 namespace {
+static StringRef getExidxSectionName(Ctx &ctx) {
+  return ctx.arg.emachine == EM_TC32 ? ".TC32.exidx" : ".ARM.exidx";
+}
+
 // The writer writes a SymbolTable result to a file.
 template <class ELFT> class Writer {
 public:
@@ -2258,9 +2262,9 @@ template <class ELFT> void Writer<ELFT>::addStartEndSymbols() {
   define("__init_array_start", "__init_array_end", ctx.out.initArray);
   define("__fini_array_start", "__fini_array_end", ctx.out.finiArray);
 
-  // As a special case, don't unnecessarily retain .ARM.exidx, which would
+  // As a special case, don't unnecessarily retain the exidx section, which
   // create an empty PT_ARM_EXIDX.
-  if (OutputSection *sec = findSection(ctx, ".ARM.exidx"))
+  if (OutputSection *sec = findSection(ctx, getExidxSectionName(ctx)))
     define("__exidx_start", "__exidx_end", sec);
 }
 
