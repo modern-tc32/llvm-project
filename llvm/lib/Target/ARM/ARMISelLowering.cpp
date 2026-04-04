@@ -19122,6 +19122,18 @@ bool ARMTargetLowering::allowsMisalignedMemoryAccesses(EVT VT, unsigned,
   if (!VT.isSimple())
     return false;
 
+  if (Subtarget->getTargetTriple().isTC32()) {
+    auto Ty = VT.getSimpleVT().SimpleTy;
+    if (Ty == MVT::i8) {
+      if (Fast)
+        *Fast = 1;
+      return true;
+    }
+    if ((Ty == MVT::i16 && Alignment < Align(2)) ||
+        (Ty == MVT::i32 && Alignment < Align(4)))
+      return false;
+  }
+
   // The AllowsUnaligned flag models the SCTLR.A setting in ARM cpus
   bool AllowsUnaligned = Subtarget->allowsUnalignedMem();
   auto Ty = VT.getSimpleVT().SimpleTy;
