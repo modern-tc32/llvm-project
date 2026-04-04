@@ -636,7 +636,7 @@ void ARMAsmPrinter::emitEndOfAsmFile(Module &M) {
 // Helper routines for emitStartOfAsmFile() and emitEndOfAsmFile()
 // FIXME:
 // The following seem like one-off assembler flags, but they actually need
-// to appear in the .ARM.attributes section in ELF.
+// to appear in the target attributes section in ELF.
 // Instead of subclassing the MCELFStreamer, we do the work here.
 
 // Returns true if all function definitions have the same function attribute
@@ -676,17 +676,18 @@ static bool checkDenormalAttributeInconsistency(const Module &M) {
 void ARMAsmPrinter::emitAttributes() {
   MCTargetStreamer &TS = *OutStreamer->getTargetStreamer();
   ARMTargetStreamer &ATS = static_cast<ARMTargetStreamer &>(TS);
+  const Triple &TT = TM.getTargetTriple();
 
-  ATS.emitTextAttribute(ARMBuildAttrs::conformance, "2.09");
+  if (!TT.isTC32())
+    ATS.emitTextAttribute(ARMBuildAttrs::conformance, "2.09");
 
-  ATS.switchVendor("aeabi");
+  ATS.switchVendor(TT.isTC32() ? "tc32" : "aeabi");
 
   // Compute ARM ELF Attributes based on the default subtarget that
   // we'd have constructed. The existing ARM behavior isn't LTO clean
   // anyhow.
   // FIXME: For ifunc related functions we could iterate over and look
   // for a feature string that doesn't match the default one.
-  const Triple &TT = TM.getTargetTriple();
   StringRef CPU = TM.getTargetCPU();
   StringRef FS = TM.getTargetFeatureString();
   std::string ArchFS = ARM_MC::ParseARMTriple(TT, CPU);
