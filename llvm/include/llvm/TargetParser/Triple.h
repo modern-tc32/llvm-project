@@ -979,7 +979,7 @@ public:
   /// Tests whether the target supports the EHABI exception
   /// handling standard.
   bool isTargetEHABICompatible() const {
-    return (isARM() || isThumb()) &&
+    return !isTC32() && (isARM() || isThumb()) &&
            (getEnvironment() == Triple::EABI ||
             getEnvironment() == Triple::GNUEABI ||
             getEnvironment() == Triple::GNUEABIT64 ||
