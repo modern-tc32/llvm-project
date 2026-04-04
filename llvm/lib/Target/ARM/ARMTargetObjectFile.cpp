@@ -60,6 +60,10 @@ void ARMElfTargetObjectFile::Initialize(MCContext &Ctx,
   }
 }
 
+unsigned ARMElfTargetObjectFile::getTextSectionAlignment() const {
+  return getContext().getTargetTriple().isTC32() ? 2 : 4;
+}
+
 MCRegister ARMElfTargetObjectFile::getStaticBase() const { return ARM::R9; }
 
 const MCExpr *ARMElfTargetObjectFile::getIndirectSymViaGOTPCRel(

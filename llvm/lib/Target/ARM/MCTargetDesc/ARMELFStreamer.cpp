@@ -540,7 +540,8 @@ public:
   }
 
   void changeSection(MCSection *Section, uint32_t Subsection) override {
-    LastMappingSymbols[getCurrentSection().first] = std::move(LastEMSInfo);
+    if (MCSection *Current = getCurrentSection().first)
+      LastMappingSymbols[Current] = std::move(LastEMSInfo);
     MCELFStreamer::changeSection(Section, Subsection);
     auto LastMappingSymbol = LastMappingSymbols.find(Section);
     if (LastMappingSymbol != LastMappingSymbols.end()) {
