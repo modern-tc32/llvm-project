@@ -119,7 +119,6 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARMTarget() {
   initializeARMFixCortexA57AES1742098Pass(Registry);
   initializeARMDAGToDAGISelLegacyPass(Registry);
   initializeMachineKCFILegacyPass(Registry);
-  initializeTC32PackedByteLoadStorePassPass(Registry);
 }
 
 static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
@@ -412,10 +411,8 @@ std::unique_ptr<CSEConfigBase> ARMPassConfig::getCSEConfig() const {
 
 void ARMPassConfig::addIRPasses() {
   // TC32: Fix unsupported intrinsics and inline asm before anything else
-  if (TM->getTargetTriple().isTC32()) {
+  if (TM->getTargetTriple().isTC32())
     addPass(createTC32IRFixupPass());
-    addPass(createTC32PackedByteLoadStorePass());
-  }
 
   if (TM->Options.ThreadModel == ThreadModel::Single)
     addPass(createLowerAtomicPass());
