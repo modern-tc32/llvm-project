@@ -423,6 +423,7 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCAssembler &Asm,
                                          const MCSubtargetInfo* STI) const {
   unsigned Kind = Fixup.getKind();
   int64_t Addend = Target.getConstant();
+  bool IsTC32 = STI && STI->getTargetTriple().isTC32();
 
   // For MOVW/MOVT Instructions, the fixup value must already be within a
   // signed 16bit range.
@@ -445,6 +446,61 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCAssembler &Asm,
            Kind == ARM::fixup_arm_movt_hi16 ||
            Kind == ARM::fixup_t2_movw_lo16 || Kind == ARM::fixup_t2_movt_hi16))
         Value |= 1;
+    }
+  }
+
+  if (IsTC32) {
+    switch (Kind) {
+    case ARM::fixup_arm_thumb_cp:
+      if ((Value & 3) != 0 || Value < 4 || Value > 1024) {
+        Ctx.reportError(Fixup.getLoc(), "invalid TC32 literal load target");
+        return 0;
+      }
+      return ((Value - 4) >> 2) & 0xff;
+    case ARM::fixup_arm_thumb_bcc: {
+      if ((Value & 1) != 0) {
+        Ctx.reportError(Fixup.getLoc(), "unaligned TC32 conditional branch");
+        return 0;
+      }
+      int64_t Enc = (static_cast<int64_t>(Value) - 4) >> 1;
+      if (!isInt<8>(Enc)) {
+        Ctx.reportError(Fixup.getLoc(), "TC32 conditional branch out of range");
+        return 0;
+      }
+      return static_cast<uint8_t>(Enc);
+    }
+    case ARM::fixup_arm_thumb_br: {
+      if ((Value & 1) != 0) {
+        Ctx.reportError(Fixup.getLoc(), "unaligned TC32 jump");
+        return 0;
+      }
+      int64_t Enc = (static_cast<int64_t>(Value) - 4) >> 1;
+      if (!isInt<11>(Enc)) {
+        Ctx.reportError(Fixup.getLoc(), "TC32 jump out of range");
+        return 0;
+      }
+      return static_cast<uint16_t>(Enc) & 0x07ffu;
+    }
+    case ARM::fixup_arm_thumb_bl: {
+      if (!IsResolved)
+        return 0;
+      if ((Value & 1) != 0) {
+        Ctx.reportError(Fixup.getLoc(), "unaligned TC32 call");
+        return 0;
+      }
+      int64_t Enc = (static_cast<int64_t>(Value) - 4) >> 1;
+      if (!isInt<22>(Enc)) {
+        Ctx.reportError(Fixup.getLoc(), "TC32 call out of range");
+        return 0;
+      }
+      uint32_t EncImm = static_cast<uint32_t>(Enc) & 0x3FFFFFu;
+      uint32_t FirstHalf = 0x9000u | ((EncImm >> 11) & 0x7FFu);
+      uint32_t SecondHalf = 0x9800u | (EncImm & 0x7FFu);
+      return joinHalfWords(FirstHalf, SecondHalf,
+                           Endian == llvm::endianness::little);
+    }
+    default:
+      break;
     }
   }
 
@@ -1113,6 +1169,10 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
   if (!Value)
     return; // Doesn't change encoding.
   const unsigned NumBytes = getFixupKindNumBytes(Kind);
+  const bool IsResolvedTC32Call =
+      IsResolved && Kind == ARM::fixup_arm_thumb_bl &&
+      getSubtargetInfo(F) &&
+      getSubtargetInfo(F)->getTargetTriple().isTC32();
 
   assert(Fixup.getOffset() + NumBytes <= F.getSize() &&
          "Invalid fixup offset!");
@@ -1132,7 +1192,11 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
   for (unsigned i = 0; i != NumBytes; ++i) {
     unsigned Idx =
         Endian == llvm::endianness::little ? i : (FullSizeBytes - 1 - i);
-    Data[Idx] |= uint8_t((Value >> (i * 8)) & 0xff);
+    uint8_t Byte = uint8_t((Value >> (i * 8)) & 0xff);
+    if (IsResolvedTC32Call)
+      Data[Idx] = Byte;
+    else
+      Data[Idx] |= Byte;
   }
 }
 

@@ -35,6 +35,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 
 using namespace llvm;
 
@@ -49,6 +50,574 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
   const MCInstrInfo &MCII;
   MCContext &CTX;
   bool IsLittleEndian;
+
+  unsigned getTC32RegEncoding(MCRegister Reg) const {
+    return CTX.getRegisterInfo()->getEncodingValue(Reg);
+  }
+
+  static void checkTC32Encoding(bool Cond, const char *Msg) {
+    if (!Cond)
+      report_fatal_error(Twine("invalid TC32 instruction encoding: ") + Msg);
+  }
+
+  static void addTC32Fixup(SmallVectorImpl<MCFixup> &Fixups, unsigned Offset,
+                           const MCExpr *Expr, MCFixupKind Kind) {
+    Fixups.push_back(MCFixup::create(Offset, Expr, Kind, true));
+  }
+
+  uint16_t encodeTC32MOVrr(const MCInst &MI, unsigned SrcIdx) const {
+    unsigned Dst = getTC32RegEncoding(MI.getOperand(0).getReg());
+    unsigned Src = getTC32RegEncoding(MI.getOperand(SrcIdx).getReg());
+
+    if (Dst < 8 && Src < 8)
+      return static_cast<uint16_t>(0xEC00u | ((Src << 3) | Dst));
+
+    uint16_t Lo = 0;
+    if (Dst & 0x8)
+      Lo |= 0x80;
+    if (Src & 0x8)
+      Lo |= 0x40;
+    Lo |= static_cast<uint16_t>((Src & 0x7) << 3);
+    Lo |= static_cast<uint16_t>(Dst & 0x7);
+    return static_cast<uint16_t>(0x0600u | Lo);
+  }
+
+  uint16_t encodeTC32MOVi8(const MCInst &MI, unsigned ImmIdx) const {
+    unsigned Dst = getTC32RegEncoding(MI.getOperand(0).getReg());
+    int64_t Imm = MI.getOperand(ImmIdx).getImm();
+    checkTC32Encoding(Dst < 8, "tmov immediate requires low destination");
+    checkTC32Encoding(Imm >= 0 && Imm <= 255, "tmov immediate out of range");
+    return static_cast<uint16_t>(((0xA0u + Dst) << 8) |
+                                 static_cast<uint16_t>(Imm));
+  }
+
+  uint16_t encodeTC32CMPi8(const MCInst &MI, unsigned SrcIdx) const {
+    unsigned Src = getTC32RegEncoding(MI.getOperand(SrcIdx).getReg());
+    int64_t Imm = MI.getOperand(SrcIdx + 1).getImm();
+    checkTC32Encoding(Src < 8, "tcmp immediate requires low register");
+    checkTC32Encoding(Imm >= 0 && Imm <= 255, "tcmp immediate out of range");
+    return static_cast<uint16_t>(((0xA8u + Src) << 8) |
+                                 static_cast<uint16_t>(Imm));
+  }
+
+  uint16_t encodeTC32CMPr(const MCInst &MI, unsigned SrcIdx) const {
+    unsigned LHS = getTC32RegEncoding(MI.getOperand(SrcIdx).getReg());
+    unsigned RHS = getTC32RegEncoding(MI.getOperand(SrcIdx + 1).getReg());
+    checkTC32Encoding(LHS < 8 && RHS < 8, "tcmp register requires low regs");
+    return static_cast<uint16_t>(0x0280u | (RHS << 3) | LHS);
+  }
+
+  uint16_t encodeTC32ADDrrr(MCRegister DstReg, MCRegister SrcReg,
+                            MCRegister RhsReg) const {
+    unsigned Dst = getTC32RegEncoding(DstReg);
+    unsigned Src = getTC32RegEncoding(SrcReg);
+    unsigned RHS = getTC32RegEncoding(RhsReg);
+    checkTC32Encoding(Dst < 8 && Src < 8 && RHS < 8,
+                      "tadd register requires low regs");
+    unsigned Enc = Dst | (Src << 3) | (RHS << 6);
+    return static_cast<uint16_t>(((0xE8u + (Enc >> 8)) << 8) |
+                                 static_cast<uint16_t>(Enc & 0xFF));
+  }
+
+  uint16_t encodeTC32ADDri(MCRegister DstReg, MCRegister SrcReg,
+                           int64_t Imm) const {
+    unsigned Dst = getTC32RegEncoding(DstReg);
+    unsigned Src = getTC32RegEncoding(SrcReg);
+    checkTC32Encoding(Dst < 8 && Src < 8, "tadd immediate requires low regs");
+    checkTC32Encoding(Imm >= 0, "negative tadd immediate");
+    if (Dst == Src) {
+      checkTC32Encoding(Imm <= 255, "same-register tadd immediate too large");
+      return static_cast<uint16_t>(((0xB0u + Dst) << 8) |
+                                   static_cast<uint16_t>(Imm));
+    }
+    checkTC32Encoding(Imm <= 7, "three-operand tadd immediate too large");
+    uint16_t Lo = static_cast<uint16_t>((Src << 3) | Dst | ((Imm & 0x3) << 6));
+    uint16_t Hi = static_cast<uint16_t>(0xECu + (Imm >> 2));
+    return static_cast<uint16_t>((Hi << 8) | Lo);
+  }
+
+  uint16_t encodeTC32SUBrrr(MCRegister DstReg, MCRegister SrcReg,
+                            MCRegister RhsReg) const {
+    unsigned Dst = getTC32RegEncoding(DstReg);
+    unsigned Src = getTC32RegEncoding(SrcReg);
+    unsigned RHS = getTC32RegEncoding(RhsReg);
+    checkTC32Encoding(Dst < 8 && Src < 8 && RHS < 8,
+                      "tsub register requires low regs");
+    unsigned Enc = Dst | (Src << 3) | (RHS << 6);
+    return static_cast<uint16_t>(((0xEAu + (Enc >> 8)) << 8) |
+                                 static_cast<uint16_t>(Enc & 0xFF));
+  }
+
+  uint16_t encodeTC32SUBri(MCRegister DstReg, MCRegister SrcReg,
+                           int64_t Imm) const {
+    unsigned Dst = getTC32RegEncoding(DstReg);
+    unsigned Src = getTC32RegEncoding(SrcReg);
+    checkTC32Encoding(Dst < 8 && Src < 8, "tsub immediate requires low regs");
+    if (Dst == Src) {
+      checkTC32Encoding(Imm >= 0 && Imm <= 255,
+                        "same-register tsub immediate out of range");
+      return static_cast<uint16_t>(((0xB8u + Dst) << 8) |
+                                   static_cast<uint16_t>(Imm));
+    }
+    checkTC32Encoding(Imm >= 0 && Imm <= 7,
+                      "three-operand tsub immediate out of range");
+    unsigned Enc = Dst | (Src << 3) | (static_cast<unsigned>(Imm) << 6);
+    return static_cast<uint16_t>(((0xEEu + (Enc >> 8)) << 8) |
+                                 static_cast<uint16_t>(Enc & 0xFF));
+  }
+
+  uint16_t encodeTC32Logic2Addr(const MCInst &MI, unsigned UseIdx,
+                                uint16_t Base) const {
+    unsigned Dst = getTC32RegEncoding(MI.getOperand(0).getReg());
+    unsigned RHS = getTC32RegEncoding(MI.getOperand(UseIdx + 1).getReg());
+    if (!(Dst < 8 && RHS < 8))
+      report_fatal_error(Twine("invalid TC32 logic op ")
+                         + MCII.getName(MI.getOpcode()) + ": dst="
+                         + Twine(Dst) + " rhs=" + Twine(RHS)
+                         + " numdefs=" + Twine(UseIdx));
+    return static_cast<uint16_t>(Base | (RHS << 3) | Dst);
+  }
+
+  uint16_t encodeTC32UnaryLogic(const MCInst &MI, unsigned UseIdx,
+                                uint16_t Base) const {
+    unsigned Dst = getTC32RegEncoding(MI.getOperand(0).getReg());
+    unsigned Src = getTC32RegEncoding(MI.getOperand(UseIdx).getReg());
+    checkTC32Encoding(Dst < 8 && Src < 8, "unary logic op requires low regs");
+    return static_cast<uint16_t>(Base | (Src << 3) | Dst);
+  }
+
+  uint16_t encodeTC32FirstUse2Addr(const MCInst &MI, unsigned UseIdx,
+                                   uint16_t Base) const {
+    unsigned Dst = getTC32RegEncoding(MI.getOperand(0).getReg());
+    unsigned Src = getTC32RegEncoding(MI.getOperand(UseIdx).getReg());
+    checkTC32Encoding(Dst < 8 && Src < 8, "two-address op requires low regs");
+    return static_cast<uint16_t>(Base | (Src << 3) | Dst);
+  }
+
+  uint16_t encodeTC32ShiftImm(MCRegister DstReg, MCRegister SrcReg, int64_t Imm,
+                              uint16_t Base, bool Allow32 = false) const {
+    unsigned Dst = getTC32RegEncoding(DstReg);
+    unsigned Src = getTC32RegEncoding(SrcReg);
+    if (!(Dst < 8 && Src < 8))
+      report_fatal_error(Twine("invalid TC32 shift op: dst=") + Twine(Dst) +
+                         " src=" + Twine(Src) + " imm=" + Twine(Imm));
+    if (!(Imm >= 0 && Imm <= (Allow32 ? 32 : 31)))
+      report_fatal_error(Twine("invalid TC32 shift immediate: ") + Twine(Imm));
+    unsigned EncImm = (Imm == 32) ? 0 : static_cast<unsigned>(Imm);
+    return static_cast<uint16_t>(Base |
+                                 ((static_cast<uint16_t>(EncImm) >> 2) << 8) |
+                                 ((static_cast<uint16_t>(EncImm) & 0x3) << 6) |
+                                 (Src << 3) | Dst);
+  }
+
+  uint16_t encodeTC32LoadStoreImmWord(const MCInst &MI, unsigned UseIdx,
+                                      bool IsLoad,
+                                      bool IsSP) const {
+    unsigned Reg = getTC32RegEncoding(MI.getOperand(0).getReg());
+    unsigned BaseIdx = UseIdx + (IsLoad ? 0 : 1);
+    int64_t ImmUnits = MI.getOperand(BaseIdx + 1).getImm();
+    checkTC32Encoding(Reg < 8, "word immediate load/store requires low reg");
+    checkTC32Encoding(ImmUnits >= 0, "negative word load/store immediate");
+    unsigned Imm = static_cast<unsigned>(ImmUnits) << 2;
+    if (IsSP) {
+      checkTC32Encoding(Imm <= 1020, "stack word load/store immediate too large");
+      return static_cast<uint16_t>((((IsLoad ? 0x38u : 0x30u) + Reg) << 8) |
+                                   static_cast<uint16_t>(Imm >> 2));
+    }
+
+    unsigned Base = getTC32RegEncoding(MI.getOperand(BaseIdx).getReg());
+    checkTC32Encoding(Base < 8, "word immediate load/store requires low base");
+    checkTC32Encoding(Imm <= 124, "word load/store immediate too large");
+    return static_cast<uint16_t>((IsLoad ? 0x5800u : 0x5000u) |
+                                 ((Imm >> 2) << 6) | (Base << 3) | Reg);
+  }
+
+  uint16_t encodeTC32LoadStoreImmByte(const MCInst &MI, unsigned UseIdx,
+                                      bool IsLoad) const {
+    unsigned Reg = getTC32RegEncoding(MI.getOperand(0).getReg());
+    unsigned BaseIdx = UseIdx + (IsLoad ? 0 : 1);
+    unsigned Base = getTC32RegEncoding(MI.getOperand(BaseIdx).getReg());
+    int64_t Imm = MI.getOperand(BaseIdx + 1).getImm();
+    checkTC32Encoding(Reg < 8 && Base < 8, "byte immediate load/store requires low regs");
+    checkTC32Encoding(Imm >= 0 && Imm <= 31, "byte immediate out of range");
+    return static_cast<uint16_t>((IsLoad ? 0x4800u : 0x4000u) |
+                                 (static_cast<unsigned>(Imm) << 6) |
+                                 (Base << 3) | Reg);
+  }
+
+  uint16_t encodeTC32LoadStoreImmHalf(const MCInst &MI, unsigned UseIdx,
+                                      bool IsLoad) const {
+    unsigned Reg = getTC32RegEncoding(MI.getOperand(0).getReg());
+    unsigned BaseIdx = UseIdx + (IsLoad ? 0 : 1);
+    unsigned Base = getTC32RegEncoding(MI.getOperand(BaseIdx).getReg());
+    int64_t ImmUnits = MI.getOperand(BaseIdx + 1).getImm();
+    checkTC32Encoding(Reg < 8 && Base < 8, "half immediate load/store requires low regs");
+    checkTC32Encoding(ImmUnits >= 0, "negative half immediate");
+    unsigned Imm = static_cast<unsigned>(ImmUnits) << 1;
+    checkTC32Encoding(Imm <= 62, "half immediate out of range");
+    return static_cast<uint16_t>((IsLoad ? 0x2800u : 0x2000u) |
+                                 ((Imm >> 1) << 6) | (Base << 3) | Reg);
+  }
+
+  uint16_t encodeTC32LoadStoreReg(const MCInst &MI, unsigned UseIdx,
+                                  uint16_t BaseBits, bool IsLoad = true) const {
+    unsigned Reg = getTC32RegEncoding(MI.getOperand(0).getReg());
+    unsigned BaseIdx = UseIdx + (IsLoad ? 0 : 1);
+    unsigned Base = getTC32RegEncoding(MI.getOperand(BaseIdx).getReg());
+    unsigned Off = getTC32RegEncoding(MI.getOperand(BaseIdx + 1).getReg());
+    checkTC32Encoding(Reg < 8 && Base < 8 && Off < 8,
+                      "register-offset load/store requires low regs");
+    return static_cast<uint16_t>(BaseBits | (Off << 6) | (Base << 3) | Reg);
+  }
+
+  uint16_t encodeTC32AddSubSP(const MCInst &MI, unsigned UseIdx,
+                              bool IsAdd) const {
+    int64_t ImmWords = MI.getOperand(UseIdx + 1).getImm();
+    checkTC32Encoding(ImmWords >= 0 && ImmWords <= 127,
+                      "sp add/sub immediate out of range");
+    return static_cast<uint16_t>(0x6000u | (IsAdd ? 0 : 0x0080u) |
+                                 static_cast<uint16_t>(ImmWords));
+  }
+
+  uint16_t encodeTC32AddFromSP(const MCInst &MI, unsigned UseIdx) const {
+    unsigned Dst = getTC32RegEncoding(MI.getOperand(0).getReg());
+    int64_t ImmWords = MI.getOperand(UseIdx + 1).getImm();
+    checkTC32Encoding(Dst < 8, "tadd dst, sp requires low destination");
+    checkTC32Encoding(ImmWords >= 0 && ImmWords <= 63,
+                      "tadd dst, sp immediate out of range");
+    return static_cast<uint16_t>(((0x78u + Dst) << 8) |
+                                 static_cast<uint16_t>(ImmWords));
+  }
+
+  uint16_t encodeTC32PushPop(const MCInst &MI, bool IsPop) const {
+    uint16_t Mask = 0;
+    bool Special = false;
+    for (unsigned I = 2, E = MI.getNumOperands(); I < E; ++I) {
+      const MCOperand &Op = MI.getOperand(I);
+      if (!Op.isReg())
+        continue;
+      unsigned Reg = Op.getReg().id();
+      if (Reg >= ARM::R0 && Reg <= ARM::R7) {
+        Mask |= static_cast<uint16_t>(1u << (Reg - ARM::R0));
+        continue;
+      }
+      if (!IsPop && Reg == ARM::LR) {
+        Special = true;
+        continue;
+      }
+      if (IsPop && Reg == ARM::PC) {
+        Special = true;
+        continue;
+      }
+      checkTC32Encoding(false, "unsupported register in tpush/tpop");
+    }
+
+    return static_cast<uint16_t>((IsPop ? (Special ? 0x6D00u : 0x6C00u)
+                                        : (Special ? 0x6500u : 0x6400u)) |
+                                 Mask);
+  }
+
+  uint16_t encodeTC32LoadStoreMultiple(const MCInst &MI, unsigned NumDefs,
+                                       bool IsLoad) const {
+    std::optional<unsigned> Base;
+    uint16_t Mask = 0;
+    for (unsigned I = NumDefs, E = MI.getNumOperands(); I < E; ++I) {
+      const MCOperand &Op = MI.getOperand(I);
+      if (!Op.isReg())
+        continue;
+      if (Op.getReg() == ARM::NoRegister)
+        continue;
+      unsigned Reg = getTC32RegEncoding(Op.getReg());
+      if (Reg >= 8)
+        continue;
+      if (!Base) {
+        Base = Reg;
+        continue;
+      }
+      Mask |= static_cast<uint16_t>(1u << Reg);
+    }
+    checkTC32Encoding(Base.has_value(), "multiple load/store missing base");
+    return static_cast<uint16_t>((IsLoad ? 0xD800u : 0xD000u) |
+                                 (*Base << 8) | Mask);
+  }
+
+  uint16_t encodeTC32Branch(const MCInst &MI, SmallVectorImpl<MCFixup> &Fixups,
+                            ARMCC::CondCodes CC) const {
+    uint16_t Bits;
+    switch (CC) {
+    case ARMCC::EQ: Bits = 0xC000; break;
+    case ARMCC::NE: Bits = 0xC100; break;
+    case ARMCC::HS: Bits = 0xC200; break;
+    case ARMCC::LO: Bits = 0xC300; break;
+    case ARMCC::MI: Bits = 0xC400; break;
+    case ARMCC::PL: Bits = 0xC500; break;
+    case ARMCC::VS: Bits = 0xC600; break;
+    case ARMCC::VC: Bits = 0xC700; break;
+    case ARMCC::HI: Bits = 0xC800; break;
+    case ARMCC::LS: Bits = 0xC900; break;
+    case ARMCC::GE: Bits = 0xCA00; break;
+    case ARMCC::LT: Bits = 0xCB00; break;
+    case ARMCC::GT: Bits = 0xCC00; break;
+    case ARMCC::LE: Bits = 0xCD00; break;
+    default:
+      report_fatal_error("unsupported TC32 conditional branch");
+    }
+
+    const MCOperand &Target = MI.getOperand(0);
+    if (Target.isExpr()) {
+      addTC32Fixup(Fixups, 0, Target.getExpr(), ARM::fixup_arm_thumb_bcc);
+      return Bits;
+    }
+
+    int64_t Imm = Target.getImm();
+    checkTC32Encoding((Imm & 1) == 0, "branch target must be 2-byte aligned");
+    int64_t Enc = ((Imm - 4) >> 1);
+    checkTC32Encoding(isInt<8>(Enc), "conditional branch out of range");
+    return static_cast<uint16_t>(Bits | (static_cast<uint16_t>(Enc) & 0xFFu));
+  }
+
+  uint16_t encodeTC32Jump(const MCInst &MI, SmallVectorImpl<MCFixup> &Fixups) const {
+    const MCOperand &Target = MI.getOperand(0);
+    if (Target.isExpr()) {
+      addTC32Fixup(Fixups, 0, Target.getExpr(), ARM::fixup_arm_thumb_br);
+      return 0x8000u;
+    }
+
+    int64_t Imm = Target.getImm();
+    checkTC32Encoding((Imm & 1) == 0, "jump target must be 2-byte aligned");
+    int64_t Enc = ((Imm - 4) >> 1);
+    checkTC32Encoding(isInt<11>(Enc), "jump out of range");
+    return static_cast<uint16_t>(0x8000u |
+                                 (static_cast<uint16_t>(Enc) & 0x07FFu));
+  }
+
+  bool encodeTC32Instruction(const MCInst &MI, SmallVectorImpl<char> &CB,
+                             SmallVectorImpl<MCFixup> &Fixups,
+                             const MCSubtargetInfo &STI) const {
+    (void)STI;
+    const MCInstrDesc &Desc = MCII.get(MI.getOpcode());
+    uint16_t Bits16 = 0;
+    uint32_t Bits32 = 0;
+    unsigned Size = 2;
+
+    switch (MI.getOpcode()) {
+    case ARM::tMOVr:
+      Bits16 = encodeTC32MOVrr(MI, Desc.getNumDefs());
+      break;
+    case ARM::tMOVi8:
+      Bits16 = encodeTC32MOVi8(MI, Desc.getNumDefs());
+      break;
+    case ARM::tMOVSr:
+      Bits16 = encodeTC32MOVrr(MI, Desc.getNumDefs());
+      break;
+    case ARM::tCMPi8:
+      Bits16 = encodeTC32CMPi8(MI, Desc.getNumDefs());
+      break;
+    case ARM::tCMPr:
+      Bits16 = encodeTC32CMPr(MI, Desc.getNumDefs());
+      break;
+    case ARM::tADDrr:
+      Bits16 = encodeTC32ADDrrr(MI.getOperand(0).getReg(),
+                                MI.getOperand(Desc.getNumDefs()).getReg(),
+                                MI.getOperand(Desc.getNumDefs() + 1).getReg());
+      break;
+    case ARM::tADDi3:
+    case ARM::tADDi8:
+      Bits16 = encodeTC32ADDri(MI.getOperand(0).getReg(),
+                               MI.getOperand(Desc.getNumDefs()).getReg(),
+                               MI.getOperand(Desc.getNumDefs() + 1).getImm());
+      break;
+    case ARM::tSUBrr:
+      Bits16 = encodeTC32SUBrrr(MI.getOperand(0).getReg(),
+                                MI.getOperand(Desc.getNumDefs()).getReg(),
+                                MI.getOperand(Desc.getNumDefs() + 1).getReg());
+      break;
+    case ARM::tSUBi3:
+    case ARM::tSUBi8:
+      Bits16 = encodeTC32SUBri(MI.getOperand(0).getReg(),
+                               MI.getOperand(Desc.getNumDefs()).getReg(),
+                               MI.getOperand(Desc.getNumDefs() + 1).getImm());
+      break;
+    case ARM::tAND:
+      Bits16 = encodeTC32Logic2Addr(MI, Desc.getNumDefs(), 0x0000u);
+      break;
+    case ARM::tEOR:
+      Bits16 = encodeTC32Logic2Addr(MI, Desc.getNumDefs(), 0x0040u);
+      break;
+    case ARM::tADC:
+      Bits16 = encodeTC32Logic2Addr(MI, Desc.getNumDefs(), 0x0140u);
+      break;
+    case ARM::tSBC:
+      Bits16 = encodeTC32Logic2Addr(MI, Desc.getNumDefs(), 0x0180u);
+      break;
+    case ARM::tORR:
+      Bits16 = encodeTC32Logic2Addr(MI, Desc.getNumDefs(), 0x0300u);
+      break;
+    case ARM::tBIC:
+      Bits16 = encodeTC32Logic2Addr(MI, Desc.getNumDefs(), 0x0380u);
+      break;
+    case ARM::tMUL:
+      Bits16 = encodeTC32FirstUse2Addr(MI, Desc.getNumDefs(), 0x0340u);
+      break;
+    case ARM::tMVN:
+      Bits16 = encodeTC32UnaryLogic(MI, Desc.getNumDefs(), 0x03C0u);
+      break;
+    case ARM::tLSLri:
+      Bits16 = encodeTC32ShiftImm(MI.getOperand(0).getReg(),
+                                  MI.getOperand(Desc.getNumDefs()).getReg(),
+                                  MI.getOperand(Desc.getNumDefs() + 1).getImm(),
+                                  0xF000u);
+      break;
+    case ARM::tLSRri:
+      Bits16 = encodeTC32ShiftImm(MI.getOperand(0).getReg(),
+                                  MI.getOperand(Desc.getNumDefs()).getReg(),
+                                  MI.getOperand(Desc.getNumDefs() + 1).getImm(),
+                                  0xF800u, true);
+      break;
+    case ARM::tASRri:
+      Bits16 = encodeTC32ShiftImm(MI.getOperand(0).getReg(),
+                                  MI.getOperand(Desc.getNumDefs()).getReg(),
+                                  MI.getOperand(Desc.getNumDefs() + 1).getImm(),
+                                  0xE000u, true);
+      break;
+    case ARM::tLSLrr:
+      Bits16 = encodeTC32Logic2Addr(MI, Desc.getNumDefs(), 0x0080u);
+      break;
+    case ARM::tLSRrr:
+      Bits16 = encodeTC32Logic2Addr(MI, Desc.getNumDefs(), 0x00C0u);
+      break;
+    case ARM::tASRrr:
+      Bits16 = encodeTC32Logic2Addr(MI, Desc.getNumDefs(), 0x0100u);
+      break;
+    case ARM::tLDRpci: {
+      unsigned Dst = getTC32RegEncoding(MI.getOperand(0).getReg());
+      checkTC32Encoding(Dst < 8, "literal load requires low destination");
+      const MCOperand &Target = MI.getOperand(Desc.getNumDefs());
+      Bits16 = static_cast<uint16_t>(((0x08u + Dst) << 8));
+      if (Target.isExpr()) {
+        addTC32Fixup(Fixups, 0, Target.getExpr(), ARM::fixup_arm_thumb_cp);
+      } else {
+        int64_t Imm = Target.getImm();
+        checkTC32Encoding((Imm & 3) == 0 && Imm >= 0 && Imm <= 1020,
+                          "literal load immediate out of range");
+        Bits16 |= static_cast<uint16_t>(Imm >> 2);
+      }
+      break;
+    }
+    case ARM::tLDRi:
+      Bits16 = encodeTC32LoadStoreImmWord(MI, Desc.getNumDefs(), true, false);
+      break;
+    case ARM::tSTRi:
+      Bits16 = encodeTC32LoadStoreImmWord(MI, Desc.getNumDefs(), false, false);
+      break;
+    case ARM::tLDRspi:
+      Bits16 = encodeTC32LoadStoreImmWord(MI, Desc.getNumDefs(), true, true);
+      break;
+    case ARM::tSTRspi:
+      Bits16 = encodeTC32LoadStoreImmWord(MI, Desc.getNumDefs(), false, true);
+      break;
+    case ARM::tLDRBi:
+      Bits16 = encodeTC32LoadStoreImmByte(MI, Desc.getNumDefs(), true);
+      break;
+    case ARM::tSTRBi:
+      Bits16 = encodeTC32LoadStoreImmByte(MI, Desc.getNumDefs(), false);
+      break;
+    case ARM::tLDRHi:
+      Bits16 = encodeTC32LoadStoreImmHalf(MI, Desc.getNumDefs(), true);
+      break;
+    case ARM::tSTRHi:
+      Bits16 = encodeTC32LoadStoreImmHalf(MI, Desc.getNumDefs(), false);
+      break;
+    case ARM::tLDRr:
+      Bits16 = encodeTC32LoadStoreReg(MI, Desc.getNumDefs(), 0x1800u, true);
+      break;
+    case ARM::tSTRr:
+      Bits16 = encodeTC32LoadStoreReg(MI, Desc.getNumDefs(), 0x1000u, false);
+      break;
+    case ARM::tLDRBr:
+      Bits16 = encodeTC32LoadStoreReg(MI, Desc.getNumDefs(), 0x1C00u, true);
+      break;
+    case ARM::tSTRBr:
+      Bits16 = encodeTC32LoadStoreReg(MI, Desc.getNumDefs(), 0x1400u, false);
+      break;
+    case ARM::tLDRHr:
+      Bits16 = encodeTC32LoadStoreReg(MI, Desc.getNumDefs(), 0x1A00u, true);
+      break;
+    case ARM::tSTRHr:
+      Bits16 = encodeTC32LoadStoreReg(MI, Desc.getNumDefs(), 0x1200u, false);
+      break;
+    case ARM::tLDRSB:
+      Bits16 = encodeTC32LoadStoreReg(MI, Desc.getNumDefs(), 0x1600u, true);
+      break;
+    case ARM::tSUBspi:
+      Bits16 = encodeTC32AddSubSP(MI, Desc.getNumDefs(), false);
+      break;
+    case ARM::tADDspi:
+      Bits16 = encodeTC32AddSubSP(MI, Desc.getNumDefs(), true);
+      break;
+    case ARM::tADDrSPi:
+      Bits16 = encodeTC32AddFromSP(MI, Desc.getNumDefs());
+      break;
+    case ARM::tPUSH:
+      Bits16 = encodeTC32PushPop(MI, false);
+      break;
+    case ARM::tPOP:
+      Bits16 = encodeTC32PushPop(MI, true);
+      break;
+    case ARM::tLDMIA_UPD:
+      Bits16 = encodeTC32LoadStoreMultiple(MI, Desc.getNumDefs(), true);
+      break;
+    case ARM::tSTMIA_UPD:
+      Bits16 = encodeTC32LoadStoreMultiple(MI, Desc.getNumDefs(), false);
+      break;
+    case ARM::tLDMIA:
+      Bits16 = encodeTC32LoadStoreMultiple(MI, Desc.getNumDefs(), true);
+      break;
+    case ARM::tBX:
+      Bits16 = static_cast<uint16_t>(0x0700u |
+                                     (getTC32RegEncoding(MI.getOperand(0).getReg()) << 3));
+      break;
+    case ARM::tB:
+      Bits16 = encodeTC32Jump(MI, Fixups);
+      break;
+    case ARM::tBcc:
+      Bits16 = encodeTC32Branch(MI, Fixups,
+                                static_cast<ARMCC::CondCodes>(MI.getOperand(1).getImm()));
+      break;
+    case ARM::tBL: {
+      const MCOperand &Target = MI.getOperand(2);
+      Size = 4;
+      Bits32 = 0x9FFE97FFu;
+      if (Target.isExpr()) {
+        addTC32Fixup(Fixups, 0, Target.getExpr(), ARM::fixup_arm_thumb_bl);
+      } else {
+        int64_t Imm = Target.getImm();
+        checkTC32Encoding((Imm & 1) == 0, "call target must be 2-byte aligned");
+        int64_t Enc = ((Imm - 4) >> 1);
+        checkTC32Encoding(isInt<22>(Enc), "call target out of range");
+        uint32_t EncImm = static_cast<uint32_t>(Enc) & 0x3FFFFFu;
+        Bits32 = 0x98009000u |
+                 ((EncImm >> 11) & 0x7FFu) |
+                 ((EncImm & 0x7FFu) << 16);
+      }
+      break;
+    }
+    default:
+      report_fatal_error(Twine("unhandled TC32 opcode in ARM code emitter: ") +
+                         Twine(MCII.getName(MI.getOpcode())));
+    }
+
+    if (Size == 2) {
+      CB.push_back(static_cast<char>(Bits16 & 0xFF));
+      CB.push_back(static_cast<char>((Bits16 >> 8) & 0xFF));
+    } else {
+      CB.push_back(static_cast<char>(Bits32 & 0xFF));
+      CB.push_back(static_cast<char>((Bits32 >> 8) & 0xFF));
+      CB.push_back(static_cast<char>((Bits32 >> 16) & 0xFF));
+      CB.push_back(static_cast<char>((Bits32 >> 24) & 0xFF));
+    }
+    return true;
+  }
 
 public:
   ARMMCCodeEmitter(const MCInstrInfo &mcii, MCContext &ctx, bool IsLittle)
@@ -1955,6 +2524,12 @@ void ARMMCCodeEmitter::encodeInstruction(const MCInst &MI,
     Size = Desc.getSize();
   else
     llvm_unreachable("Unexpected instruction size!");
+
+  if (STI.getTargetTriple().isTC32()) {
+    encodeTC32Instruction(MI, CB, Fixups, STI);
+    ++MCNumEmitted;
+    return;
+  }
 
   auto Endian =
       IsLittleEndian ? llvm::endianness::little : llvm::endianness::big;
