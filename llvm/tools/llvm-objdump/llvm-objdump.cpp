@@ -628,6 +628,11 @@ static bool isArmElf(const ObjectFile &Obj) {
   return Elf && Elf->getEMachine() == ELF::EM_ARM;
 }
 
+static bool isTC32Elf(const ObjectFile &Obj) {
+  const auto *Elf = dyn_cast<ELFObjectFileBase>(&Obj);
+  return Elf && Elf->getEMachine() == ELF::EM_TC32;
+}
+
 static bool isCSKYElf(const ObjectFile &Obj) {
   const auto *Elf = dyn_cast<ELFObjectFileBase>(&Obj);
   return Elf && Elf->getEMachine() == ELF::EM_CSKY;
@@ -639,8 +644,8 @@ static bool isRISCVElf(const ObjectFile &Obj) {
 }
 
 static bool hasMappingSymbols(const ObjectFile &Obj) {
-  return isArmElf(Obj) || isAArch64Elf(Obj) || isCSKYElf(Obj) ||
-         isRISCVElf(Obj);
+  return isArmElf(Obj) || isTC32Elf(Obj) || isAArch64Elf(Obj) ||
+         isCSKYElf(Obj) || isRISCVElf(Obj);
 }
 
 /// Get relocation type name, resolving RISCV vendor-specific relocations
