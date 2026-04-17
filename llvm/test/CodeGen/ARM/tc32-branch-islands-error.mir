@@ -1,6 +1,10 @@
 # RUN: not --crash llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - 2>&1 | FileCheck %s
 
-# CHECK: LLVM ERROR: TC32 jump out of range (no reachable branch island): src={{[0-9a-f]+}}, dst={{[0-9a-f]+}}, maxdisp={{[0-9]+}}
+# CHECK: LLVM ERROR: TC32 branch island relaxation failed to converge
+# CHECK: br_iters={{[0-9]+}}
+# CHECK: imm_branches={{[0-9]+}}
+# CHECK: cp_users={{[0-9]+}}
+# CHECK: water={{[0-9]+}}
 
 --- |
   define void @f() { ret void }
