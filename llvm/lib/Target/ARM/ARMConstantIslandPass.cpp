@@ -1842,18 +1842,36 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
     }
 
     if (!BestAnchor) {
+      // WaterList can be sparse; when it has no suitable block, retry over all
+      // MBBs and pick any anchor that is in source range and improves distance.
+      for (MachineBasicBlock &CandBBRef : *MF) {
+        MachineBasicBlock *CandBB = &CandBBRef;
+        if (CandBB == MBB || CandBB == DestBB)
+          continue;
+        int64_t CandOff = BBInfo[CandBB->getNumber()].postOffset();
+        int64_t SrcDelta = std::abs(CandOff - SrcOff);
+        if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
+          continue;
+        int64_t CandDist = std::abs(DestOff - CandOff);
+        if (CandDist >= BestDist)
+          continue;
+        BestDist = CandDist;
+        BestAnchor = CandBB;
+      }
+    }
+
+    if (!BestAnchor) {
       if (AFI->isLRSpilled()) {
-        // Same strategy as Thumb1: if LR is already spilled in this function,
-        // we can safely use the long branch pseudo (tBfar -> tBL).
+        // Safety net: if still no island candidate exists, keep the previous
+        // long-jump fallback for LR-spilled functions.
         Br.MaxDisp = (1 << 21) * 2;
         MI->setDesc(TII->get(ARM::tBfar));
         BBInfo[MBB->getNumber()].Size += 2;
         BBUtils->adjustBBOffsetsAfter(MBB);
         ++NumUBrFixed;
         return true;
-      } else {
-        report_fatal_error("TC32 jump out of range (no reachable branch island)");
       }
+      report_fatal_error("TC32 jump out of range (no reachable branch island)");
     }
 
     MachineBasicBlock *VeneerBB =
