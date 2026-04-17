@@ -1,0 +1,23 @@
+# RUN: not --crash llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - 2>&1 | FileCheck %s
+
+# CHECK: LLVM ERROR: TC32 jump out of range (no reachable branch island)
+
+--- |
+  define void @f() { ret void }
+...
+---
+name:            f
+alignment:       2
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $cpsr
+    tBcc %bb.2, 0, killed $cpsr
+    tPOP_RET 14, $noreg, def $pc
+
+  bb.1:
+    dead $r0 = SPACE 3000, undef $r0
+
+  bb.2:
+    tPOP_RET 14, $noreg, def $pc
+...

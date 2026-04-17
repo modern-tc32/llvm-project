@@ -181,6 +181,11 @@ MCFixupKindInfo ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
 
 unsigned ARMAsmBackend::getRelaxedOpcode(unsigned Op,
                                          const MCSubtargetInfo &STI) const {
+  // TC32 reuses Thumb opcodes in the backend but does not support promoting
+  // short branches to Thumb2 encodings as a relaxation strategy.
+  if (STI.getTargetTriple().isTC32())
+    return Op;
+
   bool HasThumb2 = STI.hasFeature(ARM::FeatureThumb2);
   bool HasV8MBaselineOps = STI.hasFeature(ARM::HasV8MBaselineOps);
 
