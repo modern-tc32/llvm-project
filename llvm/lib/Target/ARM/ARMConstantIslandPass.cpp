@@ -496,7 +496,10 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
                   "br_iters=") +
             Twine(NoBRIters) + ", imm_branches=" + Twine(ImmBranches.size()) +
             ", cp_users=" + Twine(CPUsers.size()) + ", water=" +
-            Twine(WaterList.size()));
+            Twine(WaterList.size()) + ", split_attempts=" +
+            Twine(NumTC32SplitAnchorAttempts) + ", split_success=" +
+            Twine(NumTC32SplitAnchorSuccess) + ", forced_source_anchors=" +
+            Twine(NumTC32ForcedSourceAnchors));
       report_fatal_error("Branch Fix Up pass failed to converge!");
     }
     LLVM_DEBUG(dumpBBs());
