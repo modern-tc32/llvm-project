@@ -74,6 +74,8 @@ STATISTIC(NumTC32SplitAnchorAttempts,
           "Number of TC32 split-anchor fallback attempts");
 STATISTIC(NumTC32SplitAnchorSuccess,
           "Number of TC32 split-anchor fallback splits created");
+STATISTIC(NumTC32ForcedSourceAnchors,
+          "Number of TC32 forced source-anchored island fallbacks");
 
 static cl::opt<bool>
 AdjustJumpTableBlocks("arm-adjust-jump-tables", cl::Hidden, cl::init(true),
@@ -1925,6 +1927,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       // iterations continue relaxing from the newly inserted block.
       if (DestOff > SrcOff) {
         BestAnchor = MBB;
+        ++NumTC32ForcedSourceAnchors;
         LLVM_DEBUG(dbgs() << "  TC32 forced anchor fallback at source block "
                           << printMBBReference(*MBB) << '\n');
       }
