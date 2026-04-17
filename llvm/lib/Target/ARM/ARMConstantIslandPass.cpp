@@ -1874,6 +1874,43 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
     }
 
     if (!BestAnchor) {
+      // If we still have no anchor, a large monolithic block may hide all
+      // potential landing points because we only considered MBB boundaries.
+      // Create a new boundary by splitting at an instruction that is both
+      // reachable from source and monotonic toward destination.
+      MachineInstr *SplitBefore = nullptr;
+      int64_t BestSplitDelta = -1;
+      for (MachineBasicBlock &CandBBRef : *MF) {
+        for (MachineInstr &CandMIRef : CandBBRef) {
+          MachineInstr *CandMI = &CandMIRef;
+          if (CandMI == MI)
+            continue;
+          if (CandMI == &CandBBRef.front())
+            continue;
+          int64_t CandOff = BBUtils->getOffsetOf(CandMI);
+          if (DestOff > SrcOff) {
+            if (!(CandOff > SrcOff && CandOff < DestOff))
+              continue;
+          } else {
+            if (!(CandOff < SrcOff && CandOff > DestOff))
+              continue;
+          }
+          int64_t SrcDelta = std::abs(CandOff - SrcOff);
+          if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
+            continue;
+          if (SrcDelta <= BestSplitDelta)
+            continue;
+          BestSplitDelta = SrcDelta;
+          SplitBefore = CandMI;
+        }
+      }
+      if (SplitBefore) {
+        MachineBasicBlock *NewBB = splitBlockBeforeInstr(SplitBefore);
+        BestAnchor = &*std::prev(NewBB->getIterator());
+      }
+    }
+
+    if (!BestAnchor) {
       if (AFI->isLRSpilled()) {
         // Safety net: if still no island candidate exists, keep the previous
         // long-jump fallback for LR-spilled functions.
