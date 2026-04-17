@@ -482,8 +482,13 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
       // Note: fixupImmediateBr can append to ImmBranches.
       BRChange |= fixupImmediateBr(ImmBranches[i]);
     }
-    if (BRChange && ++NoBRIters > 30)
+    if (BRChange && ++NoBRIters > 30) {
+      if (STI->getTargetTriple().isTC32())
+        report_fatal_error(
+            "TC32 branch island relaxation failed to converge "
+            "(likely out-of-range chain without reachable island)");
       report_fatal_error("Branch Fix Up pass failed to converge!");
+    }
     LLVM_DEBUG(dumpBBs());
 
     if (!CPChange && !BRChange)
