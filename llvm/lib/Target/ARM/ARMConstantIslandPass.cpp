@@ -190,10 +190,15 @@ namespace {
       unsigned MaxDisp : 31;
       LLVM_PREFERRED_TYPE(bool)
       unsigned isCond : 1;
+      LLVM_PREFERRED_TYPE(bool)
+      unsigned IsCall : 1;
+      unsigned DestOpnd;
       unsigned UncondBr;
 
-      ImmBranch(MachineInstr *mi, unsigned maxdisp, bool cond, unsigned ubr)
-        : MI(mi), MaxDisp(maxdisp), isCond(cond), UncondBr(ubr) {}
+      ImmBranch(MachineInstr *mi, unsigned maxdisp, bool cond, bool isCall,
+                unsigned DestOpnd, unsigned ubr)
+          : MI(mi), MaxDisp(maxdisp), isCond(cond), IsCall(isCall),
+            DestOpnd(DestOpnd), UncondBr(ubr) {}
     };
 
     /// ImmBranches - Keep track of all the immediate branch instructions.
@@ -262,6 +267,7 @@ namespace {
     bool isWaterInRange(unsigned UserOffset, MachineBasicBlock *Water,
                         CPUser &U, unsigned &Growth);
     bool fixupImmediateBr(ImmBranch &Br);
+    bool fixupCallBr(ImmBranch &Br);
     bool fixupConditionalBr(ImmBranch &Br);
     bool fixupUnconditionalBr(ImmBranch &Br);
     bool optimizeThumb2Instructions();
@@ -771,10 +777,13 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
         continue;
 
       unsigned Opc = I.getOpcode();
-      if (I.isBranch()) {
+      if (I.isBranch() ||
+          (STI->getTargetTriple().isTC32() && I.getOpcode() == ARM::tBL)) {
         bool isCond = false;
+        bool IsCall = false;
         unsigned Bits = 0;
         unsigned Scale = 1;
+        unsigned DestOpnd = 0;
         int UOpc = Opc;
         switch (Opc) {
         default:
@@ -812,11 +821,21 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
           Bits = 24;
           Scale = 2;
           break;
+        case ARM::tBL:
+          if (!STI->getTargetTriple().isTC32() || !I.getOperand(2).isMBB())
+            continue;
+          IsCall = true;
+          DestOpnd = 2;
+          UOpc = ARM::tB;
+          Bits = 22;
+          Scale = 2;
+          break;
         }
 
         // Record this immediate branch.
         unsigned MaxOffs = ((1 << (Bits-1))-1) * Scale;
-        ImmBranches.push_back(ImmBranch(&I, MaxOffs, isCond, UOpc));
+        ImmBranches.push_back(
+            ImmBranch(&I, MaxOffs, isCond, IsCall, DestOpnd, UOpc));
       }
 
       if (Opc == ARM::tPUSH || Opc == ARM::tPOP_RET)
@@ -1376,8 +1395,8 @@ void ARMConstantIslands::createNewWater(unsigned CPUserIndex,
             .addMBB(NewMBB)
             .add(predOps(ARMCC::AL));
       unsigned MaxDisp = getUnconditionalBrDisp(UncondBr);
-      ImmBranches.push_back(ImmBranch(&UserMBB->back(),
-                                      MaxDisp, false, UncondBr));
+      ImmBranches.push_back(
+          ImmBranch(&UserMBB->back(), MaxDisp, false, false, 0, UncondBr));
       BBUtils->computeBlockSize(UserMBB);
       BBUtils->adjustBBOffsetsAfter(UserMBB);
       return;
@@ -1677,15 +1696,91 @@ bool ARMConstantIslands::removeUnusedCPEntries() {
 /// away to fit in its displacement field.
 bool ARMConstantIslands::fixupImmediateBr(ImmBranch &Br) {
   MachineInstr *MI = Br.MI;
-  MachineBasicBlock *DestBB = MI->getOperand(0).getMBB();
+  MachineBasicBlock *DestBB = MI->getOperand(Br.DestOpnd).getMBB();
 
   // Check to see if the DestBB is already in-range.
   if (BBUtils->isBBInRange(MI, DestBB, Br.MaxDisp))
     return false;
 
+  if (Br.IsCall)
+    return fixupCallBr(Br);
   if (!Br.isCond)
     return fixupUnconditionalBr(Br);
   return fixupConditionalBr(Br);
+}
+
+/// fixupCallBr - Fix up an out-of-range TC32 tBL by routing it through a
+/// local call veneer:
+///   tBL <veneer>
+/// <veneer>:
+///   tB  <target>
+///
+/// This preserves call/return semantics because LR is set by tBL at the call
+/// site and then consumed by the callee return sequence.
+bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
+  MachineInstr *MI = Br.MI;
+  if (MI->getOpcode() != ARM::tBL || !STI->getTargetTriple().isTC32())
+    report_fatal_error("unsupported call relaxation");
+
+  MachineBasicBlock *MBB = MI->getParent();
+  MachineBasicBlock *DestBB = MI->getOperand(Br.DestOpnd).getMBB();
+  BBInfoVector &BBInfo = BBUtils->getBBInfo();
+  const int64_t SrcOff = BBUtils->getOffsetOf(MI);
+  const int64_t DestOff = BBInfo[DestBB->getNumber()].Offset;
+  const int64_t CurDist = std::abs(DestOff - SrcOff);
+
+  // Pick an insertion point that is reachable by tBL and makes strong
+  // progress toward the final destination.
+  MachineBasicBlock *BestAnchor = nullptr;
+  int64_t BestDist = CurDist;
+  const int64_t MinProgress = std::max<int64_t>(Br.MaxDisp / 4, 64);
+  for (MachineBasicBlock *WaterBB : WaterList) {
+    if (!WaterBB)
+      continue;
+    int64_t CandOff = BBInfo[WaterBB->getNumber()].postOffset();
+    int64_t SrcDelta = std::abs(CandOff - SrcOff);
+    if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
+      continue;
+    int64_t CandDist = std::abs(DestOff - CandOff);
+    if (CandDist >= BestDist)
+      continue;
+    if (CurDist - CandDist < MinProgress)
+      continue;
+    BestDist = CandDist;
+    BestAnchor = WaterBB;
+  }
+
+  if (!BestAnchor)
+    report_fatal_error("TC32 call out of range (no reachable call island)");
+
+  // tBL sets LR to return to the callsite successor; this remains valid
+  // regardless of where the veneer is placed.
+  MachineBasicBlock *VeneerBB = MF->CreateMachineBasicBlock(MBB->getBasicBlock());
+  MachineFunction::iterator InsertPos = std::next(BestAnchor->getIterator());
+  MF->insert(InsertPos, VeneerBB);
+
+  BuildMI(VeneerBB, DebugLoc(), TII->get(ARM::tB))
+      .addMBB(DestBB)
+      .add(predOps(ARMCC::AL));
+  VeneerBB->addSuccessor(DestBB);
+
+  // Keep pass side tables aligned with new block numbering/offsets.
+  updateForInsertedWaterBlock(VeneerBB);
+  BBUtils->computeBlockSize(VeneerBB);
+  BBUtils->adjustBBOffsetsAfter(BestAnchor);
+
+  // Route call through veneer and keep this branch record in-place so it can
+  // be checked again if layout changes.
+  MI->getOperand(Br.DestOpnd).setMBB(VeneerBB);
+  ++NumUBrFixed;
+
+  // If veneer-to-target jump is out of range, it will be fixed in subsequent
+  // branch-fixup iterations.
+  unsigned MaxDisp = getUnconditionalBrDisp(ARM::tB);
+  ImmBranches.push_back(
+      ImmBranch(&VeneerBB->back(), MaxDisp, false, false, 0, ARM::tB));
+
+  return true;
 }
 
 /// fixupUnconditionalBr - Fix up an unconditional branch whose destination is
@@ -1698,6 +1793,61 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
   MachineBasicBlock *MBB = MI->getParent();
   if (!isThumb1)
     llvm_unreachable("fixupUnconditionalBr is Thumb1 only!");
+
+  if (STI->getTargetTriple().isTC32()) {
+    MachineBasicBlock *DestBB = MI->getOperand(Br.DestOpnd).getMBB();
+    BBInfoVector &BBInfo = BBUtils->getBBInfo();
+    const int64_t SrcOff = BBUtils->getOffsetOf(MI);
+    const int64_t DestOff = BBInfo[DestBB->getNumber()].Offset;
+    const int64_t CurDist = std::abs(DestOff - SrcOff);
+
+    // Pick a water point that is reachable from the source branch and gives a
+    // meaningful step toward destination. Tiny 2-byte progress causes very
+    // long chains and branch-fixup non-convergence.
+    MachineBasicBlock *BestAnchor = nullptr;
+    int64_t BestDist = CurDist;
+    const int64_t MinProgress = std::max<int64_t>(Br.MaxDisp / 4, 64);
+    for (MachineBasicBlock *WaterBB : WaterList) {
+      if (!WaterBB)
+        continue;
+      int64_t CandOff = BBInfo[WaterBB->getNumber()].postOffset();
+      int64_t SrcDelta = std::abs(CandOff - SrcOff);
+      if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
+        continue;
+      int64_t CandDist = std::abs(DestOff - CandOff);
+      if (CandDist >= BestDist)
+        continue;
+      if (CurDist - CandDist < MinProgress)
+        continue;
+      BestDist = CandDist;
+      BestAnchor = WaterBB;
+    }
+
+    if (!BestAnchor)
+      report_fatal_error("TC32 jump out of range (no reachable branch island)");
+
+    MachineBasicBlock *VeneerBB =
+        MF->CreateMachineBasicBlock(MBB->getBasicBlock());
+    MachineFunction::iterator InsertPos = std::next(BestAnchor->getIterator());
+    MF->insert(InsertPos, VeneerBB);
+
+    BuildMI(VeneerBB, DebugLoc(), TII->get(ARM::tB))
+        .addMBB(DestBB)
+        .add(predOps(ARMCC::AL));
+    VeneerBB->addSuccessor(DestBB);
+
+    updateForInsertedWaterBlock(VeneerBB);
+    BBUtils->computeBlockSize(VeneerBB);
+    BBUtils->adjustBBOffsetsAfter(BestAnchor);
+
+    MI->getOperand(Br.DestOpnd).setMBB(VeneerBB);
+    ++NumUBrFixed;
+
+    unsigned MaxDisp = getUnconditionalBrDisp(ARM::tB);
+    ImmBranches.push_back(
+        ImmBranch(&VeneerBB->back(), MaxDisp, false, false, 0, ARM::tB));
+    return true;
+  }
 
   if (!AFI->isLRSpilled())
     report_fatal_error("underestimated function size");
@@ -1721,7 +1871,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
 bool
 ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
   MachineInstr *MI = Br.MI;
-  MachineBasicBlock *DestBB = MI->getOperand(0).getMBB();
+  MachineBasicBlock *DestBB = MI->getOperand(Br.DestOpnd).getMBB();
 
   // Add an unconditional branch to the destination and invert the branch
   // condition to jump over it:
@@ -1758,7 +1908,7 @@ ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
             dbgs() << "  Invert Bcc condition and swap its destination with "
                    << *BMI);
         BMI->getOperand(0).setMBB(DestBB);
-        MI->getOperand(0).setMBB(NewDest);
+        MI->getOperand(Br.DestOpnd).setMBB(NewDest);
         MI->getOperand(1).setImm(CC);
         return true;
       }
@@ -1800,7 +1950,8 @@ ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
     BuildMI(MBB, DebugLoc(), TII->get(Br.UncondBr)).addMBB(DestBB);
   BBUtils->adjustBBSize(MBB, TII->getInstSizeInBytes(MBB->back()));
   unsigned MaxDisp = getUnconditionalBrDisp(Br.UncondBr);
-  ImmBranches.push_back(ImmBranch(&MBB->back(), MaxDisp, false, Br.UncondBr));
+  ImmBranches.push_back(
+      ImmBranch(&MBB->back(), MaxDisp, false, false, 0, Br.UncondBr));
 
   // Remove the old conditional branch.  It may or may not still be in MBB.
   BBUtils->adjustBBSize(MI->getParent(), -TII->getInstSizeInBytes(*MI));
