@@ -1948,7 +1948,11 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
           Twine("TC32 jump out of range (no reachable branch island): src=") +
           Twine::utohexstr(static_cast<uint64_t>(SrcOff)) + ", dst=" +
           Twine::utohexstr(static_cast<uint64_t>(DestOff)) + ", maxdisp=" +
-          Twine(Br.MaxDisp) +
+          Twine(Br.MaxDisp) + ", dir=" +
+          (DestOff > SrcOff ? "forward" : "backward") +
+          ", split_attempts=" + Twine(NumTC32SplitAnchorAttempts) +
+          ", split_success=" + Twine(NumTC32SplitAnchorSuccess) +
+          ", forced_source_anchors=" + Twine(NumTC32ForcedSourceAnchors) +
           " (consider implementing TC32 long-jump thunk relaxation for "
           "non-LR-spilled paths)");
     }
