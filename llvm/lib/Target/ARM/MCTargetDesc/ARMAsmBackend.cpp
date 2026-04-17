@@ -1166,6 +1166,30 @@ std::optional<bool> ARMAsmBackend::evaluateFixup(const MCFragment &F,
 void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
                                const MCValue &Target, uint8_t *Data,
                                uint64_t Value, bool IsResolved) {
+  const MCSubtargetInfo *STI = getSubtargetInfo(F);
+  if (STI && STI->getTargetTriple().isTC32() && IsResolved) {
+    switch (Fixup.getKind()) {
+    case ARM::fixup_arm_thumb_bcc:
+    case ARM::fixup_arm_thumb_br:
+    case ARM::fixup_arm_thumb_cp:
+    case ARM::fixup_arm_thumb_bl:
+      // Recompute target address from the final layout. evaluateFixup() may
+      // resolve symbol offsets during an intermediate layout pass before
+      // fragment sizes have converged. By the time applyFixup() runs the
+      // layout is final, so recomputing here avoids encoding stale targets.
+      if (const MCSymbol *Sym = Target.getAddSym()) {
+        if (Sym->isDefined()) {
+          Value = Target.getConstant() + Asm->getSymbolOffset(*Sym);
+          if (const MCSymbol *Sub = Target.getSubSym())
+            Value -= Asm->getSymbolOffset(*Sub);
+        }
+      }
+      break;
+    default:
+      break;
+    }
+  }
+
   if (IsResolved && shouldForceRelocation(Fixup, Target))
     IsResolved = false;
   maybeAddReloc(F, Fixup, Target, Value, IsResolved);
@@ -1173,15 +1197,13 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
   if (mc::isRelocation(Kind))
     return;
   MCContext &Ctx = getContext();
-  Value = adjustFixupValue(*Asm, Fixup, Target, Value, IsResolved, Ctx,
-                           getSubtargetInfo(F));
+  Value = adjustFixupValue(*Asm, Fixup, Target, Value, IsResolved, Ctx, STI);
   if (!Value)
     return; // Doesn't change encoding.
   const unsigned NumBytes = getFixupKindNumBytes(Kind);
   const bool IsResolvedTC32Call =
-      IsResolved && Kind == ARM::fixup_arm_thumb_bl &&
-      getSubtargetInfo(F) &&
-      getSubtargetInfo(F)->getTargetTriple().isTC32();
+      IsResolved && Kind == ARM::fixup_arm_thumb_bl && STI &&
+      STI->getTargetTriple().isTC32();
 
   assert(Fixup.getOffset() + NumBytes <= F.getSize() &&
          "Invalid fixup offset!");
