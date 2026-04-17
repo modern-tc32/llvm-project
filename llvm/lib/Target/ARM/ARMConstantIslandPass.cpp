@@ -485,8 +485,12 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
     if (BRChange && ++NoBRIters > 30) {
       if (STI->getTargetTriple().isTC32())
         report_fatal_error(
-            "TC32 branch island relaxation failed to converge "
-            "(likely out-of-range chain without reachable island)");
+            Twine("TC32 branch island relaxation failed to converge "
+                  "(likely out-of-range chain without reachable island): "
+                  "br_iters=") +
+            Twine(NoBRIters) + ", imm_branches=" + Twine(ImmBranches.size()) +
+            ", cp_users=" + Twine(CPUsers.size()) + ", water=" +
+            Twine(WaterList.size()));
       report_fatal_error("Branch Fix Up pass failed to converge!");
     }
     LLVM_DEBUG(dumpBBs());
