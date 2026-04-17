@@ -1849,6 +1849,15 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
         if (CandBB == MBB || CandBB == DestBB)
           continue;
         int64_t CandOff = BBInfo[CandBB->getNumber()].postOffset();
+        // Keep progress monotonic: only consider anchors located between
+        // source and destination in code layout.
+        if (DestOff > SrcOff) {
+          if (!(CandOff > SrcOff && CandOff < DestOff))
+            continue;
+        } else {
+          if (!(CandOff < SrcOff && CandOff > DestOff))
+            continue;
+        }
         int64_t SrcDelta = std::abs(CandOff - SrcOff);
         if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
           continue;
