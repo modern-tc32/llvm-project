@@ -1,6 +1,6 @@
 # RUN: not --crash llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - 2>&1 | FileCheck %s
 
-# CHECK: LLVM ERROR: TC32 jump out of range (no reachable branch island)
+# CHECK: LLVM ERROR: TC32 jump out of range (no reachable branch island): src={{[0-9a-f]+}}, dst={{[0-9a-f]+}}, maxdisp={{[0-9]+}}
 
 --- |
   define void @f() { ret void }
