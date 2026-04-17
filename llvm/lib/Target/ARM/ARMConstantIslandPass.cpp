@@ -1880,7 +1880,11 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
         ++NumUBrFixed;
         return true;
       }
-      report_fatal_error("TC32 jump out of range (no reachable branch island)");
+      report_fatal_error(
+          Twine("TC32 jump out of range (no reachable branch island): src=") +
+          Twine::utohexstr(static_cast<uint64_t>(SrcOff)) + ", dst=" +
+          Twine::utohexstr(static_cast<uint64_t>(DestOff)) + ", maxdisp=" +
+          Twine(Br.MaxDisp));
     }
 
     MachineBasicBlock *VeneerBB =
