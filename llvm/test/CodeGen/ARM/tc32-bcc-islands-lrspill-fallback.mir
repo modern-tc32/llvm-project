@@ -1,0 +1,29 @@
+# RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - | FileCheck %s
+
+--- |
+  define void @f() { ret void }
+...
+---
+name:            f
+tracksRegLiveness: true
+machineFunctionInfo:
+  isLRSpilled:     true
+body:             |
+  bb.0:
+    liveins: $cpsr
+    tBcc %bb.2, 0, $cpsr
+    tB %bb.1, 14, $noreg
+
+  bb.1:
+    dead $r0 = SPACE 3000, undef $r0
+    tB %bb.3, 14, $noreg
+
+  bb.2:
+    tB %bb.3, 14, $noreg
+
+  bb.3:
+    tPOP_RET 14, $noreg, def $pc
+
+# CHECK: bb.0:
+# CHECK: tBcc %bb.{{[0-9]+}}, 1
+# CHECK: tBfar %bb.2, 14 /* CC::al */, $noreg
