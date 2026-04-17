@@ -1724,6 +1724,10 @@ bool ARMConstantIslands::fixupImmediateBr(ImmBranch &Br) {
 /// site and then consumed by the callee return sequence.
 bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
   MachineInstr *MI = Br.MI;
+  // This call was already widened in a previous iteration.
+  if (MI->getOpcode() == ARM::tBfar && STI->getTargetTriple().isTC32())
+    return false;
+
   if (MI->getOpcode() != ARM::tBL || !STI->getTargetTriple().isTC32())
     report_fatal_error("unsupported call relaxation");
 
@@ -1755,8 +1759,19 @@ bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
     BestAnchor = WaterBB;
   }
 
-  if (!BestAnchor)
+  if (!BestAnchor) {
+    if (AFI->isLRSpilled()) {
+      // In LR-spilled functions we can safely switch to the long call pseudo
+      // directly instead of requiring a reachable intermediate call island.
+      Br.MaxDisp = (1 << 21) * 2;
+      MI->setDesc(TII->get(ARM::tBfar));
+      BBInfo[MBB->getNumber()].Size += 2;
+      BBUtils->adjustBBOffsetsAfter(MBB);
+      ++NumUBrFixed;
+      return true;
+    }
     report_fatal_error("TC32 call out of range (no reachable call island)");
+  }
 
   // tBL sets LR to return to the callsite successor; this remains valid
   // regardless of where the veneer is placed.
