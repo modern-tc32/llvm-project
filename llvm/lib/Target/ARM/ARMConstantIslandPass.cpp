@@ -1828,8 +1828,20 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       BestAnchor = WaterBB;
     }
 
-    if (!BestAnchor)
-      report_fatal_error("TC32 jump out of range (no reachable branch island)");
+    if (!BestAnchor) {
+      if (AFI->isLRSpilled()) {
+        // Same strategy as Thumb1: if LR is already spilled in this function,
+        // we can safely use the long branch pseudo (tBfar -> tBL).
+        Br.MaxDisp = (1 << 21) * 2;
+        MI->setDesc(TII->get(ARM::tBfar));
+        BBInfo[MBB->getNumber()].Size += 2;
+        BBUtils->adjustBBOffsetsAfter(MBB);
+        ++NumUBrFixed;
+        return true;
+      } else {
+        report_fatal_error("TC32 jump out of range (no reachable branch island)");
+      }
+    }
 
     MachineBasicBlock *VeneerBB =
         MF->CreateMachineBasicBlock(MBB->getBasicBlock());
