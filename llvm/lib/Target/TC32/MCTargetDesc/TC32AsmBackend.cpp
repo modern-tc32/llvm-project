@@ -101,6 +101,18 @@ public:
     if (Fixup.getKind() == TC32::fixup_tc32_branch8) {
       if (!IsResolved)
         return;
+      // Recompute target address from the final layout.  evaluateFixup() may
+      // resolve the symbol offset during an intermediate layout pass before
+      // fragment sizes have converged.  By the time applyFixup() runs the
+      // layout is final, so recomputing here avoids encoding a stale branch
+      // target that silently points at the wrong code.
+      if (const MCSymbol *Sym = Target.getAddSym()) {
+        if (Sym->isDefined()) {
+          Value = Target.getConstant() + Asm->getSymbolOffset(*Sym);
+          if (const MCSymbol *Sub = Target.getSubSym())
+            Value -= Asm->getSymbolOffset(*Sub);
+        }
+      }
       if ((Value & 1) != 0)
         report_fatal_error("TC32 branch target must be 2-byte aligned");
       int64_t Delta =
@@ -125,6 +137,14 @@ public:
     if (Fixup.getKind() == TC32::fixup_tc32_jump11) {
       if (!IsResolved)
         return;
+      // Recompute target address from the final layout (see branch8 comment).
+      if (const MCSymbol *Sym = Target.getAddSym()) {
+        if (Sym->isDefined()) {
+          Value = Target.getConstant() + Asm->getSymbolOffset(*Sym);
+          if (const MCSymbol *Sub = Target.getSubSym())
+            Value -= Asm->getSymbolOffset(*Sub);
+        }
+      }
       if ((Value & 1) != 0)
         report_fatal_error("TC32 jump target must be 2-byte aligned");
       int64_t Delta =
@@ -143,6 +163,14 @@ public:
     if (Fixup.getKind() == TC32::fixup_tc32_ldr_pcrel_u8) {
       if (!IsResolved)
         return;
+      // Recompute target address from the final layout (see branch8 comment).
+      if (const MCSymbol *Sym = Target.getAddSym()) {
+        if (Sym->isDefined()) {
+          Value = Target.getConstant() + Asm->getSymbolOffset(*Sym);
+          if (const MCSymbol *Sub = Target.getSubSym())
+            Value -= Asm->getSymbolOffset(*Sub);
+        }
+      }
       uint64_t PC = Asm->getFragmentOffset(F) + Fixup.getOffset() + 4;
       uint64_t Base = alignDown(PC, uint64_t(4));
       if (Value < Base)
@@ -168,6 +196,15 @@ public:
 
     if (!IsResolved)
       return;
+
+    // Recompute target address from the final layout (see branch8 comment).
+    if (const MCSymbol *Sym = Target.getAddSym()) {
+      if (Sym->isDefined()) {
+        Value = Target.getConstant() + Asm->getSymbolOffset(*Sym);
+        if (const MCSymbol *Sub = Target.getSubSym())
+          Value -= Asm->getSymbolOffset(*Sub);
+      }
+    }
 
     if ((Value & 1) != 0)
       report_fatal_error("TC32 call target must be 2-byte aligned");
