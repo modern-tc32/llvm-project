@@ -489,7 +489,25 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
       BRChange |= fixupImmediateBr(ImmBranches[i]);
     }
     if (BRChange && ++NoBRIters > 30) {
-      if (STI->getTargetTriple().isTC32())
+      if (STI->getTargetTriple().isTC32()) {
+        const ImmBranch *FirstOffender = nullptr;
+        int64_t OffSrc = 0;
+        int64_t OffDst = 0;
+        for (const ImmBranch &B : ImmBranches) {
+          if (!B.MI)
+            continue;
+          const MachineOperand &DstOp = B.MI->getOperand(B.DestOpnd);
+          if (!DstOp.isMBB())
+            continue;
+          MachineBasicBlock *DstMBB = DstOp.getMBB();
+          if (!BBUtils->isBBInRange(B.MI, DstMBB, B.MaxDisp)) {
+            FirstOffender = &B;
+            OffSrc = BBUtils->getOffsetOf(B.MI);
+            OffDst = BBUtils->getOffsetOf(DstMBB);
+            break;
+          }
+        }
+
         report_fatal_error(
             Twine("TC32 branch island relaxation failed to converge "
                   "(likely out-of-range chain without reachable island): "
@@ -499,7 +517,17 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
             Twine(WaterList.size()) + ", split_attempts=" +
             Twine(NumTC32SplitAnchorAttempts) + ", split_success=" +
             Twine(NumTC32SplitAnchorSuccess) + ", forced_source_anchors=" +
-            Twine(NumTC32ForcedSourceAnchors));
+            Twine(NumTC32ForcedSourceAnchors) +
+            (FirstOffender
+                 ? (Twine(", first_offender_src=") +
+                    Twine::utohexstr(static_cast<uint64_t>(OffSrc)) +
+                    ", first_offender_dst=" +
+                    Twine::utohexstr(static_cast<uint64_t>(OffDst)) +
+                    ", first_offender_maxdisp=" +
+                    Twine(FirstOffender->MaxDisp) + ", first_offender_opc=" +
+                    Twine(FirstOffender->MI->getOpcode()))
+                 : Twine(", first_offender=none")));
+      }
       report_fatal_error("Branch Fix Up pass failed to converge!");
     }
     LLVM_DEBUG(dumpBBs());
