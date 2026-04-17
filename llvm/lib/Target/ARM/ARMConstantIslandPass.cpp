@@ -1885,7 +1885,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
           MachineInstr *CandMI = &CandMIRef;
           if (CandMI == MI)
             continue;
-          if (CandMI == &CandBBRef.front())
+          if (&CandBBRef == MBB || &CandBBRef == DestBB)
             continue;
           int64_t CandOff = BBUtils->getOffsetOf(CandMI);
           if (DestOff > SrcOff) {
