@@ -70,6 +70,10 @@ STATISTIC(NumCBZ,        "Number of CBZ / CBNZ formed");
 STATISTIC(NumJTMoved,    "Number of jump table destination blocks moved");
 STATISTIC(NumJTInserted, "Number of jump table intermediate blocks inserted");
 STATISTIC(NumLEInserted, "Number of LE backwards branches inserted");
+STATISTIC(NumTC32SplitAnchorAttempts,
+          "Number of TC32 split-anchor fallback attempts");
+STATISTIC(NumTC32SplitAnchorSuccess,
+          "Number of TC32 split-anchor fallback splits created");
 
 static cl::opt<bool>
 AdjustJumpTableBlocks("arm-adjust-jump-tables", cl::Hidden, cl::init(true),
@@ -1874,6 +1878,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
     }
 
     if (!BestAnchor) {
+      ++NumTC32SplitAnchorAttempts;
       // If we still have no anchor, a large monolithic block may hide all
       // potential landing points because we only considered MBB boundaries.
       // Create a new boundary by splitting at an instruction that is both
@@ -1907,6 +1912,10 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       if (SplitBefore) {
         MachineBasicBlock *NewBB = splitBlockBeforeInstr(SplitBefore);
         BestAnchor = &*std::prev(NewBB->getIterator());
+        ++NumTC32SplitAnchorSuccess;
+        LLVM_DEBUG(dbgs() << "  TC32 split-anchor fallback: split "
+                          << printMBBReference(*BestAnchor) << " -> "
+                          << printMBBReference(*NewBB) << '\n');
       }
     }
 
