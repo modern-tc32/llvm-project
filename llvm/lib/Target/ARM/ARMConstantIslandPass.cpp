@@ -1760,17 +1760,15 @@ bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
   }
 
   if (!BestAnchor) {
-    if (AFI->isLRSpilled()) {
-      // In LR-spilled functions we can safely switch to the long call pseudo
-      // directly instead of requiring a reachable intermediate call island.
-      Br.MaxDisp = (1 << 21) * 2;
-      MI->setDesc(TII->get(ARM::tBfar));
-      BBInfo[MBB->getNumber()].Size += 2;
-      BBUtils->adjustBBOffsetsAfter(MBB);
-      ++NumUBrFixed;
-      return true;
-    }
-    report_fatal_error("TC32 call out of range (no reachable call island)");
+    // For calls this is always safe: long form keeps call semantics
+    // (writes LR at the callsite), unlike plain jumps where LR clobbering
+    // matters.
+    Br.MaxDisp = (1 << 21) * 2;
+    MI->setDesc(TII->get(ARM::tBfar));
+    BBInfo[MBB->getNumber()].Size += 2;
+    BBUtils->adjustBBOffsetsAfter(MBB);
+    ++NumUBrFixed;
+    return true;
   }
 
   // tBL sets LR to return to the callsite successor; this remains valid
