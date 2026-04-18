@@ -8,7 +8,7 @@ define void @test(i1 %tst) {
 ; CHECK-LABEL: test:
 ; CHECK: vldr  {{s[0-9]+}}, [[CONST:\.LCPI[0-9]+_[0-9]+]]
 
-; CHECK: b.w [[CONTINUE:\.LBB[0-9]+_[0-9]+]]
+; CHECK: b{{(\.w)?}} [[CONTINUE:\.LBB[0-9]+_[0-9]+]]
 ; CHECK: [[CONST]]:
 ; CHECK-NEXT: .long
 
