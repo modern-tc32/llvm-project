@@ -34,44 +34,10 @@ using namespace llvm;
 #define DEBUG_TYPE "tc32-ir-fixup"
 
 namespace {
-
-class TC32IRFixupPass : public FunctionPass {
+class TC32IRFixup {
 public:
-  static char ID;
-  TC32IRFixupPass() : FunctionPass(ID) {}
-
   static constexpr uint32_t TC32RegIrqEnAddr = 0x800643;
 
-  bool runOnFunction(Function &F) override {
-    if (!F.getParent()->getTargetTriple().isTC32())
-      return false;
-
-    bool Changed = false;
-    SmallVector<Instruction *, 16> ToErase;
-
-    for (auto &BB : F) {
-      for (auto &I : BB) {
-        Changed |= rejectAtomicIR(I, ToErase);
-
-        auto *CI = dyn_cast<CallInst>(&I);
-        if (!CI)
-          continue;
-
-        if (auto *II = dyn_cast<IntrinsicInst>(CI)) {
-          Changed |= handleIntrinsic(II, ToErase);
-        } else if (CI->isInlineAsm()) {
-          Changed |= handleInlineAsm(CI, ToErase);
-        }
-      }
-    }
-
-    for (auto *I : ToErase)
-      I->eraseFromParent();
-
-    return Changed;
-  }
-
-private:
   bool rejectUnsupportedInstruction(Instruction &I,
                                     SmallVectorImpl<Instruction *> &ToErase,
                                     StringRef Msg) {
@@ -187,7 +153,54 @@ private:
   }
 };
 
+class TC32IRFixupPass : public FunctionPass {
+public:
+  static char ID;
+  TC32IRFixupPass() : FunctionPass(ID) {}
+
+  bool runOnFunction(Function &F) override { return runTC32IRFixup(F); }
+};
+
 } // end anonymous namespace
+
+bool llvm::runTC32IRFixup(Function &F) {
+  if (!F.getParent()->getTargetTriple().isTC32())
+    return false;
+
+  TC32IRFixup Fixup;
+  bool Changed = false;
+  SmallVector<Instruction *, 16> ToErase;
+
+  for (auto &BB : F) {
+    for (auto &I : BB) {
+      Changed |= Fixup.rejectAtomicIR(I, ToErase);
+
+      auto *CI = dyn_cast<CallInst>(&I);
+      if (!CI)
+        continue;
+
+      if (Function *Callee = CI->getCalledFunction()) {
+        StringRef Name = Callee->getName();
+        if (Name.starts_with("__atomic_") || Name.starts_with("__sync_")) {
+          Changed |= Fixup.rejectUnsupportedInstruction(
+              *CI, ToErase, "TC32 does not support atomic operations");
+          continue;
+        }
+      }
+
+      if (auto *II = dyn_cast<IntrinsicInst>(CI)) {
+        Changed |= Fixup.handleIntrinsic(II, ToErase);
+      } else if (CI->isInlineAsm()) {
+        Changed |= Fixup.handleInlineAsm(CI, ToErase);
+      }
+    }
+  }
+
+  for (auto *I : ToErase)
+    I->eraseFromParent();
+
+  return Changed;
+}
 
 char TC32IRFixupPass::ID = 0;
 
