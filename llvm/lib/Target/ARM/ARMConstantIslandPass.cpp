@@ -80,6 +80,8 @@ STATISTIC(NumTC32ForcedPrevAnchors,
           "Number of TC32 forced previous-block island fallbacks");
 STATISTIC(NumTC32VeryFarCondLongFallbacks,
           "Number of TC32 very-far conditional fallbacks promoted to tBfar");
+STATISTIC(NumTC32VeryFarCallLongFallbacks,
+          "Number of TC32 very-far call fallbacks promoted to tBfar");
 
 static cl::opt<bool>
 AdjustJumpTableBlocks("arm-adjust-jump-tables", cl::Hidden, cl::init(true),
@@ -525,6 +527,8 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
             Twine(NumTC32ForcedPrevAnchors) +
             ", cond_long_fallbacks=" +
             Twine(NumTC32VeryFarCondLongFallbacks) +
+            ", call_long_fallbacks=" +
+            Twine(NumTC32VeryFarCallLongFallbacks) +
             (FirstOffender
                  ? (Twine(", first_offender_src=") +
                     Twine::utohexstr(static_cast<uint64_t>(OffSrc)) +
@@ -1796,6 +1800,7 @@ bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
     MI->setDesc(TII->get(ARM::tBfar));
     BBInfo[MBB->getNumber()].Size += 2;
     BBUtils->adjustBBOffsetsAfter(MBB);
+    ++NumTC32VeryFarCallLongFallbacks;
     ++NumUBrFixed;
     return true;
   }
