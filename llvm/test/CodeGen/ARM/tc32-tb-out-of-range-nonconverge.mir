@@ -1,0 +1,22 @@
+# RUN: not --crash llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - 2>&1 | FileCheck %s
+
+# CHECK: LLVM ERROR: TC32 branch island relaxation failed to converge
+# CHECK: first_offender_name=tB
+
+--- |
+  define void @tb_out_of_range_nonconverge() { ret void }
+...
+---
+name:            tb_out_of_range_nonconverge
+alignment:       2
+tracksRegLiveness: false
+body:             |
+  bb.0:
+    tB %bb.2, 14, $noreg
+
+  bb.1:
+    dead $r0 = SPACE 2050, undef $r0
+
+  bb.2:
+    tPOP_RET 14, $noreg, def $pc
+...

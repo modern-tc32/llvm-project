@@ -1969,6 +1969,15 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       if (!WaterBB)
         continue;
       int64_t CandOff = BBInfo[WaterBB->getNumber()].postOffset();
+      // Keep progress monotonic to avoid anchor oscillation that can lead to
+      // non-convergence on large functions.
+      if (DestOff > SrcOff) {
+        if (!(CandOff > SrcOff && CandOff < DestOff))
+          continue;
+      } else {
+        if (!(CandOff < SrcOff && CandOff > DestOff))
+          continue;
+      }
       int64_t SrcDelta = std::abs(CandOff - SrcOff);
       if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
         continue;
