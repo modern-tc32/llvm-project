@@ -19,4 +19,4 @@ body:             |
     tPOP_RET 14, $noreg, def $pc
 
 # CHECK: bb.0:
-# CHECK: tBfar %bb.2, 14 /* CC::al */, $noreg
+# CHECK: tB %bb.2, 14

@@ -1958,6 +1958,17 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
     const int64_t SrcOff = BBUtils->getOffsetOf(MI);
     const int64_t DestOff = BBInfo[DestBB->getNumber()].Offset;
     const int64_t CurDist = std::abs(DestOff - SrcOff);
+    // Extremely distant jumps can require thousands of tiny island hops and
+    // may exceed the global branch-fixup iteration budget. Use long form
+    // directly for such cases.
+    if (CurDist > static_cast<int64_t>(Br.MaxDisp) * 16) {
+      Br.MaxDisp = (1 << 21) * 2;
+      MI->setDesc(TII->get(ARM::tBfar));
+      BBInfo[MBB->getNumber()].Size += 2;
+      BBUtils->adjustBBOffsetsAfter(MBB);
+      ++NumUBrFixed;
+      return true;
+    }
     // Pick the farthest reachable monotonic anchor (largest in-range step
     // toward destination). This avoids oscillation and tiny-progress chains
     // that can trigger non-convergence.
