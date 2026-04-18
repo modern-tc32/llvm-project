@@ -12,6 +12,7 @@
 # CHECK: first_offender_dst={{[0-9a-f]+}}
 # CHECK: first_offender_maxdisp={{[0-9]+}}
 # CHECK: first_offender_opc={{[0-9]+}}
+# CHECK: first_offender_name={{[A-Za-z0-9_]+}}
 
 --- |
   define void @f() { ret void }
