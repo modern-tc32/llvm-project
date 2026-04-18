@@ -1955,13 +1955,19 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
     }
 
     if (!BestAnchor) {
-      // Last-resort forward fallback: force an island directly after source.
+      // Last-resort fallback: force an island adjacent to source.
+      // Forward branch: place island after source.
+      // Backward branch: place island before source (after previous MBB).
       // This keeps LR untouched (unlike tBfar/tBL fallback) and lets later
       // iterations continue relaxing from the newly inserted block.
       if (DestOff > SrcOff) {
         BestAnchor = MBB;
+      } else if (MBB->getIterator() != MF->begin()) {
+        BestAnchor = &*std::prev(MBB->getIterator());
+      }
+      if (BestAnchor) {
         ++NumTC32ForcedSourceAnchors;
-        LLVM_DEBUG(dbgs() << "  TC32 forced anchor fallback at source block "
+        LLVM_DEBUG(dbgs() << "  TC32 forced anchor fallback near source block "
                           << printMBBReference(*MBB) << '\n');
       }
     }
