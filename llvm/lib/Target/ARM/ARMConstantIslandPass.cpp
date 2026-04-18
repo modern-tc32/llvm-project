@@ -1957,14 +1957,11 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
     BBInfoVector &BBInfo = BBUtils->getBBInfo();
     const int64_t SrcOff = BBUtils->getOffsetOf(MI);
     const int64_t DestOff = BBInfo[DestBB->getNumber()].Offset;
-    const int64_t CurDist = std::abs(DestOff - SrcOff);
-
-    // Pick a water point that is reachable from the source branch and gives a
-    // meaningful step toward destination. Tiny 2-byte progress causes very
-    // long chains and branch-fixup non-convergence.
+    // Pick the farthest reachable monotonic anchor (largest in-range step
+    // toward destination). This avoids oscillation and tiny-progress chains
+    // that can trigger non-convergence.
     MachineBasicBlock *BestAnchor = nullptr;
-    int64_t BestDist = CurDist;
-    const int64_t MinProgress = std::max<int64_t>(Br.MaxDisp / 4, 64);
+    int64_t BestStep = -1;
     for (MachineBasicBlock *WaterBB : WaterList) {
       if (!WaterBB)
         continue;
@@ -1981,18 +1978,15 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       int64_t SrcDelta = std::abs(CandOff - SrcOff);
       if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
         continue;
-      int64_t CandDist = std::abs(DestOff - CandOff);
-      if (CandDist >= BestDist)
+      if (SrcDelta <= BestStep)
         continue;
-      if (CurDist - CandDist < MinProgress)
-        continue;
-      BestDist = CandDist;
+      BestStep = SrcDelta;
       BestAnchor = WaterBB;
     }
 
     if (!BestAnchor) {
       // WaterList can be sparse; when it has no suitable block, retry over all
-      // MBBs and pick any anchor that is in source range and improves distance.
+      // MBBs and pick the farthest reachable monotonic anchor.
       for (MachineBasicBlock &CandBBRef : *MF) {
         MachineBasicBlock *CandBB = &CandBBRef;
         if (CandBB == MBB || CandBB == DestBB)
@@ -2010,10 +2004,9 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
         int64_t SrcDelta = std::abs(CandOff - SrcOff);
         if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
           continue;
-        int64_t CandDist = std::abs(DestOff - CandOff);
-        if (CandDist >= BestDist)
+        if (SrcDelta <= BestStep)
           continue;
-        BestDist = CandDist;
+        BestStep = SrcDelta;
         BestAnchor = CandBB;
       }
     }
