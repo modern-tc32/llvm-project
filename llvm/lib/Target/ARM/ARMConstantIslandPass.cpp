@@ -2206,16 +2206,26 @@ ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
     .addMBB(NextBB).addImm(CC).addReg(CCReg);
   Br.MI = &MBB->back();
   BBUtils->adjustBBSize(MBB, TII->getInstSizeInBytes(MBB->back()));
+  unsigned NewUncondOpc = Br.UncondBr;
+  if (STI->getTargetTriple().isTC32()) {
+    BBInfoVector &BBInfo = BBUtils->getBBInfo();
+    const int64_t NewSrcOff = BBUtils->getOffsetOf(Br.MI);
+    const int64_t DestOff = BBInfo[DestBB->getNumber()].Offset;
+    const int64_t NewDist = std::abs(DestOff - NewSrcOff);
+    const unsigned ShortDisp = getUnconditionalBrDisp(Br.UncondBr);
+    if (NewDist > static_cast<int64_t>(ShortDisp) * 4)
+      NewUncondOpc = ARM::tBfar;
+  }
   if (isThumb)
-    BuildMI(MBB, DebugLoc(), TII->get(Br.UncondBr))
+    BuildMI(MBB, DebugLoc(), TII->get(NewUncondOpc))
         .addMBB(DestBB)
         .add(predOps(ARMCC::AL));
   else
-    BuildMI(MBB, DebugLoc(), TII->get(Br.UncondBr)).addMBB(DestBB);
+    BuildMI(MBB, DebugLoc(), TII->get(NewUncondOpc)).addMBB(DestBB);
   BBUtils->adjustBBSize(MBB, TII->getInstSizeInBytes(MBB->back()));
-  unsigned MaxDisp = getUnconditionalBrDisp(Br.UncondBr);
+  unsigned MaxDisp = getUnconditionalBrDisp(NewUncondOpc);
   ImmBranches.push_back(
-      ImmBranch(&MBB->back(), MaxDisp, false, false, 0, Br.UncondBr));
+      ImmBranch(&MBB->back(), MaxDisp, false, false, 0, NewUncondOpc));
 
   // Remove the old conditional branch.  It may or may not still be in MBB.
   BBUtils->adjustBBSize(MI->getParent(), -TII->getInstSizeInBytes(*MI));
