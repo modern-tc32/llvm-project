@@ -1784,6 +1784,18 @@ bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
   const int64_t DestOff = BBInfo[DestBB->getNumber()].Offset;
   const int64_t CurDist = std::abs(DestOff - SrcOff);
 
+  // Extremely far calls converge better when converted directly to long form.
+  // For calls this preserves semantics (LR is expected to be set by the call),
+  // while avoiding potentially huge veneer chains that can fail to converge.
+  if (CurDist > static_cast<int64_t>(Br.MaxDisp) * 4) {
+    Br.MaxDisp = (1 << 21) * 2;
+    MI->setDesc(TII->get(ARM::tBfar));
+    BBInfo[MBB->getNumber()].Size += 2;
+    BBUtils->adjustBBOffsetsAfter(MBB);
+    ++NumUBrFixed;
+    return true;
+  }
+
   // Pick an insertion point that is reachable by tBL and makes strong
   // progress toward the final destination.
   MachineBasicBlock *BestAnchor = nullptr;
