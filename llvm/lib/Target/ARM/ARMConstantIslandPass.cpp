@@ -78,6 +78,8 @@ STATISTIC(NumTC32ForcedSourceAnchors,
           "Number of TC32 forced source-anchored island fallbacks");
 STATISTIC(NumTC32ForcedPrevAnchors,
           "Number of TC32 forced previous-block island fallbacks");
+STATISTIC(NumTC32VeryFarCondLongFallbacks,
+          "Number of TC32 very-far conditional fallbacks promoted to tBfar");
 
 static cl::opt<bool>
 AdjustJumpTableBlocks("arm-adjust-jump-tables", cl::Hidden, cl::init(true),
@@ -521,6 +523,8 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
             Twine(NumTC32SplitAnchorSuccess) + ", forced_source_anchors=" +
             Twine(NumTC32ForcedSourceAnchors) + ", forced_prev_anchors=" +
             Twine(NumTC32ForcedPrevAnchors) +
+            ", cond_long_fallbacks=" +
+            Twine(NumTC32VeryFarCondLongFallbacks) +
             (FirstOffender
                  ? (Twine(", first_offender_src=") +
                     Twine::utohexstr(static_cast<uint64_t>(OffSrc)) +
@@ -2213,8 +2217,10 @@ ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
     const int64_t DestOff = BBInfo[DestBB->getNumber()].Offset;
     const int64_t NewDist = std::abs(DestOff - NewSrcOff);
     const unsigned ShortDisp = getUnconditionalBrDisp(Br.UncondBr);
-    if (NewDist > static_cast<int64_t>(ShortDisp) * 4)
+    if (NewDist > static_cast<int64_t>(ShortDisp) * 4) {
       NewUncondOpc = ARM::tBfar;
+      ++NumTC32VeryFarCondLongFallbacks;
+    }
   }
   if (isThumb)
     BuildMI(MBB, DebugLoc(), TII->get(NewUncondOpc))
