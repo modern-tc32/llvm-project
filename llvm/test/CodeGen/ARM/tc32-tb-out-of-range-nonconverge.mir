@@ -1,7 +1,11 @@
-# RUN: not --crash llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - 2>&1 | FileCheck %s
+# RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - | FileCheck %s
 
-# CHECK: LLVM ERROR: TC32 branch island relaxation failed to converge
-# CHECK: first_offender_name=tB
+# CHECK: bb.0:
+# CHECK: tB %bb.2, 14
+# CHECK: bb.1:
+# CHECK: tB %bb.3, 14
+# CHECK: bb.2:
+# CHECK: tB %bb.4, 14
 
 --- |
   define void @tb_out_of_range_nonconverge() { ret void }
