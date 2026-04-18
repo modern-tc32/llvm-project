@@ -2145,6 +2145,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       // directly when LR has already been spilled, because tBfar clobbers LR.
       if (!Changed && CurDist > static_cast<int64_t>(BranchMaxDisp) * 16 &&
           AFI->isLRSpilled()) {
+        Br.MaxDisp = (1 << 21) * 2;
         MI->setDesc(TII->get(ARM::tBfar));
         BBInfo[MBB->getNumber()].Size += 2;
         BBUtils->adjustBBOffsetsAfter(MBB);
