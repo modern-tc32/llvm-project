@@ -335,6 +335,23 @@ public:
 };
 char ARMExecutionDomainFix::ID;
 
+class TC32IRFixupPass : public PassInfoMixin<TC32IRFixupPass> {
+public:
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
+    return runTC32IRFixup(F) ? PreservedAnalyses::none()
+                             : PreservedAnalyses::all();
+  }
+};
+
+class TC32PackedByteLoadStorePass
+    : public PassInfoMixin<TC32PackedByteLoadStorePass> {
+public:
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
+    return runTC32PackedByteLoadStore(F) ? PreservedAnalyses::none()
+                                         : PreservedAnalyses::all();
+  }
+};
+
 } // end anonymous namespace
 
 INITIALIZE_PASS_BEGIN(ARMExecutionDomainFix, "arm-execution-domain-fix",
@@ -346,6 +363,16 @@ INITIALIZE_PASS_END(ARMExecutionDomainFix, "arm-execution-domain-fix",
 void ARMBaseTargetMachine::registerPassBuilderCallbacks(PassBuilder &PB) {
 #define GET_PASS_REGISTRY "ARMPassRegistry.def"
 #include "llvm/Passes/TargetPassRegistry.inc"
+
+  if (getTargetTriple().isTC32()) {
+    PB.registerPipelineStartEPCallback(
+        [](ModulePassManager &MPM, OptimizationLevel) {
+          FunctionPassManager FPM;
+          FPM.addPass(TC32IRFixupPass());
+          FPM.addPass(TC32PackedByteLoadStorePass());
+          MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+        });
+  }
 }
 
 TargetPassConfig *ARMBaseTargetMachine::createPassConfig(PassManagerBase &PM) {

@@ -60,6 +60,8 @@ Pass *createMVELaneInterleavingPass();
 FunctionPass *createARMFixCortexA57AES1742098Pass();
 FunctionPass *createTC32IRFixupPass();
 FunctionPass *createTC32PackedByteLoadStorePass();
+bool runTC32IRFixup(Function &F);
+bool runTC32PackedByteLoadStore(Function &F);
 
 void LowerARMMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
                                   ARMAsmPrinter &AP);
