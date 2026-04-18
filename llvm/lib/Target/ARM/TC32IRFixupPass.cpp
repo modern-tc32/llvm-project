@@ -6,11 +6,15 @@
 //
 // Transformations:
 //   - llvm.arm.ldrex -> plain load
-//   - llvm.arm.strex -> store + load (always succeeds)
+//   - llvm.arm.strex -> store + i32 0 (always succeeds)
 //   - llvm.arm.hint  -> erased
 //   - inline asm "sev" -> erased
-//   - inline asm "mrs ..." -> replaced with "add sp, ..."
-//   - inline asm "msr ..." -> replaced with "add sp, ..."
+//   - inline asm "cpsid i" -> volatile store 0 to reg_irq_en
+//   - inline asm "cpsie i" -> volatile store 1 to reg_irq_en
+//   - inline asm "mrs ..., PRIMASK" -> "tmrss ..."
+//   - inline asm "msr PRIMASK, ..." -> "tmssr ..."
+//   - other inline asm "mrs ..." -> zero value / erased
+//   - other inline asm "msr ..." -> erased
 //
 //===----------------------------------------------------------------------===//
 
@@ -35,6 +39,8 @@ class TC32IRFixupPass : public FunctionPass {
 public:
   static char ID;
   TC32IRFixupPass() : FunctionPass(ID) {}
+
+  static constexpr uint32_t TC32RegIrqEnAddr = 0x800643;
 
   bool runOnFunction(Function &F) override {
     if (!F.getParent()->getTargetTriple().isTC32())
@@ -66,29 +72,30 @@ public:
 private:
   bool handleIntrinsic(IntrinsicInst *II,
                        SmallVectorImpl<Instruction *> &ToErase) {
+    const DataLayout &DL = II->getModule()->getDataLayout();
+
     switch (II->getIntrinsicID()) {
     case Intrinsic::arm_ldrex: {
       // ldrex(ptr) -> load(ptr)
       IRBuilder<> Builder(II);
       Value *Ptr = II->getArgOperand(0);
-      LoadInst *Load = Builder.CreateLoad(II->getType(), Ptr);
-      Load->setAlignment(Align(4));
+      LoadInst *Load =
+          Builder.CreateAlignedLoad(II->getType(), Ptr, DL.getABITypeAlign(II->getType()));
       II->replaceAllUsesWith(Load);
       ToErase.push_back(II);
       return true;
     }
     case Intrinsic::arm_strex: {
-      // strex(value, ptr) -> store(value, ptr); load(ptr)
-      // strex returns 0 on success; we simulate always-success by returning
-      // a load of the stored value (which fix_ir.py also does)
+      // strex(value, ptr) -> store(value, ptr); i32 0
+      // TC32 has no exclusive store; model this as an unconditional store that
+      // always succeeds.
       IRBuilder<> Builder(II);
       Value *Val = II->getArgOperand(0);
       Value *Ptr = II->getArgOperand(1);
-      StoreInst *Store = Builder.CreateStore(Val, Ptr);
-      Store->setAlignment(Align(4));
-      LoadInst *Load = Builder.CreateLoad(II->getType(), Ptr);
-      Load->setAlignment(Align(4));
-      II->replaceAllUsesWith(Load);
+      StoreInst *Store =
+          Builder.CreateAlignedStore(Val, Ptr, DL.getABITypeAlign(Val->getType()));
+      (void)Store;
+      II->replaceAllUsesWith(ConstantInt::get(II->getType(), 0));
       ToErase.push_back(II);
       return true;
     }
@@ -106,6 +113,7 @@ private:
                        SmallVectorImpl<Instruction *> &ToErase) {
     auto *IA = cast<InlineAsm>(CI->getCalledOperand());
     StringRef AsmStr = IA->getAsmString();
+    std::string LowerAsm = AsmStr.lower();
 
     if (AsmStr.starts_with("sev")) {
       // sev -> erase
@@ -115,19 +123,50 @@ private:
       return true;
     }
 
-    if (AsmStr.starts_with("mrs ") || AsmStr.starts_with("msr ")) {
-      // mrs/msr -> add sp, $0 (harmless no-op equivalent)
-      std::string NewAsmStr;
-      if (AsmStr.starts_with("mrs "))
-        NewAsmStr = "add sp, ${0}";
-      else
-        NewAsmStr = "add sp, ${0}";
+    if (StringRef(LowerAsm).starts_with("cpsid ") ||
+        StringRef(LowerAsm).starts_with("cpsie ")) {
+      IRBuilder<> Builder(CI);
+      Value *RegIrqEn = Builder.CreateIntToPtr(
+          Builder.getInt32(TC32RegIrqEnAddr), PointerType::getUnqual(CI->getContext()));
+      Value *Enabled = Builder.getInt8(StringRef(LowerAsm).starts_with("cpsie ") ? 1 : 0);
+      Builder.CreateAlignedStore(Enabled, RegIrqEn, Align(1))->setVolatile(true);
+      if (!CI->getType()->isVoidTy())
+        CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
+      ToErase.push_back(CI);
+      return true;
+    }
 
-      InlineAsm *NewIA = InlineAsm::get(
-          IA->getFunctionType(), NewAsmStr, IA->getConstraintString(),
-          IA->hasSideEffects(), IA->isAlignStack(), IA->getDialect());
+    if (StringRef(LowerAsm).starts_with("mrs ")) {
+      if (LowerAsm.find("primask") != std::string::npos) {
+        InlineAsm *NewIA = InlineAsm::get(
+            IA->getFunctionType(), "tmrss ${0}", IA->getConstraintString(),
+            IA->hasSideEffects(), IA->isAlignStack(), IA->getDialect());
+        CI->setCalledOperand(NewIA);
+        return true;
+      }
 
-      CI->setCalledOperand(NewIA);
+      // TC32 has no ARM system registers beyond the IRQ state register handled
+      // above; model other reads as zero.
+      if (!CI->getType()->isVoidTy())
+        CI->replaceAllUsesWith(Constant::getNullValue(CI->getType()));
+      ToErase.push_back(CI);
+      return true;
+    }
+
+    if (StringRef(LowerAsm).starts_with("msr ")) {
+      if (LowerAsm.find("primask") != std::string::npos) {
+        InlineAsm *NewIA = InlineAsm::get(
+            IA->getFunctionType(), "tmssr ${0}", IA->getConstraintString(),
+            IA->hasSideEffects(), IA->isAlignStack(), IA->getDialect());
+        CI->setCalledOperand(NewIA);
+        return true;
+      }
+
+      // TC32 has no ARM system registers beyond the IRQ state register handled
+      // above.
+      if (!CI->getType()->isVoidTy())
+        CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
+      ToErase.push_back(CI);
       return true;
     }
 
