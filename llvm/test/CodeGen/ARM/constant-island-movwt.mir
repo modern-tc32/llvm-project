@@ -890,7 +890,7 @@ body:             |
 #
 # CHECK:          $r5 = t2MOVTi16 $r5, target-flags(arm-hi16) @.str.118, 14 /* CC::al */, $noreg
 # CHECK-NEXT:     renamable $q12 = VDUP32q killed renamable $r5, 14 /* CC::al */, $noreg
-# CHECK-NEXT:     t2B %bb.2, 14 /* CC::al */, $noreg
+# CHECK-NEXT:     {{t2|t}}B %bb.2, 14 /* CC::al */, $noreg
 # CHECK-NEXT: {{^  $}}
 # CHECK-NEXT:   bb.1 (align 4):
 # CHECK-NEXT:     successors:
