@@ -76,6 +76,8 @@ STATISTIC(NumTC32SplitAnchorSuccess,
           "Number of TC32 split-anchor fallback splits created");
 STATISTIC(NumTC32ForcedSourceAnchors,
           "Number of TC32 forced source-anchored island fallbacks");
+STATISTIC(NumTC32ForcedPrevAnchors,
+          "Number of TC32 forced previous-block island fallbacks");
 
 static cl::opt<bool>
 AdjustJumpTableBlocks("arm-adjust-jump-tables", cl::Hidden, cl::init(true),
@@ -517,7 +519,8 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
             Twine(WaterList.size()) + ", split_attempts=" +
             Twine(NumTC32SplitAnchorAttempts) + ", split_success=" +
             Twine(NumTC32SplitAnchorSuccess) + ", forced_source_anchors=" +
-            Twine(NumTC32ForcedSourceAnchors) +
+            Twine(NumTC32ForcedSourceAnchors) + ", forced_prev_anchors=" +
+            Twine(NumTC32ForcedPrevAnchors) +
             (FirstOffender
                  ? (Twine(", first_offender_src=") +
                     Twine::utohexstr(static_cast<uint64_t>(OffSrc)) +
@@ -1962,11 +1965,12 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       // iterations continue relaxing from the newly inserted block.
       if (DestOff > SrcOff) {
         BestAnchor = MBB;
+        ++NumTC32ForcedSourceAnchors;
       } else if (MBB->getIterator() != MF->begin()) {
         BestAnchor = &*std::prev(MBB->getIterator());
+        ++NumTC32ForcedPrevAnchors;
       }
       if (BestAnchor) {
-        ++NumTC32ForcedSourceAnchors;
         LLVM_DEBUG(dbgs() << "  TC32 forced anchor fallback near source block "
                           << printMBBReference(*MBB) << '\n');
       }
@@ -1992,6 +1996,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
           ", split_attempts=" + Twine(NumTC32SplitAnchorAttempts) +
           ", split_success=" + Twine(NumTC32SplitAnchorSuccess) +
           ", forced_source_anchors=" + Twine(NumTC32ForcedSourceAnchors) +
+          ", forced_prev_anchors=" + Twine(NumTC32ForcedPrevAnchors) +
           " (consider implementing TC32 long-jump thunk relaxation for "
           "non-LR-spilled paths)");
     }
