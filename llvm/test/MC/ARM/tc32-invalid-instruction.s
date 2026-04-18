@@ -6,3 +6,8 @@ foo:
 	cpsid i
 
 @ CHECK: :[[@LINE-2]]:2: error: instruction is not supported on TC32
+
+bar:
+	bkpt #0
+
+@ CHECK: :[[@LINE-2]]:2: error: instruction is not supported on TC32
