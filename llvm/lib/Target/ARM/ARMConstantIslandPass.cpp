@@ -1838,6 +1838,46 @@ bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
     }
   }
 
+  if (!BestAnchor && CurDist <= static_cast<int64_t>(Br.MaxDisp) * 4) {
+    ++NumTC32SplitAnchorAttempts;
+    // Large monolithic blocks can hide usable anchor points because we only
+    // considered MBB boundaries. Split at a reachable monotonic instruction.
+    MachineInstr *SplitBefore = nullptr;
+    int64_t BestSplitDelta = -1;
+    for (MachineBasicBlock &CandBBRef : *MF) {
+      for (MachineInstr &CandMIRef : CandBBRef) {
+        MachineInstr *CandMI = &CandMIRef;
+        if (CandMI == MI)
+          continue;
+        if (&CandBBRef == MBB || &CandBBRef == DestBB)
+          continue;
+        int64_t CandOff = BBUtils->getOffsetOf(CandMI);
+        if (DestOff > SrcOff) {
+          if (!(CandOff > SrcOff && CandOff < DestOff))
+            continue;
+        } else {
+          if (!(CandOff < SrcOff && CandOff > DestOff))
+            continue;
+        }
+        int64_t SrcDelta = std::abs(CandOff - SrcOff);
+        if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
+          continue;
+        if (SrcDelta <= BestSplitDelta)
+          continue;
+        BestSplitDelta = SrcDelta;
+        SplitBefore = CandMI;
+      }
+    }
+    if (SplitBefore) {
+      MachineBasicBlock *NewBB = splitBlockBeforeInstr(SplitBefore);
+      BestAnchor = &*std::prev(NewBB->getIterator());
+      ++NumTC32SplitAnchorSuccess;
+      LLVM_DEBUG(dbgs() << "  TC32 call split-anchor fallback: split "
+                        << printMBBReference(*BestAnchor) << " -> "
+                        << printMBBReference(*NewBB) << '\n');
+    }
+  }
+
   if (!BestAnchor) {
     // For calls this is always safe: long form keeps call semantics
     // (writes LR at the callsite), unlike plain jumps where LR clobbering
