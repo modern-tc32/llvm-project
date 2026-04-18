@@ -1948,6 +1948,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
     llvm_unreachable("fixupUnconditionalBr is Thumb1 only!");
 
   if (STI->getTargetTriple().isTC32()) {
+    const unsigned BranchMaxDisp = Br.MaxDisp;
     MachineBasicBlock *FinalDestBB = MI->getOperand(Br.DestOpnd).getMBB();
     MachineInstr *CurrBrMI = MI;
     MachineBasicBlock *CurrMBB = MBB;
@@ -1959,18 +1960,14 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
                               MachineBasicBlock *DestBB, int64_t SrcOff,
                               int64_t DestOff) {
       BBInfoVector &BBInfo = BBUtils->getBBInfo();
+      const int64_t AnchorMaxDisp = static_cast<int64_t>(BranchMaxDisp) - 2;
       MachineBasicBlock *BestAnchor = nullptr;
       int64_t BestStep = -1;
-      const bool InsertBefore = DestOff < SrcOff;
-      auto GetAnchorOffset = [&](MachineBasicBlock *BB) -> int64_t {
-        return InsertBefore ? BBInfo[BB->getNumber()].Offset
-                            : BBInfo[BB->getNumber()].postOffset();
-      };
 
       for (MachineBasicBlock *WaterBB : WaterList) {
         if (!WaterBB)
           continue;
-        int64_t CandOff = GetAnchorOffset(WaterBB);
+        int64_t CandOff = BBInfo[WaterBB->getNumber()].postOffset();
         if (DestOff > SrcOff) {
           if (!(CandOff > SrcOff && CandOff < DestOff))
             continue;
@@ -1979,7 +1976,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
             continue;
         }
         int64_t SrcDelta = std::abs(CandOff - SrcOff);
-        if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
+        if (SrcDelta > AnchorMaxDisp)
           continue;
         if (SrcDelta <= BestStep)
           continue;
@@ -1992,7 +1989,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
           MachineBasicBlock *CandBB = &CandBBRef;
           if (CandBB == SrcMBB || CandBB == DestBB)
             continue;
-          int64_t CandOff = GetAnchorOffset(CandBB);
+          int64_t CandOff = BBInfo[CandBB->getNumber()].postOffset();
           if (DestOff > SrcOff) {
             if (!(CandOff > SrcOff && CandOff < DestOff))
               continue;
@@ -2001,7 +1998,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
               continue;
           }
           int64_t SrcDelta = std::abs(CandOff - SrcOff);
-          if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
+          if (SrcDelta > AnchorMaxDisp)
             continue;
           if (SrcDelta <= BestStep)
             continue;
@@ -2011,6 +2008,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       }
 
       auto TrySplitSpaceForAnchor = [&]() -> bool {
+        constexpr int64_t SplitBranchSize = 2;
         MachineInstr *SplitSpaceMI = nullptr;
         int64_t SplitPrefixSize = 0;
         int64_t LocalBestStep = BestStep;
@@ -2034,24 +2032,29 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
             }
             const int64_t MaxReach =
                 DestOff > SrcOff
-                    ? SrcOff + static_cast<int64_t>(Br.MaxDisp)
-                    : SrcOff - static_cast<int64_t>(Br.MaxDisp);
-            int64_t SplitOff =
+                    ? SrcOff + AnchorMaxDisp
+                    : SrcOff - AnchorMaxDisp;
+            int64_t AnchorOff =
                 DestOff > SrcOff
-                    ? std::min<int64_t>(CandOff + SpaceSize - 1, MaxReach)
-                    : std::max<int64_t>(CandOff + 1, MaxReach);
-            if (SplitOff <= CandOff || SplitOff >= CandOff + SpaceSize)
+                    ? std::min<int64_t>(CandOff + SpaceSize + SplitBranchSize -
+                                            1,
+                                        MaxReach)
+                    : std::max<int64_t>(CandOff + SplitBranchSize + 1,
+                                        MaxReach);
+            int64_t PrefixSize = AnchorOff - CandOff - SplitBranchSize;
+            if (PrefixSize <= 0 || PrefixSize >= SpaceSize)
               continue;
-            const int64_t Step = std::abs(SplitOff - SrcOff);
+            const int64_t Step = std::abs(AnchorOff - SrcOff);
             if (Step <= LocalBestStep)
               continue;
             SplitSpaceMI = CandMI;
-            SplitPrefixSize = SplitOff - CandOff;
+            SplitPrefixSize = PrefixSize;
             LocalBestStep = Step;
           }
         }
-        if (!SplitSpaceMI)
+        if (!SplitSpaceMI) {
           return false;
+        }
 
         MachineInstr *Prefix = MF->CloneMachineInstr(SplitSpaceMI);
         Prefix->getOperand(1).setImm(SplitPrefixSize);
@@ -2059,7 +2062,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
         SplitSpaceMI->getOperand(1).setImm(
             SplitSpaceMI->getOperand(1).getImm() - SplitPrefixSize);
         MachineBasicBlock *NewBB = splitBlockBeforeInstr(SplitSpaceMI);
-        BestAnchor = InsertBefore ? NewBB : &*std::prev(NewBB->getIterator());
+        BestAnchor = &*std::prev(NewBB->getIterator());
         BestStep = LocalBestStep;
         ++NumTC32SplitAnchorSuccess;
         LLVM_DEBUG(dbgs() << "  TC32 split-anchor fallback (SPACE): split "
@@ -2069,8 +2072,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
         return true;
       };
 
-      if (BestAnchor && std::abs(DestOff - SrcOff) > static_cast<int64_t>(Br.MaxDisp) &&
-          BestStep < static_cast<int64_t>(Br.MaxDisp) / 2)
+      if (std::abs(DestOff - SrcOff) > static_cast<int64_t>(BranchMaxDisp))
         TrySplitSpaceForAnchor();
 
       if (!BestAnchor) {
@@ -2093,7 +2095,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
                 continue;
             }
             int64_t SrcDelta = std::abs(CandOff - SrcOff);
-            if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
+            if (SrcDelta > AnchorMaxDisp)
               continue;
             if (SrcDelta <= BestSplitDelta)
               continue;
@@ -2103,7 +2105,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
         }
         if (SplitBefore) {
           MachineBasicBlock *NewBB = splitBlockBeforeInstr(SplitBefore);
-          BestAnchor = InsertBefore ? NewBB : &*std::prev(NewBB->getIterator());
+          BestAnchor = &*std::prev(NewBB->getIterator());
           ++NumTC32SplitAnchorSuccess;
           LLVM_DEBUG(dbgs() << "  TC32 split-anchor fallback: split "
                             << printMBBReference(*BestAnchor) << " -> "
@@ -2111,20 +2113,19 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
         }
       }
 
-      if (!BestAnchor)
-        TrySplitSpaceForAnchor();
-
       if (!BestAnchor) {
         if (DestOff > SrcOff) {
           BestAnchor = SrcMBB;
           ++NumTC32ForcedSourceAnchors;
         } else {
-          BestAnchor = SrcMBB;
+          BestAnchor = SrcMBB->getIterator() == MF->begin()
+                           ? SrcMBB
+                           : &*std::prev(SrcMBB->getIterator());
           ++NumTC32ForcedPrevAnchors;
         }
         if (BestAnchor) {
           LLVM_DEBUG(dbgs() << "  TC32 forced anchor fallback near source block "
-                            << printMBBReference(*SrcMBB) << '\n');
+                            << printMBBReference(*BestAnchor) << '\n');
         }
       }
 
@@ -2136,15 +2137,14 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       const int64_t SrcOff = BBUtils->getOffsetOf(CurrBrMI);
       const int64_t DestOff = BBInfo[FinalDestBB->getNumber()].Offset;
       const int64_t CurDist = std::abs(DestOff - SrcOff);
-      if (CurDist <= static_cast<int64_t>(Br.MaxDisp))
+      if (CurDist <= static_cast<int64_t>(BranchMaxDisp))
         break;
 
       // Extremely distant jumps can require thousands of tiny island hops and
       // may exceed the global branch-fixup iteration budget. Only use long form
       // directly when LR has already been spilled, because tBfar clobbers LR.
-      if (!Changed && CurDist > static_cast<int64_t>(Br.MaxDisp) * 16 &&
+      if (!Changed && CurDist > static_cast<int64_t>(BranchMaxDisp) * 16 &&
           AFI->isLRSpilled()) {
-        Br.MaxDisp = (1 << 21) * 2;
         MI->setDesc(TII->get(ARM::tBfar));
         BBInfo[MBB->getNumber()].Size += 2;
         BBUtils->adjustBBOffsetsAfter(MBB);
@@ -2160,10 +2160,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
 
       MachineBasicBlock *VeneerBB =
           MF->CreateMachineBasicBlock(CurrMBB->getBasicBlock());
-      const bool InsertBefore = DestOff < SrcOff;
-      MachineFunction::iterator InsertPos =
-          InsertBefore ? BestAnchor->getIterator()
-                       : std::next(BestAnchor->getIterator());
+      MachineFunction::iterator InsertPos = std::next(BestAnchor->getIterator());
       MF->insert(InsertPos, VeneerBB);
 
       BuildMI(VeneerBB, DebugLoc(), TII->get(ARM::tB))
@@ -2173,13 +2170,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
 
       updateForInsertedWaterBlock(VeneerBB);
       BBUtils->computeBlockSize(VeneerBB);
-      if (!InsertBefore) {
-        BBUtils->adjustBBOffsetsAfter(BestAnchor);
-      } else if (VeneerBB->getIterator() == MF->begin()) {
-        BBUtils->adjustBBOffsetsAfter(VeneerBB);
-      } else {
-        BBUtils->adjustBBOffsetsAfter(&*std::prev(VeneerBB->getIterator()));
-      }
+      BBUtils->adjustBBOffsetsAfter(BestAnchor);
 
       CurrBrMI->getOperand(CurrDestOpnd).setMBB(VeneerBB);
       CurrBrMI = &VeneerBB->back();
@@ -2191,9 +2182,6 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       unsigned MaxDisp = getUnconditionalBrDisp(ARM::tB);
       ImmBranches.push_back(
           ImmBranch(&VeneerBB->back(), MaxDisp, false, false, 0, ARM::tB));
-
-      if (InsertBefore)
-        break;
 
       if (InsertedHops > 4096)
         report_fatal_error("TC32 branch island chain exceeded hop budget");
