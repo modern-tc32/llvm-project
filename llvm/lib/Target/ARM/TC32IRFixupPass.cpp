@@ -1,12 +1,11 @@
 //===-- TC32IRFixupPass.cpp - Fix IR for TC32 target ----------------------===//
 //
-// Replaces ARM-specific intrinsics and inline assembly that TC32 doesn't
-// support with compatible alternatives. This eliminates the need for the
-// external fix_ir.py script.
+// Replaces ARM-specific inline assembly that TC32 doesn't support with
+// compatible alternatives, and rejects unsupported atomic operations. This
+// eliminates the need for the external fix_ir.py script.
 //
 // Transformations:
-//   - llvm.arm.ldrex -> plain load
-//   - llvm.arm.strex -> store + i32 0 (always succeeds)
+//   - atomic IR / llvm.arm.ldrex / llvm.arm.strex -> explicit error
 //   - llvm.arm.hint  -> erased
 //   - inline asm "sev" -> erased
 //   - inline asm "cpsid i" -> volatile store 0 to reg_irq_en
@@ -19,6 +18,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ARM.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InlineAsm.h"
@@ -51,6 +51,8 @@ public:
 
     for (auto &BB : F) {
       for (auto &I : BB) {
+        Changed |= rejectAtomicIR(I, ToErase);
+
         auto *CI = dyn_cast<CallInst>(&I);
         if (!CI)
           continue;
@@ -70,35 +72,46 @@ public:
   }
 
 private:
+  bool rejectUnsupportedInstruction(Instruction &I,
+                                    SmallVectorImpl<Instruction *> &ToErase,
+                                    StringRef Msg) {
+    I.getContext().emitError(&I, Msg);
+    if (!I.getType()->isVoidTy())
+      I.replaceAllUsesWith(PoisonValue::get(I.getType()));
+    ToErase.push_back(&I);
+    return true;
+  }
+
+  bool rejectAtomicIR(Instruction &I,
+                      SmallVectorImpl<Instruction *> &ToErase) {
+    if (auto *LI = dyn_cast<LoadInst>(&I)) {
+      if (LI->isAtomic())
+        return rejectUnsupportedInstruction(
+            I, ToErase, "TC32 does not support atomic operations");
+      return false;
+    }
+
+    if (auto *SI = dyn_cast<StoreInst>(&I)) {
+      if (SI->isAtomic())
+        return rejectUnsupportedInstruction(
+            I, ToErase, "TC32 does not support atomic operations");
+      return false;
+    }
+
+    if (isa<AtomicRMWInst>(I) || isa<AtomicCmpXchgInst>(I) || isa<FenceInst>(I))
+      return rejectUnsupportedInstruction(
+          I, ToErase, "TC32 does not support atomic operations");
+
+    return false;
+  }
+
   bool handleIntrinsic(IntrinsicInst *II,
                        SmallVectorImpl<Instruction *> &ToErase) {
-    const DataLayout &DL = II->getModule()->getDataLayout();
-
     switch (II->getIntrinsicID()) {
-    case Intrinsic::arm_ldrex: {
-      // ldrex(ptr) -> load(ptr)
-      IRBuilder<> Builder(II);
-      Value *Ptr = II->getArgOperand(0);
-      LoadInst *Load =
-          Builder.CreateAlignedLoad(II->getType(), Ptr, DL.getABITypeAlign(II->getType()));
-      II->replaceAllUsesWith(Load);
-      ToErase.push_back(II);
-      return true;
-    }
-    case Intrinsic::arm_strex: {
-      // strex(value, ptr) -> store(value, ptr); i32 0
-      // TC32 has no exclusive store; model this as an unconditional store that
-      // always succeeds.
-      IRBuilder<> Builder(II);
-      Value *Val = II->getArgOperand(0);
-      Value *Ptr = II->getArgOperand(1);
-      StoreInst *Store =
-          Builder.CreateAlignedStore(Val, Ptr, DL.getABITypeAlign(Val->getType()));
-      (void)Store;
-      II->replaceAllUsesWith(ConstantInt::get(II->getType(), 0));
-      ToErase.push_back(II);
-      return true;
-    }
+    case Intrinsic::arm_ldrex:
+    case Intrinsic::arm_strex:
+      return rejectUnsupportedInstruction(
+          *II, ToErase, "TC32 does not support atomic operations");
     case Intrinsic::arm_hint: {
       // hint (sev, wfe, etc.) -> erase
       ToErase.push_back(II);

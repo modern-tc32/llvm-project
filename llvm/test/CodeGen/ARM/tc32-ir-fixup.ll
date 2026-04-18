@@ -2,23 +2,6 @@
 
 target triple = "tc32-unknown-none-elf"
 
-define i32 @strex_i32(ptr %p, i32 %v) {
-; CHECK-LABEL: strex_i32:
-; CHECK: tstorer r1, [r0]
-; CHECK-NEXT: tmov r0, #0
-entry:
-  %status = call i32 @llvm.arm.strex.p0(i32 %v, ptr elementtype(i32) %p)
-  ret i32 %status
-}
-
-define i32 @ldrex_i32(ptr %p) {
-; CHECK-LABEL: ldrex_i32:
-; CHECK: tloadr r0, [r0]
-entry:
-  %value = call i32 @llvm.arm.ldrex.p0(ptr elementtype(i32) %p)
-  ret i32 %value
-}
-
 define void @hint_and_signal() {
 ; CHECK-LABEL: hint_and_signal:
 ; CHECK-NOT: sev
@@ -85,7 +68,4 @@ entry:
   call void asm sideeffect "msr CONTROL, $0", "r"(i32 %x)
   ret void
 }
-
-declare i32 @llvm.arm.ldrex.p0(ptr elementtype(i32))
-declare i32 @llvm.arm.strex.p0(i32, ptr elementtype(i32))
 declare void @llvm.arm.hint(i32 immarg)
