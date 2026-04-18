@@ -11,3 +11,13 @@ bar:
 	bkpt #0
 
 @ CHECK: :[[@LINE-2]]:2: error: instruction is not supported on TC32
+
+baz:
+	clrex
+
+@ CHECK: :[[@LINE-2]]:2: error: instruction is not supported on TC32
+
+qux:
+	wfi
+
+@ CHECK: :[[@LINE-2]]:2: error: instruction is not supported on TC32
