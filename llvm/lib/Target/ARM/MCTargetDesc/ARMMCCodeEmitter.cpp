@@ -447,7 +447,7 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
     case ARM::tCMPr:
       Bits16 = encodeTC32CMPr(MI, Desc.getNumDefs());
       break;
-    case ARM::tCMNz:
+    case ARM::tCMN:
       Bits16 = encodeTC32CMNz(MI, Desc.getNumDefs());
       break;
     case ARM::tADDrr:
