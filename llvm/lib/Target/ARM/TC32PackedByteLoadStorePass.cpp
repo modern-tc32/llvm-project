@@ -52,103 +52,107 @@ public:
   }
 
   bool runOnFunction(Function &F) override {
-    if (!F.getParent()->getTargetTriple().isTC32())
-      return false;
-
-    SmallVector<LoadInst *, 32> Candidates;
-    for (BasicBlock &BB : F) {
-      for (Instruction &I : BB) {
-        auto *LI = dyn_cast<LoadInst>(&I);
-        if (!LI || LI->isVolatile() || LI->isAtomic())
-          continue;
-        if (LI->getAlign().value() > 1)
-          continue;
-        Type *Ty = LI->getType();
-        if (Ty != Type::getInt16Ty(F.getContext()) &&
-            Ty != Type::getInt32Ty(F.getContext()))
-          continue;
-        Candidates.push_back(LI);
-      }
-    }
-
-    bool Changed = false;
-    for (LoadInst *LI : Candidates) {
-      if (LI->use_empty())
-        continue;
-
-      unsigned BitWidth = cast<IntegerType>(LI->getType())->getBitWidth();
-      SmallVector<Instruction *, 8> ToErase;
-      SmallVector<std::pair<Instruction *, Value *>, 8> Replacements;
-      bool Valid = true;
-
-      for (User *U : LI->users()) {
-        auto *Inst = dyn_cast<Instruction>(U);
-        if (!Inst || Inst->getParent() != LI->getParent()) {
-          Valid = false;
-          break;
-        }
-
-        if (auto *Tr = dyn_cast<TruncInst>(Inst)) {
-          if (Tr->getDestTy() != Type::getInt8Ty(F.getContext())) {
-            Valid = false;
-            break;
-          }
-          Value *Byte = createPackedByteLoad(*LI, 0, *Tr);
-          Replacements.push_back({Tr, Byte});
-          ToErase.push_back(Tr);
-          continue;
-        }
-
-        auto *LS = dyn_cast<LShrOperator>(Inst);
-        if (!LS || !isa<ConstantInt>(LS->getOperand(1))) {
-          Valid = false;
-          break;
-        }
-
-        uint64_t Shift = cast<ConstantInt>(LS->getOperand(1))->getZExtValue();
-        if ((Shift & 7) != 0 || Shift >= BitWidth) {
-          Valid = false;
-          break;
-        }
-
-        if (!Inst->hasOneUse()) {
-          Valid = false;
-          break;
-        }
-
-        auto *Tr = dyn_cast<TruncInst>(*Inst->user_begin());
-        if (!Tr || Tr->getDestTy() != Type::getInt8Ty(F.getContext())) {
-          Valid = false;
-          break;
-        }
-
-        Value *Byte = createPackedByteLoad(*LI, Shift / 8, *Tr);
-        Replacements.push_back({Tr, Byte});
-        ToErase.push_back(Tr);
-        ToErase.push_back(Inst);
-      }
-
-      if (!Valid)
-        continue;
-
-      for (auto &[OldInst, NewVal] : Replacements)
-        OldInst->replaceAllUsesWith(NewVal);
-
-      for (Instruction *I : reverse(ToErase))
-        if (I->use_empty())
-          I->eraseFromParent();
-
-      if (LI->use_empty()) {
-        LI->eraseFromParent();
-        Changed = true;
-      }
-    }
-
-    return Changed;
+    return runTC32PackedByteLoadStore(F);
   }
 };
 
 } // namespace
+
+bool llvm::runTC32PackedByteLoadStore(Function &F) {
+  if (!F.getParent()->getTargetTriple().isTC32())
+    return false;
+
+  SmallVector<LoadInst *, 32> Candidates;
+  for (BasicBlock &BB : F) {
+    for (Instruction &I : BB) {
+      auto *LI = dyn_cast<LoadInst>(&I);
+      if (!LI || LI->isVolatile() || LI->isAtomic())
+        continue;
+      if (LI->getAlign().value() > 1)
+        continue;
+      Type *Ty = LI->getType();
+      if (Ty != Type::getInt16Ty(F.getContext()) &&
+          Ty != Type::getInt32Ty(F.getContext()))
+        continue;
+      Candidates.push_back(LI);
+    }
+  }
+
+  bool Changed = false;
+  for (LoadInst *LI : Candidates) {
+    if (LI->use_empty())
+      continue;
+
+    unsigned BitWidth = cast<IntegerType>(LI->getType())->getBitWidth();
+    SmallVector<Instruction *, 8> ToErase;
+    SmallVector<std::pair<Instruction *, Value *>, 8> Replacements;
+    bool Valid = true;
+
+    for (User *U : LI->users()) {
+      auto *Inst = dyn_cast<Instruction>(U);
+      if (!Inst || Inst->getParent() != LI->getParent()) {
+        Valid = false;
+        break;
+      }
+
+      if (auto *Tr = dyn_cast<TruncInst>(Inst)) {
+        if (Tr->getDestTy() != Type::getInt8Ty(F.getContext())) {
+          Valid = false;
+          break;
+        }
+        Value *Byte = createPackedByteLoad(*LI, 0, *Tr);
+        Replacements.push_back({Tr, Byte});
+        ToErase.push_back(Tr);
+        continue;
+      }
+
+      auto *LS = dyn_cast<LShrOperator>(Inst);
+      if (!LS || !isa<ConstantInt>(LS->getOperand(1))) {
+        Valid = false;
+        break;
+      }
+
+      uint64_t Shift = cast<ConstantInt>(LS->getOperand(1))->getZExtValue();
+      if ((Shift & 7) != 0 || Shift >= BitWidth) {
+        Valid = false;
+        break;
+      }
+
+      if (!Inst->hasOneUse()) {
+        Valid = false;
+        break;
+      }
+
+      auto *Tr = dyn_cast<TruncInst>(*Inst->user_begin());
+      if (!Tr || Tr->getDestTy() != Type::getInt8Ty(F.getContext())) {
+        Valid = false;
+        break;
+      }
+
+      Value *Byte = createPackedByteLoad(*LI, Shift / 8, *Tr);
+      Replacements.push_back({Tr, Byte});
+      ToErase.push_back(Tr);
+      ToErase.push_back(Inst);
+    }
+
+    if (!Valid)
+      continue;
+
+    for (auto &[OldInst, NewVal] : Replacements)
+      OldInst->replaceAllUsesWith(NewVal);
+
+    for (Instruction *I : reverse(ToErase))
+      if (I->use_empty())
+        I->eraseFromParent();
+
+    if (LI->use_empty()) {
+      LI->eraseFromParent();
+      Changed = true;
+    }
+  }
+
+  return Changed;
+}
 
 char TC32PackedByteLoadStorePass::ID = 0;
 
