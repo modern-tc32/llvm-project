@@ -1992,7 +1992,11 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
           Twine::utohexstr(static_cast<uint64_t>(SrcOff)) + ", dst=" +
           Twine::utohexstr(static_cast<uint64_t>(DestOff)) + ", maxdisp=" +
           Twine(Br.MaxDisp) + ", dir=" +
-          (DestOff > SrcOff ? "forward" : "backward") +
+          (DestOff > SrcOff ? "forward" : "backward") + ", src_mbb=" +
+          Twine(MBB->getNumber()) + ", opc=" + Twine(MI->getOpcode()) +
+          ", opc_name=" + Twine(TII->getName(MI->getOpcode())) +
+          ", uncond_opc=" + Twine(Br.UncondBr) + ", uncond_name=" +
+          Twine(TII->getName(Br.UncondBr)) +
           ", split_attempts=" + Twine(NumTC32SplitAnchorAttempts) +
           ", split_success=" + Twine(NumTC32SplitAnchorSuccess) +
           ", forced_source_anchors=" + Twine(NumTC32ForcedSourceAnchors) +
