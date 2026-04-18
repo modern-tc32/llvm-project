@@ -1793,6 +1793,13 @@ bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
     if (!WaterBB)
       continue;
     int64_t CandOff = BBInfo[WaterBB->getNumber()].postOffset();
+    if (DestOff > SrcOff) {
+      if (!(CandOff > SrcOff && CandOff < DestOff))
+        continue;
+    } else {
+      if (!(CandOff < SrcOff && CandOff > DestOff))
+        continue;
+    }
     int64_t SrcDelta = std::abs(CandOff - SrcOff);
     if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
       continue;
@@ -1803,6 +1810,32 @@ bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
       continue;
     BestDist = CandDist;
     BestAnchor = WaterBB;
+  }
+
+  if (!BestAnchor) {
+    // WaterList can be sparse; retry over all MBB boundaries and keep
+    // monotonic progress toward destination.
+    for (MachineBasicBlock &CandBBRef : *MF) {
+      MachineBasicBlock *CandBB = &CandBBRef;
+      if (CandBB == MBB || CandBB == DestBB)
+        continue;
+      int64_t CandOff = BBInfo[CandBB->getNumber()].postOffset();
+      if (DestOff > SrcOff) {
+        if (!(CandOff > SrcOff && CandOff < DestOff))
+          continue;
+      } else {
+        if (!(CandOff < SrcOff && CandOff > DestOff))
+          continue;
+      }
+      int64_t SrcDelta = std::abs(CandOff - SrcOff);
+      if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
+        continue;
+      int64_t CandDist = std::abs(DestOff - CandOff);
+      if (CandDist >= BestDist)
+        continue;
+      BestDist = CandDist;
+      BestAnchor = CandBB;
+    }
   }
 
   if (!BestAnchor) {
