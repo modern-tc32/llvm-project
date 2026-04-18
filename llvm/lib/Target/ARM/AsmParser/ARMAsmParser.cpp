@@ -11670,7 +11670,8 @@ bool ARMAsmParser::ParseDirective(AsmToken DirectiveID) {
     parseDirectiveThumb(DirectiveID.getLoc());
   else if (IDVal == ".arm")
     parseDirectiveARM(DirectiveID.getLoc());
-  else if (IDVal == ".thumb_func")
+  else if (IDVal == ".thumb_func" ||
+           (IDVal == ".tc32_func" && getSTI().getTargetTriple().isTC32()))
     parseDirectiveThumbFunc(DirectiveID.getLoc());
   else if (IDVal == ".code")
     parseDirectiveCode(DirectiveID.getLoc());
