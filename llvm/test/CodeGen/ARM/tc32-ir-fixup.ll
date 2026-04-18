@@ -50,6 +50,25 @@ entry:
   ret void
 }
 
+define i32 @mrs_primask_ns() {
+; CHECK-LABEL: mrs_primask_ns:
+; CHECK-NOT: tmrss
+; CHECK: tmov r0, #0
+entry:
+  %v = call i32 asm sideeffect "mrs $0, PRIMASK_NS", "=r"()
+  ret i32 %v
+}
+
+define void @msr_primask_ns(i32 %x) {
+; CHECK-LABEL: msr_primask_ns:
+; CHECK-NOT: tmssr
+; CHECK-NOT: tadd sp
+; CHECK: tjex
+entry:
+  call void asm sideeffect "msr PRIMASK_NS, $0", "r"(i32 %x)
+  ret void
+}
+
 define i32 @mrs_other() {
 ; CHECK-LABEL: mrs_other:
 ; CHECK-NOT: tmrss
