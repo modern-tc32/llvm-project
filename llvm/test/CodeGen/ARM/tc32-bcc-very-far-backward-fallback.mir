@@ -1,7 +1,24 @@
-# RUN: not --crash llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - 2>&1 | FileCheck %s
+# RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - | FileCheck %s
 
-# CHECK: LLVM ERROR: TC32 branch island relaxation failed to converge
-# CHECK-SAME: first_offender_name=tB
+# CHECK-LABEL: bb.0:
+# CHECK: tPOP_RET
+# CHECK-LABEL: bb.2:
+# CHECK: tB %bb.0
+# CHECK-LABEL: bb.4:
+# CHECK: tB %bb.2
+# CHECK-LABEL: bb.6:
+# CHECK: tB %bb.4
+# CHECK-LABEL: bb.8:
+# CHECK: tB %bb.6
+# CHECK-LABEL: bb.10:
+# CHECK: tB %bb.8
+# CHECK-LABEL: bb.12:
+# CHECK: tB %bb.10
+# CHECK-LABEL: bb.14:
+# CHECK: tBcc %bb.15, 1
+# CHECK: tB %bb.12
+# CHECK-LABEL: bb.15:
+# CHECK: tPOP_RET
 
 --- |
   define void @f() { ret void }
@@ -15,7 +32,7 @@ body:             |
     tPOP_RET 14, $noreg, def $pc
 
   bb.1:
-    dead $r0 = SPACE 5000000, undef $r0
+    dead $r0 = SPACE 4200, undef $r0
 
   bb.2:
     tBcc %bb.0, 0, killed $cpsr
