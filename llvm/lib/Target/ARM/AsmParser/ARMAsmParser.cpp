@@ -6620,6 +6620,19 @@ static StringRef normalizeVendorTC32Mnemonic(StringRef Mnemonic) {
       .Default(Mnemonic);
 }
 
+static bool isUnsupportedTC32Mnemonic(StringRef Mnemonic) {
+  std::string Lower = Mnemonic.lower();
+  return StringSwitch<bool>(Lower)
+      .Cases({"bkpt", "clrex", "dbg"}, true)
+      .Cases({"cps", "cpsid", "cpsie"}, true)
+      .Cases({"dmb", "dsb", "hvc"}, true)
+      .Cases({"isb", "setend", "sev"}, true)
+      .Cases({"sevl", "smc", "svc"}, true)
+      .Cases({"udf", "wfe", "wfi"}, true)
+      .Case("yield", true)
+      .Default(false);
+}
+
 /// Given a mnemonic, split out possible predication code and carry
 /// setting letters to form a canonical mnemonic and flags.
 //
@@ -11534,6 +11547,14 @@ bool ARMAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
                                            OperandVector &Operands,
                                            MCStreamer &Out, uint64_t &ErrorInfo,
                                            bool MatchingInlineAsm) {
+  if (getSTI().getTargetTriple().isTC32() && !Operands.empty() &&
+      Operands[0]->isToken()) {
+    StringRef Mnemonic = static_cast<ARMOperand &>(*Operands[0]).getToken();
+    if (isUnsupportedTC32Mnemonic(Mnemonic))
+      return Error(IDLoc, "instruction is not supported on TC32",
+                   ((ARMOperand &)*Operands[0]).getLocRange());
+  }
+
   auto retryWithMnemonic = [&](StringRef RetryMnemonic, MCInst &RetryInst,
                                bool &RetryPendConditionalInstruction,
                                SmallVectorImpl<NearMissInfo> &RetryNearMisses)
