@@ -6,9 +6,9 @@
 # CHECK: bb.[[HOP1]]:
 # CHECK: tB %bb.[[HOP2:[0-9]+]]
 # CHECK: bb.[[HOP2]]:
-# CHECK: tB %bb.[[HOP3:[0-9]+]]
-# CHECK: bb.[[HOP3]]:
 # CHECK: tB %bb.[[FINAL:[0-9]+]]
+# CHECK: bb.[[FINAL]]:
+# CHECK: tPOP_RET
 
 --- |
   define void @f() { ret void }
