@@ -1,10 +1,8 @@
-# RUN: not --crash llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - 2>&1 | FileCheck %s
+# RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - | FileCheck %s
 
-# CHECK: LLVM ERROR: TC32 branch island relaxation failed to converge
-# CHECK: br_iters={{[0-9]+}}
-# CHECK: imm_branches={{[0-9]+}}
-# CHECK: cp_users={{[0-9]+}}
-# CHECK: water={{[0-9]+}}
+# CHECK: bb.0:
+# CHECK: tBcc %bb.1, 1
+# CHECK: tB %bb.3, 14
 
 --- |
   define void @f() { ret void }

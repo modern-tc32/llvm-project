@@ -26,4 +26,4 @@ body:             |
 
 # CHECK: bb.0:
 # CHECK: tBcc %bb.{{[0-9]+}}, 1
-# CHECK: tBfar %bb.2, 14 /* CC::al */, $noreg
+# CHECK: tB %bb.2, 14
