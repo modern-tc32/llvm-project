@@ -94,6 +94,15 @@ void ARMInstPrinter::printInst(const MCInst *MI, uint64_t Address,
   }
 
   switch (MI->getOpcode()) {
+  case ARM::tMOVr:
+    if (MI->getNumOperands() >= 2 && MI->getOperand(0).isReg() &&
+        MI->getOperand(1).isReg() && MI->getOperand(0).getReg() == ARM::R8 &&
+        MI->getOperand(1).getReg() == ARM::R8) {
+      O << "nop";
+      printAnnotation(O, Annot);
+      return;
+    }
+    break;
   case ARM::tTC32MCSR:
     O << "tmcsr\t";
     printOperand(MI, 0, STI, O);
