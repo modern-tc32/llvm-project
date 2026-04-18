@@ -519,7 +519,7 @@ DecodeStatus ARMDisassembler::decodeTC32Instruction(MCInst &MI, uint16_t Insn16,
     case 0x0180u: MI.setOpcode(ARM::tSBC); break;
     case 0x01C0u: MI.setOpcode(ARM::tROR); break;
     case 0x0280u: MI.setOpcode(ARM::tCMPr); break;
-    case 0x02C0u: MI.setOpcode(ARM::tCMNz); break;
+    case 0x02C0u: MI.setOpcode(ARM::tCMN); break;
     case 0x0300u: MI.setOpcode(ARM::tORR); break;
     case 0x0340u: MI.setOpcode(ARM::tMUL); break;
     case 0x0380u: MI.setOpcode(ARM::tBIC); break;
