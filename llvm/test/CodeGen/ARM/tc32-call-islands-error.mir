@@ -1,9 +1,13 @@
 # RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - | FileCheck %s
 
-# CHECK: bb.0:
-# CHECK: tBL 14
+# CHECK-LABEL: bb.0:
+# CHECK: tBL 14 {{.*}}, %bb.2, implicit-def dead $lr, implicit $sp
 # CHECK: bb.2:
-# CHECK: tBfar %bb.4, 14
+# CHECK: tB %bb.[[HOP1:[0-9]+]], 14 {{.*}}
+# CHECK: bb.[[HOP1]]:
+# CHECK: tB %bb.[[HOP2:[0-9]+]], 14 {{.*}}
+# CHECK: bb.[[HOP2]]:
+# CHECK: tB %bb.[[HOP3:[0-9]+]], 14 {{.*}}
 
 --- |
   define void @f() { ret void }

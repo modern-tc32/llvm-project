@@ -38,6 +38,14 @@ class TC32IRFixup {
 public:
   static constexpr uint32_t TC32RegIrqEnAddr = 0x800643;
 
+  static StringRef getSystemRegisterName(StringRef LowerAsm, bool IsMRS) {
+    StringRef Args = LowerAsm.drop_front(IsMRS ? 4 : 4).trim();
+    size_t Comma = Args.find(',');
+    if (Comma == StringRef::npos)
+      return {};
+    return (IsMRS ? Args.drop_front(Comma + 1) : Args.take_front(Comma)).trim();
+  }
+
   bool rejectUnsupportedInstruction(Instruction &I,
                                     SmallVectorImpl<Instruction *> &ToErase,
                                     StringRef Msg) {
@@ -116,7 +124,7 @@ public:
     }
 
     if (StringRef(LowerAsm).starts_with("mrs ")) {
-      if (LowerAsm.find("primask") != std::string::npos) {
+      if (getSystemRegisterName(LowerAsm, /*IsMRS=*/true) == "primask") {
         InlineAsm *NewIA = InlineAsm::get(
             IA->getFunctionType(), "tmrss ${0}", IA->getConstraintString(),
             IA->hasSideEffects(), IA->isAlignStack(), IA->getDialect());
@@ -133,7 +141,7 @@ public:
     }
 
     if (StringRef(LowerAsm).starts_with("msr ")) {
-      if (LowerAsm.find("primask") != std::string::npos) {
+      if (getSystemRegisterName(LowerAsm, /*IsMRS=*/false) == "primask") {
         InlineAsm *NewIA = InlineAsm::get(
             IA->getFunctionType(), "tmssr ${0}", IA->getConstraintString(),
             IA->hasSideEffects(), IA->isAlignStack(), IA->getDialect());
