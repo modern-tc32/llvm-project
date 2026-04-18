@@ -525,7 +525,9 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
                     Twine::utohexstr(static_cast<uint64_t>(OffDst)) +
                     ", first_offender_maxdisp=" +
                     Twine(FirstOffender->MaxDisp) + ", first_offender_opc=" +
-                    Twine(FirstOffender->MI->getOpcode()))
+                    Twine(FirstOffender->MI->getOpcode()) +
+                    ", first_offender_name=" +
+                    Twine(TII->getName(FirstOffender->MI->getOpcode())))
                  : Twine(", first_offender=none")));
       }
       report_fatal_error("Branch Fix Up pass failed to converge!");
