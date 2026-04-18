@@ -78,8 +78,6 @@ STATISTIC(NumTC32ForcedSourceAnchors,
           "Number of TC32 forced source-anchored island fallbacks");
 STATISTIC(NumTC32ForcedPrevAnchors,
           "Number of TC32 forced previous-block island fallbacks");
-STATISTIC(NumTC32VeryFarCondLongFallbacks,
-          "Number of TC32 very-far conditional fallbacks promoted to tBfar");
 STATISTIC(NumTC32VeryFarCallLongFallbacks,
           "Number of TC32 very-far call fallbacks promoted to tBfar");
 
@@ -524,10 +522,7 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
             Twine(NumTC32SplitAnchorAttempts) + ", split_success=" +
             Twine(NumTC32SplitAnchorSuccess) + ", forced_source_anchors=" +
             Twine(NumTC32ForcedSourceAnchors) + ", forced_prev_anchors=" +
-            Twine(NumTC32ForcedPrevAnchors) +
-            ", cond_long_fallbacks=" +
-            Twine(NumTC32VeryFarCondLongFallbacks) +
-            ", call_long_fallbacks=" +
+            Twine(NumTC32ForcedPrevAnchors) + ", call_long_fallbacks=" +
             Twine(NumTC32VeryFarCallLongFallbacks) +
             (FirstOffender
                  ? (Twine(", first_offender_src=") +
@@ -1953,59 +1948,29 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
     llvm_unreachable("fixupUnconditionalBr is Thumb1 only!");
 
   if (STI->getTargetTriple().isTC32()) {
-    MachineBasicBlock *DestBB = MI->getOperand(Br.DestOpnd).getMBB();
-    BBInfoVector &BBInfo = BBUtils->getBBInfo();
-    const int64_t SrcOff = BBUtils->getOffsetOf(MI);
-    const int64_t DestOff = BBInfo[DestBB->getNumber()].Offset;
-    const int64_t CurDist = std::abs(DestOff - SrcOff);
-    // Extremely distant jumps can require thousands of tiny island hops and
-    // may exceed the global branch-fixup iteration budget. Use long form
-    // directly for such cases.
-    if (CurDist > static_cast<int64_t>(Br.MaxDisp) * 16) {
-      Br.MaxDisp = (1 << 21) * 2;
-      MI->setDesc(TII->get(ARM::tBfar));
-      BBInfo[MBB->getNumber()].Size += 2;
-      BBUtils->adjustBBOffsetsAfter(MBB);
-      ++NumUBrFixed;
-      return true;
-    }
-    // Pick the farthest reachable monotonic anchor (largest in-range step
-    // toward destination). This avoids oscillation and tiny-progress chains
-    // that can trigger non-convergence.
-    MachineBasicBlock *BestAnchor = nullptr;
-    int64_t BestStep = -1;
-    for (MachineBasicBlock *WaterBB : WaterList) {
-      if (!WaterBB)
-        continue;
-      int64_t CandOff = BBInfo[WaterBB->getNumber()].postOffset();
-      // Keep progress monotonic to avoid anchor oscillation that can lead to
-      // non-convergence on large functions.
-      if (DestOff > SrcOff) {
-        if (!(CandOff > SrcOff && CandOff < DestOff))
-          continue;
-      } else {
-        if (!(CandOff < SrcOff && CandOff > DestOff))
-          continue;
-      }
-      int64_t SrcDelta = std::abs(CandOff - SrcOff);
-      if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
-        continue;
-      if (SrcDelta <= BestStep)
-        continue;
-      BestStep = SrcDelta;
-      BestAnchor = WaterBB;
-    }
+    MachineBasicBlock *FinalDestBB = MI->getOperand(Br.DestOpnd).getMBB();
+    MachineInstr *CurrBrMI = MI;
+    MachineBasicBlock *CurrMBB = MBB;
+    unsigned CurrDestOpnd = Br.DestOpnd;
+    bool Changed = false;
+    unsigned InsertedHops = 0;
 
-    if (!BestAnchor) {
-      // WaterList can be sparse; when it has no suitable block, retry over all
-      // MBBs and pick the farthest reachable monotonic anchor.
-      for (MachineBasicBlock &CandBBRef : *MF) {
-        MachineBasicBlock *CandBB = &CandBBRef;
-        if (CandBB == MBB || CandBB == DestBB)
+    auto FindBestAnchor = [&](MachineInstr *SrcMI, MachineBasicBlock *SrcMBB,
+                              MachineBasicBlock *DestBB, int64_t SrcOff,
+                              int64_t DestOff) {
+      BBInfoVector &BBInfo = BBUtils->getBBInfo();
+      MachineBasicBlock *BestAnchor = nullptr;
+      int64_t BestStep = -1;
+      const bool InsertBefore = DestOff < SrcOff;
+      auto GetAnchorOffset = [&](MachineBasicBlock *BB) -> int64_t {
+        return InsertBefore ? BBInfo[BB->getNumber()].Offset
+                            : BBInfo[BB->getNumber()].postOffset();
+      };
+
+      for (MachineBasicBlock *WaterBB : WaterList) {
+        if (!WaterBB)
           continue;
-        int64_t CandOff = BBInfo[CandBB->getNumber()].postOffset();
-        // Keep progress monotonic: only consider anchors located between
-        // source and destination in code layout.
+        int64_t CandOff = GetAnchorOffset(WaterBB);
         if (DestOff > SrcOff) {
           if (!(CandOff > SrcOff && CandOff < DestOff))
             continue;
@@ -2019,87 +1984,15 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
         if (SrcDelta <= BestStep)
           continue;
         BestStep = SrcDelta;
-        BestAnchor = CandBB;
+        BestAnchor = WaterBB;
       }
-    }
 
-    auto TrySplitSpaceForAnchor = [&]() -> bool {
-      MachineInstr *SplitSpaceMI = nullptr;
-      int64_t SplitPrefixSize = 0;
-      int64_t LocalBestStep = BestStep;
-      for (MachineBasicBlock &CandBBRef : *MF) {
-        if (&CandBBRef == MBB || &CandBBRef == DestBB)
-          continue;
-        for (MachineInstr &CandMIRef : CandBBRef) {
-          MachineInstr *CandMI = &CandMIRef;
-          if (CandMI->getOpcode() != ARM::SPACE)
+      if (!BestAnchor) {
+        for (MachineBasicBlock &CandBBRef : *MF) {
+          MachineBasicBlock *CandBB = &CandBBRef;
+          if (CandBB == SrcMBB || CandBB == DestBB)
             continue;
-          const int64_t CandOff = BBUtils->getOffsetOf(CandMI);
-          const int64_t SpaceSize = CandMI->getOperand(1).getImm();
-          if (SpaceSize <= 1)
-            continue;
-          if (DestOff > SrcOff) {
-            if (!(CandOff > SrcOff && CandOff < DestOff))
-              continue;
-          } else {
-            if (!(CandOff < SrcOff && CandOff > DestOff))
-              continue;
-          }
-          const int64_t MaxReach = SrcOff + static_cast<int64_t>(Br.MaxDisp);
-          int64_t SplitOff = std::min<int64_t>(CandOff + SpaceSize - 1, MaxReach);
-          if (SplitOff <= CandOff)
-            continue;
-          const int64_t Step = std::abs(SplitOff - SrcOff);
-          if (Step <= LocalBestStep)
-            continue;
-          SplitSpaceMI = CandMI;
-          SplitPrefixSize = SplitOff - CandOff;
-          LocalBestStep = Step;
-        }
-      }
-      if (!SplitSpaceMI)
-        return false;
-
-      MachineInstr *Prefix = MF->CloneMachineInstr(SplitSpaceMI);
-      Prefix->getOperand(1).setImm(SplitPrefixSize);
-      SplitSpaceMI->getParent()->insert(SplitSpaceMI->getIterator(), Prefix);
-      SplitSpaceMI->getOperand(1).setImm(SplitSpaceMI->getOperand(1).getImm() -
-                                         SplitPrefixSize);
-      MachineBasicBlock *NewBB = splitBlockBeforeInstr(SplitSpaceMI);
-      BestAnchor = &*std::prev(NewBB->getIterator());
-      BestStep = LocalBestStep;
-      ++NumTC32SplitAnchorSuccess;
-      LLVM_DEBUG(dbgs() << "  TC32 split-anchor fallback (SPACE): split "
-                        << printMBBReference(*BestAnchor) << " -> "
-                        << printMBBReference(*NewBB) << " at size "
-                        << SplitPrefixSize << '\n');
-      return true;
-    };
-
-    // If the selected anchor gives tiny progress while we are still out of
-    // range, split SPACE to get a near-maximal in-range step and avoid
-    // pathological long chains.
-    if (BestAnchor && CurDist > static_cast<int64_t>(Br.MaxDisp) &&
-        BestStep < static_cast<int64_t>(Br.MaxDisp) / 2) {
-      TrySplitSpaceForAnchor();
-    }
-
-    if (!BestAnchor) {
-      ++NumTC32SplitAnchorAttempts;
-      // If we still have no anchor, a large monolithic block may hide all
-      // potential landing points because we only considered MBB boundaries.
-      // Create a new boundary by splitting at an instruction that is both
-      // reachable from source and monotonic toward destination.
-      MachineInstr *SplitBefore = nullptr;
-      int64_t BestSplitDelta = -1;
-      for (MachineBasicBlock &CandBBRef : *MF) {
-        for (MachineInstr &CandMIRef : CandBBRef) {
-          MachineInstr *CandMI = &CandMIRef;
-          if (CandMI == MI)
-            continue;
-          if (&CandBBRef == MBB || &CandBBRef == DestBB)
-            continue;
-          int64_t CandOff = BBUtils->getOffsetOf(CandMI);
+          int64_t CandOff = GetAnchorOffset(CandBB);
           if (DestOff > SrcOff) {
             if (!(CandOff > SrcOff && CandOff < DestOff))
               continue;
@@ -2110,80 +2003,207 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
           int64_t SrcDelta = std::abs(CandOff - SrcOff);
           if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
             continue;
-          if (SrcDelta <= BestSplitDelta)
+          if (SrcDelta <= BestStep)
             continue;
-          BestSplitDelta = SrcDelta;
-          SplitBefore = CandMI;
+          BestStep = SrcDelta;
+          BestAnchor = CandBB;
         }
       }
-      if (SplitBefore) {
-        MachineBasicBlock *NewBB = splitBlockBeforeInstr(SplitBefore);
-        BestAnchor = &*std::prev(NewBB->getIterator());
+
+      auto TrySplitSpaceForAnchor = [&]() -> bool {
+        MachineInstr *SplitSpaceMI = nullptr;
+        int64_t SplitPrefixSize = 0;
+        int64_t LocalBestStep = BestStep;
+        for (MachineBasicBlock &CandBBRef : *MF) {
+          if (&CandBBRef == SrcMBB || &CandBBRef == DestBB)
+            continue;
+          for (MachineInstr &CandMIRef : CandBBRef) {
+            MachineInstr *CandMI = &CandMIRef;
+            if (CandMI->getOpcode() != ARM::SPACE)
+              continue;
+            const int64_t CandOff = BBUtils->getOffsetOf(CandMI);
+            const int64_t SpaceSize = CandMI->getOperand(1).getImm();
+            if (SpaceSize <= 1)
+              continue;
+            if (DestOff > SrcOff) {
+              if (!(CandOff > SrcOff && CandOff < DestOff))
+                continue;
+            } else {
+              if (!(CandOff < SrcOff && CandOff > DestOff))
+                continue;
+            }
+            const int64_t MaxReach =
+                DestOff > SrcOff
+                    ? SrcOff + static_cast<int64_t>(Br.MaxDisp)
+                    : SrcOff - static_cast<int64_t>(Br.MaxDisp);
+            int64_t SplitOff =
+                DestOff > SrcOff
+                    ? std::min<int64_t>(CandOff + SpaceSize - 1, MaxReach)
+                    : std::max<int64_t>(CandOff + 1, MaxReach);
+            if (SplitOff <= CandOff || SplitOff >= CandOff + SpaceSize)
+              continue;
+            const int64_t Step = std::abs(SplitOff - SrcOff);
+            if (Step <= LocalBestStep)
+              continue;
+            SplitSpaceMI = CandMI;
+            SplitPrefixSize = SplitOff - CandOff;
+            LocalBestStep = Step;
+          }
+        }
+        if (!SplitSpaceMI)
+          return false;
+
+        MachineInstr *Prefix = MF->CloneMachineInstr(SplitSpaceMI);
+        Prefix->getOperand(1).setImm(SplitPrefixSize);
+        SplitSpaceMI->getParent()->insert(SplitSpaceMI->getIterator(), Prefix);
+        SplitSpaceMI->getOperand(1).setImm(
+            SplitSpaceMI->getOperand(1).getImm() - SplitPrefixSize);
+        MachineBasicBlock *NewBB = splitBlockBeforeInstr(SplitSpaceMI);
+        BestAnchor = InsertBefore ? NewBB : &*std::prev(NewBB->getIterator());
+        BestStep = LocalBestStep;
         ++NumTC32SplitAnchorSuccess;
-        LLVM_DEBUG(dbgs() << "  TC32 split-anchor fallback: split "
+        LLVM_DEBUG(dbgs() << "  TC32 split-anchor fallback (SPACE): split "
                           << printMBBReference(*BestAnchor) << " -> "
-                          << printMBBReference(*NewBB) << '\n');
+                          << printMBBReference(*NewBB) << " at size "
+                          << SplitPrefixSize << '\n');
+        return true;
+      };
+
+      if (BestAnchor && std::abs(DestOff - SrcOff) > static_cast<int64_t>(Br.MaxDisp) &&
+          BestStep < static_cast<int64_t>(Br.MaxDisp) / 2)
+        TrySplitSpaceForAnchor();
+
+      if (!BestAnchor) {
+        ++NumTC32SplitAnchorAttempts;
+        MachineInstr *SplitBefore = nullptr;
+        int64_t BestSplitDelta = -1;
+        for (MachineBasicBlock &CandBBRef : *MF) {
+          for (MachineInstr &CandMIRef : CandBBRef) {
+            MachineInstr *CandMI = &CandMIRef;
+            if (CandMI == SrcMI)
+              continue;
+            if (&CandBBRef == SrcMBB || &CandBBRef == DestBB)
+              continue;
+            int64_t CandOff = BBUtils->getOffsetOf(CandMI);
+            if (DestOff > SrcOff) {
+              if (!(CandOff > SrcOff && CandOff < DestOff))
+                continue;
+            } else {
+              if (!(CandOff < SrcOff && CandOff > DestOff))
+                continue;
+            }
+            int64_t SrcDelta = std::abs(CandOff - SrcOff);
+            if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
+              continue;
+            if (SrcDelta <= BestSplitDelta)
+              continue;
+            BestSplitDelta = SrcDelta;
+            SplitBefore = CandMI;
+          }
+        }
+        if (SplitBefore) {
+          MachineBasicBlock *NewBB = splitBlockBeforeInstr(SplitBefore);
+          BestAnchor = InsertBefore ? NewBB : &*std::prev(NewBB->getIterator());
+          ++NumTC32SplitAnchorSuccess;
+          LLVM_DEBUG(dbgs() << "  TC32 split-anchor fallback: split "
+                            << printMBBReference(*BestAnchor) << " -> "
+                            << printMBBReference(*NewBB) << '\n');
+        }
       }
+
+      if (!BestAnchor)
+        TrySplitSpaceForAnchor();
+
+      if (!BestAnchor) {
+        if (DestOff > SrcOff) {
+          BestAnchor = SrcMBB;
+          ++NumTC32ForcedSourceAnchors;
+        } else {
+          BestAnchor = SrcMBB;
+          ++NumTC32ForcedPrevAnchors;
+        }
+        if (BestAnchor) {
+          LLVM_DEBUG(dbgs() << "  TC32 forced anchor fallback near source block "
+                            << printMBBReference(*SrcMBB) << '\n');
+        }
+      }
+
+      return std::pair(BestAnchor, BestStep);
+    };
+
+    while (true) {
+      BBInfoVector &BBInfo = BBUtils->getBBInfo();
+      const int64_t SrcOff = BBUtils->getOffsetOf(CurrBrMI);
+      const int64_t DestOff = BBInfo[FinalDestBB->getNumber()].Offset;
+      const int64_t CurDist = std::abs(DestOff - SrcOff);
+      if (CurDist <= static_cast<int64_t>(Br.MaxDisp))
+        break;
+
+      // Extremely distant jumps can require thousands of tiny island hops and
+      // may exceed the global branch-fixup iteration budget. Only use long form
+      // directly when LR has already been spilled, because tBfar clobbers LR.
+      if (!Changed && CurDist > static_cast<int64_t>(Br.MaxDisp) * 16 &&
+          AFI->isLRSpilled()) {
+        Br.MaxDisp = (1 << 21) * 2;
+        MI->setDesc(TII->get(ARM::tBfar));
+        BBInfo[MBB->getNumber()].Size += 2;
+        BBUtils->adjustBBOffsetsAfter(MBB);
+        ++NumUBrFixed;
+        return true;
+      }
+
+      auto [BestAnchor, BestStep] =
+          FindBestAnchor(CurrBrMI, CurrMBB, FinalDestBB, SrcOff, DestOff);
+      (void)BestStep;
+      if (!BestAnchor)
+        report_fatal_error("underestimated function size");
+
+      MachineBasicBlock *VeneerBB =
+          MF->CreateMachineBasicBlock(CurrMBB->getBasicBlock());
+      const bool InsertBefore = DestOff < SrcOff;
+      MachineFunction::iterator InsertPos =
+          InsertBefore ? BestAnchor->getIterator()
+                       : std::next(BestAnchor->getIterator());
+      MF->insert(InsertPos, VeneerBB);
+
+      BuildMI(VeneerBB, DebugLoc(), TII->get(ARM::tB))
+          .addMBB(FinalDestBB)
+          .add(predOps(ARMCC::AL));
+      VeneerBB->addSuccessor(FinalDestBB);
+
+      updateForInsertedWaterBlock(VeneerBB);
+      BBUtils->computeBlockSize(VeneerBB);
+      if (!InsertBefore) {
+        BBUtils->adjustBBOffsetsAfter(BestAnchor);
+      } else if (VeneerBB->getIterator() == MF->begin()) {
+        BBUtils->adjustBBOffsetsAfter(VeneerBB);
+      } else {
+        BBUtils->adjustBBOffsetsAfter(&*std::prev(VeneerBB->getIterator()));
+      }
+
+      CurrBrMI->getOperand(CurrDestOpnd).setMBB(VeneerBB);
+      CurrBrMI = &VeneerBB->back();
+      CurrMBB = VeneerBB;
+      CurrDestOpnd = 0;
+      Changed = true;
+      ++InsertedHops;
+
+      unsigned MaxDisp = getUnconditionalBrDisp(ARM::tB);
+      ImmBranches.push_back(
+          ImmBranch(&VeneerBB->back(), MaxDisp, false, false, 0, ARM::tB));
+
+      if (InsertBefore)
+        break;
+
+      if (InsertedHops > 4096)
+        report_fatal_error("TC32 branch island chain exceeded hop budget");
     }
 
-    if (!BestAnchor) {
-      // Last split-anchor chance: split inside a large SPACE pseudo to create
-      // an interior MBB boundary near the maximal reachable offset.
-      TrySplitSpaceForAnchor();
-    }
-
-    if (!BestAnchor) {
-      // Last-resort fallback: force an island adjacent to source.
-      // Forward branch: place island after source.
-      // Backward branch: place island before source (after previous MBB).
-      // This keeps LR untouched and lets later iterations continue relaxing
-      // from the newly inserted block.
-      if (DestOff > SrcOff) {
-        BestAnchor = MBB;
-        ++NumTC32ForcedSourceAnchors;
-      } else if (MBB->getIterator() != MF->begin()) {
-        BestAnchor = &*std::prev(MBB->getIterator());
-        ++NumTC32ForcedPrevAnchors;
-      }
-      if (BestAnchor) {
-        LLVM_DEBUG(dbgs() << "  TC32 forced anchor fallback near source block "
-                          << printMBBReference(*MBB) << '\n');
-      }
-    }
-
-    if (!BestAnchor) {
-      // Safety net for TC32: if no island candidate exists (or the island
-      // chain cannot converge), force a long-form branch that does not depend
-      // on intermediate anchors.
-      Br.MaxDisp = (1 << 21) * 2;
-      MI->setDesc(TII->get(ARM::tBfar));
-      BBInfo[MBB->getNumber()].Size += 2;
-      BBUtils->adjustBBOffsetsAfter(MBB);
+    if (Changed) {
       ++NumUBrFixed;
       return true;
     }
-
-    MachineBasicBlock *VeneerBB =
-        MF->CreateMachineBasicBlock(MBB->getBasicBlock());
-    MachineFunction::iterator InsertPos = std::next(BestAnchor->getIterator());
-    MF->insert(InsertPos, VeneerBB);
-
-    BuildMI(VeneerBB, DebugLoc(), TII->get(ARM::tB))
-        .addMBB(DestBB)
-        .add(predOps(ARMCC::AL));
-    VeneerBB->addSuccessor(DestBB);
-
-    updateForInsertedWaterBlock(VeneerBB);
-    BBUtils->computeBlockSize(VeneerBB);
-    BBUtils->adjustBBOffsetsAfter(BestAnchor);
-
-    MI->getOperand(Br.DestOpnd).setMBB(VeneerBB);
-    ++NumUBrFixed;
-
-    unsigned MaxDisp = getUnconditionalBrDisp(ARM::tB);
-    ImmBranches.push_back(
-        ImmBranch(&VeneerBB->back(), MaxDisp, false, false, 0, ARM::tB));
-    return true;
+    return false;
   }
 
   if (!AFI->isLRSpilled())
@@ -2280,17 +2300,6 @@ ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
   Br.MI = &MBB->back();
   BBUtils->adjustBBSize(MBB, TII->getInstSizeInBytes(MBB->back()));
   unsigned NewUncondOpc = Br.UncondBr;
-  if (STI->getTargetTriple().isTC32()) {
-    BBInfoVector &BBInfo = BBUtils->getBBInfo();
-    const int64_t NewSrcOff = BBUtils->getOffsetOf(Br.MI);
-    const int64_t DestOff = BBInfo[DestBB->getNumber()].Offset;
-    const int64_t NewDist = std::abs(DestOff - NewSrcOff);
-    const unsigned ShortDisp = getUnconditionalBrDisp(Br.UncondBr);
-    if (NewDist > static_cast<int64_t>(ShortDisp) * 4) {
-      NewUncondOpc = ARM::tBfar;
-      ++NumTC32VeryFarCondLongFallbacks;
-    }
-  }
   if (isThumb)
     BuildMI(MBB, DebugLoc(), TII->get(NewUncondOpc))
         .addMBB(DestBB)
