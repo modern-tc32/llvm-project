@@ -455,33 +455,52 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCAssembler &Asm,
   }
 
   if (IsTC32) {
+    auto DescribeTC32Fixup = [&]() {
+      std::string Desc;
+      raw_string_ostream OS(Desc);
+      OS << " (kind=" << Kind << ", off=" << Fixup.getOffset()
+         << ", value=" << static_cast<int64_t>(Value);
+      if (Target.getConstant())
+        OS << ", const=" << Target.getConstant();
+      OS << ")";
+      return OS.str();
+    };
     switch (Kind) {
     case ARM::fixup_arm_thumb_cp:
       if ((Value & 3) != 0 || Value < 4 || Value > 1024) {
-        Ctx.reportError(Fixup.getLoc(), "invalid TC32 literal load target");
+        Ctx.reportError(Fixup.getLoc(),
+                        Twine("invalid TC32 literal load target") +
+                            DescribeTC32Fixup());
         return 0;
       }
       return ((Value - 4) >> 2) & 0xff;
     case ARM::fixup_arm_thumb_bcc: {
       if ((Value & 1) != 0) {
-        Ctx.reportError(Fixup.getLoc(), "unaligned TC32 conditional branch");
+        Ctx.reportError(Fixup.getLoc(),
+                        Twine("unaligned TC32 conditional branch") +
+                            DescribeTC32Fixup());
         return 0;
       }
       int64_t Enc = (static_cast<int64_t>(Value) - 4) >> 1;
       if (!isInt<8>(Enc)) {
-        Ctx.reportError(Fixup.getLoc(), "TC32 conditional branch out of range");
+        Ctx.reportError(Fixup.getLoc(),
+                        Twine("TC32 conditional branch out of range") +
+                            DescribeTC32Fixup() + ", enc=" + Twine(Enc));
         return 0;
       }
       return static_cast<uint8_t>(Enc);
     }
     case ARM::fixup_arm_thumb_br: {
       if ((Value & 1) != 0) {
-        Ctx.reportError(Fixup.getLoc(), "unaligned TC32 jump");
+        Ctx.reportError(Fixup.getLoc(),
+                        Twine("unaligned TC32 jump") + DescribeTC32Fixup());
         return 0;
       }
       int64_t Enc = (static_cast<int64_t>(Value) - 4) >> 1;
       if (!isInt<11>(Enc)) {
-        Ctx.reportError(Fixup.getLoc(), "TC32 jump out of range");
+        Ctx.reportError(Fixup.getLoc(),
+                        Twine("TC32 jump out of range") + DescribeTC32Fixup() +
+                            ", enc=" + Twine(Enc));
         return 0;
       }
       return static_cast<uint16_t>(Enc) & 0x07ffu;
@@ -490,12 +509,15 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCAssembler &Asm,
       if (!IsResolved)
         return 0;
       if ((Value & 1) != 0) {
-        Ctx.reportError(Fixup.getLoc(), "unaligned TC32 call");
+        Ctx.reportError(Fixup.getLoc(),
+                        Twine("unaligned TC32 call") + DescribeTC32Fixup());
         return 0;
       }
       int64_t Enc = (static_cast<int64_t>(Value) - 4) >> 1;
       if (!isInt<22>(Enc)) {
-        Ctx.reportError(Fixup.getLoc(), "TC32 call out of range");
+        Ctx.reportError(Fixup.getLoc(),
+                        Twine("TC32 call out of range") + DescribeTC32Fixup() +
+                            ", enc=" + Twine(Enc));
         return 0;
       }
       uint32_t EncImm = static_cast<uint32_t>(Enc) & 0x3FFFFFu;
@@ -1177,19 +1199,24 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
     case ARM::fixup_arm_thumb_bcc:
     case ARM::fixup_arm_thumb_br:
     case ARM::fixup_arm_thumb_cp:
-    case ARM::fixup_arm_thumb_bl:
-      // Recompute target address from the final layout. evaluateFixup() may
-      // resolve symbol offsets during an intermediate layout pass before
-      // fragment sizes have converged. By the time applyFixup() runs the
-      // layout is final, so recomputing here avoids encoding stale targets.
-      if (const MCSymbol *Sym = Target.getAddSym()) {
-        if (Sym->isDefined()) {
-          Value = Target.getConstant() + Asm->getSymbolOffset(*Sym);
-          if (const MCSymbol *Sub = Target.getSubSym())
-            Value -= Asm->getSymbolOffset(*Sub);
-        }
-      }
+    case ARM::fixup_arm_thumb_bl: {
+      // Recompute the final fixup value from the converged layout. These TC32
+      // fixups are all PC-relative and must match MCAssembler::evaluateFixup():
+      // the value handed to adjustFixupValue is the final displacement, not an
+      // absolute symbol offset.
+      const int64_t SourceOffset =
+          static_cast<int64_t>(Asm->getFragmentOffset(F) + Fixup.getOffset());
+      int64_t FinalValue = Target.getConstant();
+      if (const MCSymbol *Sym = Target.getAddSym(); Sym && Sym->isDefined())
+        FinalValue += static_cast<int64_t>(Asm->getSymbolOffset(*Sym));
+      if (const MCSymbol *Sub = Target.getSubSym(); Sub && Sub->isDefined())
+        FinalValue -= static_cast<int64_t>(Asm->getSymbolOffset(*Sub));
+      if (Fixup.getKind() == ARM::fixup_arm_thumb_cp)
+        FinalValue += SourceOffset % 4;
+      FinalValue -= SourceOffset;
+      Value = static_cast<uint64_t>(FinalValue);
       break;
+    }
     default:
       break;
     }

@@ -81,6 +81,9 @@ STATISTIC(NumTC32ForcedPrevAnchors,
 STATISTIC(NumTC32VeryFarCallLongFallbacks,
           "Number of TC32 very-far call fallbacks promoted to tBfar");
 
+static inline unsigned getUnconditionalBrDisp(int Opc);
+static inline int64_t getThumbBranchPCOffset(int64_t InstrOff);
+
 static cl::opt<bool>
 AdjustJumpTableBlocks("arm-adjust-jump-tables", cl::Hidden, cl::init(true),
           cl::desc("Adjust basic block layout to better use TB[BH]"));
@@ -269,6 +272,7 @@ namespace {
     void createNewWater(unsigned CPUserIndex, unsigned UserOffset,
                         MachineBasicBlock *&NewMBB);
     bool handleConstantPoolUser(unsigned CPUserIndex, bool CloserWater);
+    void rebuildLateVerifyState();
     void removeDeadCPEMI(MachineInstr *CPEMI);
     bool removeUnusedCPEntries();
     bool isCPEntryInRange(MachineInstr *MI, unsigned UserOffset,
@@ -467,6 +471,12 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
   /// Remove dead constant pool entries.
   MadeChange |= removeUnusedCPEntries();
 
+  const unsigned RelaxationIterationLimit =
+      STI->getTargetTriple().isTC32() ? std::max<unsigned>(CPMaxIteration, 512)
+                                      : CPMaxIteration;
+  const unsigned BranchIterationLimit =
+      STI->getTargetTriple().isTC32() ? RelaxationIterationLimit : 30;
+
   // Iteratively place constant pool entries and fix up branches until there
   // is no change.
   unsigned NoCPIters = 0, NoBRIters = 0;
@@ -477,8 +487,9 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
       // For most inputs, it converges in no more than 5 iterations.
       // If it doesn't end in 10, the input may have huge BB or many CPEs.
       // In this case, we will try different heuristics.
-      CPChange |= handleConstantPoolUser(i, NoCPIters >= CPMaxIteration / 2);
-    if (CPChange && ++NoCPIters > CPMaxIteration)
+      CPChange |= handleConstantPoolUser(
+          i, NoCPIters >= RelaxationIterationLimit / 2);
+    if (CPChange && ++NoCPIters > RelaxationIterationLimit)
       report_fatal_error("Constant Island pass failed to converge!");
     LLVM_DEBUG(dumpBBs());
 
@@ -492,7 +503,7 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
       // Note: fixupImmediateBr can append to ImmBranches.
       BRChange |= fixupImmediateBr(ImmBranches[i]);
     }
-    if (BRChange && ++NoBRIters > 30) {
+    if (BRChange && ++NoBRIters > BranchIterationLimit) {
       if (STI->getTargetTriple().isTC32()) {
         const ImmBranch *FirstOffender = nullptr;
         int64_t OffSrc = 0;
@@ -545,6 +556,160 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
     MadeChange = true;
   }
 
+  // In release builds verify() is compiled out, but TC32 relies on a large
+  // number of late island insertions. One CPE/branch can be in range when it
+  // is processed and then be pushed back out of range by later insertions in
+  // the same convergence loop. Run an explicit post-convergence validation and
+  // repair pass so we don't silently hand out-of-range fixups to MC.
+  if (STI->getTargetTriple().isTC32()) {
+    bool RepairedAll = false;
+    for (unsigned RepairIter = 0; RepairIter != RelaxationIterationLimit;
+         ++RepairIter) {
+      rebuildLateVerifyState();
+
+      bool CPRecovered = false;
+      for (unsigned I = 0, E = CPUsers.size(); I != E; ++I) {
+        CPUser &U = CPUsers[I];
+        unsigned UserOffset = getUserOffset(U);
+        if (isCPEntryInRange(U.MI, UserOffset, U.CPEMI, U.getMaxDisp(),
+                             U.NegOk, /*DoDump=*/false))
+          continue;
+        CPRecovered |= handleConstantPoolUser(I, /*CloserWater=*/true);
+      }
+
+      // Mirror the normal loop: newly created water from branch fixups should
+      // be visible to the next constant-pool repair round, not this one.
+      NewWaterList.clear();
+
+      bool BRRecovered = false;
+      for (unsigned I = 0; I < ImmBranches.size(); ++I) {
+        ImmBranch &Br = ImmBranches[I];
+        if (!Br.MI)
+          continue;
+        const MachineOperand &DstOp = Br.MI->getOperand(Br.DestOpnd);
+        if (!DstOp.isMBB())
+          continue;
+        if (BBUtils->isBBInRange(Br.MI, DstOp.getMBB(), Br.MaxDisp))
+          continue;
+        BRRecovered |= fixupImmediateBr(Br);
+      }
+
+      bool AnyCPOutOfRange = false;
+      unsigned FirstBadCPI = 0;
+      for (unsigned I = 0, E = CPUsers.size(); I != E; ++I) {
+        CPUser &U = CPUsers[I];
+        unsigned UserOffset = getUserOffset(U);
+        if (isCPEntryInRange(U.MI, UserOffset, U.CPEMI, U.getMaxDisp(),
+                             U.NegOk, /*DoDump=*/false))
+          continue;
+        AnyCPOutOfRange = true;
+        FirstBadCPI = I;
+        break;
+      }
+
+      bool AnyBROutOfRange = false;
+      unsigned FirstBadBRI = 0;
+      for (unsigned I = 0; I < ImmBranches.size(); ++I) {
+        ImmBranch &Br = ImmBranches[I];
+        if (!Br.MI)
+          continue;
+        const MachineOperand &DstOp = Br.MI->getOperand(Br.DestOpnd);
+        if (!DstOp.isMBB())
+          continue;
+        if (BBUtils->isBBInRange(Br.MI, DstOp.getMBB(), Br.MaxDisp))
+          continue;
+        AnyBROutOfRange = true;
+        FirstBadBRI = I;
+        break;
+      }
+
+      if (!AnyCPOutOfRange && !AnyBROutOfRange) {
+        RepairedAll = true;
+        break;
+      }
+
+      if (!CPRecovered && !BRRecovered) {
+        std::string Msg = "TC32 post-verify repair failed";
+        raw_string_ostream OS(Msg);
+        if (AnyCPOutOfRange) {
+          CPUser &U = CPUsers[FirstBadCPI];
+          OS << " (cp_user_idx=" << FirstBadCPI
+             << ", cp_user_opc=" << TII->getName(U.MI->getOpcode())
+             << ", function=" << MF->getName()
+             << ", cp_user_bb=" << U.MI->getParent()->getNumber()
+             << ", cp_entry_bb=" << U.CPEMI->getParent()->getNumber() << ")";
+        } else if (AnyBROutOfRange) {
+          ImmBranch &Br = ImmBranches[FirstBadBRI];
+          const MachineOperand &DstOp = Br.MI->getOperand(Br.DestOpnd);
+          MachineBasicBlock *DstMBB = DstOp.isMBB() ? DstOp.getMBB() : nullptr;
+          int64_t SrcOff = BBUtils->getOffsetOf(Br.MI);
+          int64_t DstOff = DstMBB ? BBUtils->getOffsetOf(DstMBB) : -1;
+          OS << " (branch_idx=" << FirstBadBRI
+             << ", branch_opc=" << TII->getName(Br.MI->getOpcode())
+             << ", function=" << MF->getName()
+             << ", branch_bb=" << Br.MI->getParent()->getNumber()
+             << ", branch_dest_bb="
+             << (DstMBB ? Twine(DstMBB->getNumber()) : Twine("n/a"))
+             << ", branch_src_off=" << SrcOff
+             << ", branch_dst_off=" << DstOff
+             << ", branch_max_disp=" << Br.MaxDisp << ")";
+        }
+        std::string Error = std::move(OS.str());
+        report_fatal_error(StringRef(Error));
+      }
+
+      MadeChange = true;
+    }
+
+    if (!RepairedAll) {
+      rebuildLateVerifyState();
+      std::string Msg = "TC32 post-verify repair exhausted iteration budget";
+      raw_string_ostream OS(Msg);
+
+      for (unsigned I = 0, E = CPUsers.size(); I != E; ++I) {
+        CPUser &U = CPUsers[I];
+        unsigned UserOffset = getUserOffset(U);
+        if (isCPEntryInRange(U.MI, UserOffset, U.CPEMI, U.getMaxDisp(),
+                             U.NegOk, /*DoDump=*/false))
+          continue;
+        OS << " (cp_user_idx=" << I
+           << ", cp_user_opc=" << TII->getName(U.MI->getOpcode())
+           << ", function=" << MF->getName()
+           << ", cp_user_bb=" << U.MI->getParent()->getNumber()
+           << ", cp_entry_bb=" << U.CPEMI->getParent()->getNumber()
+           << ", repair_limit=" << RelaxationIterationLimit << ")";
+        report_fatal_error(StringRef(OS.str()));
+      }
+
+      for (unsigned I = 0; I < ImmBranches.size(); ++I) {
+        ImmBranch &Br = ImmBranches[I];
+        if (!Br.MI)
+          continue;
+        const MachineOperand &DstOp = Br.MI->getOperand(Br.DestOpnd);
+        if (!DstOp.isMBB())
+          continue;
+        if (BBUtils->isBBInRange(Br.MI, DstOp.getMBB(), Br.MaxDisp))
+          continue;
+        MachineBasicBlock *DstMBB = DstOp.getMBB();
+        int64_t SrcOff = BBUtils->getOffsetOf(Br.MI);
+        int64_t DstOff = DstMBB ? BBUtils->getOffsetOf(DstMBB) : -1;
+        OS << " (branch_idx=" << I
+           << ", branch_opc=" << TII->getName(Br.MI->getOpcode())
+           << ", function=" << MF->getName()
+           << ", branch_bb=" << Br.MI->getParent()->getNumber()
+           << ", branch_dest_bb="
+           << (DstMBB ? Twine(DstMBB->getNumber()) : Twine("n/a"))
+           << ", branch_src_off=" << SrcOff
+           << ", branch_dst_off=" << DstOff
+           << ", branch_max_disp=" << Br.MaxDisp
+           << ", repair_limit=" << RelaxationIterationLimit << ")";
+        report_fatal_error(StringRef(OS.str()));
+      }
+
+      report_fatal_error(StringRef(OS.str()));
+    }
+  }
+
   // Shrink 32-bit Thumb2 load and store instructions.
   if (isThumb2 && !STI->prefers32BitThumb())
     MadeChange |= optimizeThumb2Instructions();
@@ -582,6 +747,224 @@ bool ARMConstantIslands::runOnMachineFunction(MachineFunction &mf) {
   T2JumpTables.clear();
 
   return MadeChange;
+}
+
+void ARMConstantIslands::rebuildLateVerifyState() {
+  WaterList.clear();
+  NewWaterList.clear();
+  CPUsers.clear();
+  ImmBranches.clear();
+  PushPopMIs.clear();
+  T2JumpTables.clear();
+  JumpTableUserIndices.clear();
+
+  for (std::vector<CPEntry> &CPEs : CPEntries)
+    for (CPEntry &CPE : CPEs)
+      CPE.RefCount = 0;
+
+  BBInfoVector &BBInfo = BBUtils->getBBInfo();
+  BBInfo.clear();
+  BBInfo.resize(MF->getNumBlockIDs());
+  if (!BBInfo.empty())
+    BBInfo.front().KnownBits = Log2(MF->getAlignment());
+  BBUtils->computeAllBlockSizes();
+  BBUtils->adjustBBOffsetsAfter(&MF->front());
+
+  DenseMap<unsigned, MachineInstr *> CPIIDToCPEMI;
+  for (const std::vector<CPEntry> &CPEs : CPEntries) {
+    for (const CPEntry &CPE : CPEs) {
+      if (CPE.CPEMI)
+        CPIIDToCPEMI.insert(std::make_pair(CPE.CPI, CPE.CPEMI));
+    }
+  }
+
+  auto FindAnyLiveEntry = [&](unsigned CombinedIndex) -> MachineInstr * {
+    if (CombinedIndex >= CPEntries.size())
+      return nullptr;
+    for (const CPEntry &CPE : CPEntries[CombinedIndex]) {
+      if (CPE.CPEMI)
+        return CPE.CPEMI;
+    }
+    return nullptr;
+  };
+
+  MachineJumpTableInfo *MJTI = MF->getJumpTableInfo();
+  bool InlineJumpTables =
+      MJTI && MJTI->getEntryKind() == MachineJumpTableInfo::EK_Inline;
+
+  for (MachineBasicBlock &MBB : *MF) {
+    if (!BBHasFallthrough(&MBB))
+      WaterList.push_back(&MBB);
+
+    for (MachineInstr &I : MBB) {
+      if (I.isDebugInstr())
+        continue;
+
+      unsigned Opc = I.getOpcode();
+      if (I.isBranch() ||
+          (STI->getTargetTriple().isTC32() && I.getOpcode() == ARM::tBL)) {
+        bool isCond = false;
+        bool IsCall = false;
+        unsigned Bits = 0;
+        unsigned Scale = 1;
+        unsigned DestOpnd = 0;
+        int UOpc = Opc;
+        switch (Opc) {
+        default:
+          break;
+        case ARM::t2BR_JT:
+        case ARM::tBR_JTr:
+          if (InlineJumpTables)
+            T2JumpTables.push_back(&I);
+          break;
+        case ARM::Bcc:
+          isCond = true;
+          UOpc = ARM::B;
+          [[fallthrough]];
+        case ARM::B:
+          Bits = 24;
+          Scale = 4;
+          break;
+        case ARM::tBcc:
+          isCond = true;
+          UOpc = ARM::tB;
+          Bits = 8;
+          Scale = 2;
+          break;
+        case ARM::tB:
+          Bits = 11;
+          Scale = 2;
+          break;
+        case ARM::t2Bcc:
+          isCond = true;
+          UOpc = ARM::t2B;
+          Bits = 20;
+          Scale = 2;
+          break;
+        case ARM::t2B:
+          Bits = 24;
+          Scale = 2;
+          break;
+        case ARM::tBL:
+          if (!STI->getTargetTriple().isTC32() || !I.getOperand(2).isMBB())
+            break;
+          IsCall = true;
+          DestOpnd = 2;
+          UOpc = ARM::tB;
+          Bits = 22;
+          Scale = 2;
+          break;
+        }
+
+        if (Bits != 0) {
+          unsigned MaxOffs = ((1 << (Bits - 1)) - 1) * Scale;
+          ImmBranches.push_back(
+              ImmBranch(&I, MaxOffs, isCond, IsCall, DestOpnd, UOpc));
+        }
+      }
+
+      if (Opc == ARM::tPUSH || Opc == ARM::tPOP_RET)
+        PushPopMIs.push_back(&I);
+
+      if (Opc == ARM::CONSTPOOL_ENTRY || Opc == ARM::JUMPTABLE_ADDRS ||
+          Opc == ARM::JUMPTABLE_INSTS || Opc == ARM::JUMPTABLE_TBB ||
+          Opc == ARM::JUMPTABLE_TBH)
+        continue;
+
+      for (unsigned Op = 0, E = I.getNumOperands(); Op != E; ++Op) {
+        const MachineOperand &MO = I.getOperand(Op);
+        if (!MO.isCPI() && !(MO.isJTI() && InlineJumpTables))
+          continue;
+
+        unsigned Bits = 0;
+        unsigned Scale = 1;
+        bool NegOk = false;
+        bool IsSoImm = false;
+
+        switch (Opc) {
+        default:
+          llvm_unreachable("Unknown addressing mode for CP reference!");
+        case ARM::LEApcrel:
+        case ARM::LEApcrelJT: {
+          Bits = 8;
+          NegOk = true;
+          IsSoImm = true;
+          MachineInstr *TmpCPEMI = nullptr;
+          if (MO.isCPI())
+            TmpCPEMI = CPIIDToCPEMI.lookup(MO.getIndex());
+          else if (MO.isJTI())
+            TmpCPEMI = FindAnyLiveEntry(JumpTableEntryIndices[MO.getIndex()]);
+          if (!TmpCPEMI)
+            report_fatal_error(
+                "missing current CPE entry while rebuilding TC32 state");
+          const Align CPEAlign = getCPEAlign(TmpCPEMI);
+          const unsigned LogCPEAlign = Log2(CPEAlign);
+          Scale = LogCPEAlign >= 2 ? 4 : 1;
+          break;
+        }
+        case ARM::t2LEApcrel:
+        case ARM::t2LEApcrelJT:
+          Bits = 12;
+          NegOk = true;
+          break;
+        case ARM::tLEApcrel:
+        case ARM::tLEApcrelJT:
+          Bits = 8;
+          Scale = 4;
+          break;
+        case ARM::LDRBi12:
+        case ARM::LDRi12:
+        case ARM::LDRcp:
+        case ARM::t2LDRpci:
+        case ARM::t2LDRpci_pic:
+        case ARM::t2LDRHpci:
+        case ARM::t2LDRSHpci:
+        case ARM::t2LDRBpci:
+        case ARM::t2LDRSBpci:
+          Bits = 12;
+          NegOk = true;
+          break;
+        case ARM::tLDRpci:
+        case ARM::tLDRpci_pic:
+          Bits = 8;
+          Scale = 4;
+          break;
+        case ARM::VLDRD:
+        case ARM::VLDRS:
+          Bits = 8;
+          Scale = 4;
+          NegOk = true;
+          break;
+        case ARM::VLDRH:
+          Bits = 8;
+          Scale = 2;
+          NegOk = true;
+          break;
+        }
+
+        MachineInstr *CPEMI = nullptr;
+        if (MO.isCPI()) {
+          CPEMI = CPIIDToCPEMI.lookup(MO.getIndex());
+        } else {
+          unsigned JTI = MO.getIndex();
+          JumpTableUserIndices.insert(std::make_pair(JTI, CPUsers.size()));
+          CPEMI = FindAnyLiveEntry(JumpTableEntryIndices[JTI]);
+        }
+        if (!CPEMI)
+          report_fatal_error(
+              "missing current CPE entry while rebuilding TC32 state");
+
+        unsigned MaxOffs = ((1 << Bits) - 1) * Scale;
+        CPUsers.push_back(CPUser(&I, CPEMI, MaxOffs, NegOk, IsSoImm));
+
+        unsigned CombinedIndex = getCombinedIndex(CPEMI);
+        CPEntry *CPE = findConstPoolEntry(CombinedIndex, CPEMI);
+        assert(CPE && "Cannot find rebuilt corresponding CPEntry!");
+        CPE->RefCount++;
+        break;
+      }
+    }
+  }
 }
 
 /// Perform the initial placement of the regular constant pool entries.
@@ -955,6 +1338,7 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
           case ARM::LDRi12:
           case ARM::LDRcp:
           case ARM::t2LDRpci:
+          case ARM::t2LDRpci_pic:
           case ARM::t2LDRHpci:
           case ARM::t2LDRSHpci:
           case ARM::t2LDRBpci:
@@ -964,6 +1348,7 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
             break;
 
           case ARM::tLDRpci:
+          case ARM::tLDRpci_pic:
             Bits = 8;
             Scale = 4;  // +(offset_8*4)
             break;
@@ -1062,6 +1447,9 @@ MachineBasicBlock *ARMConstantIslands::splitBlockBeforeInstr(MachineInstr *MI) {
     BuildMI(OrigBB, DebugLoc(), TII->get(Opc))
         .addMBB(NewBB)
         .add(predOps(ARMCC::AL));
+  ImmBranches.push_back(
+      ImmBranch(&OrigBB->back(), getUnconditionalBrDisp(Opc), false, false, 0,
+                Opc));
   ++NumSplit;
 
   // Update the CFG.  All succs of OrigBB are now succs of NewBB.
@@ -1334,6 +1722,10 @@ static inline unsigned getUnconditionalBrDisp(int Opc) {
   }
 
   return ((1<<23)-1)*4;
+}
+
+static inline int64_t getThumbBranchPCOffset(int64_t InstrOff) {
+  return InstrOff + 4;
 }
 
 /// findAvailableWater - Look for an existing entry in the WaterList in which
@@ -1784,8 +2176,9 @@ bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
   MachineBasicBlock *DestBB = MI->getOperand(Br.DestOpnd).getMBB();
   BBInfoVector &BBInfo = BBUtils->getBBInfo();
   const int64_t SrcOff = BBUtils->getOffsetOf(MI);
+  const int64_t SrcPCOff = getThumbBranchPCOffset(SrcOff);
   const int64_t DestOff = BBInfo[DestBB->getNumber()].Offset;
-  const int64_t CurDist = std::abs(DestOff - SrcOff);
+  const int64_t CurDist = std::abs(DestOff - SrcPCOff);
 
   // Extremely far calls converge better when converted directly to long form.
   // For calls this preserves semantics (LR is expected to be set by the call),
@@ -1816,7 +2209,7 @@ bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
       if (!(CandOff < SrcOff && CandOff > DestOff))
         continue;
     }
-    int64_t SrcDelta = std::abs(CandOff - SrcOff);
+    int64_t SrcDelta = std::abs(CandOff - SrcPCOff);
     if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
       continue;
     int64_t CandDist = std::abs(DestOff - CandOff);
@@ -1843,7 +2236,7 @@ bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
         if (!(CandOff < SrcOff && CandOff > DestOff))
           continue;
       }
-      int64_t SrcDelta = std::abs(CandOff - SrcOff);
+      int64_t SrcDelta = std::abs(CandOff - SrcPCOff);
       if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
         continue;
       int64_t CandDist = std::abs(DestOff - CandOff);
@@ -1875,7 +2268,7 @@ bool ARMConstantIslands::fixupCallBr(ImmBranch &Br) {
           if (!(CandOff < SrcOff && CandOff > DestOff))
             continue;
         }
-        int64_t SrcDelta = std::abs(CandOff - SrcOff);
+        int64_t SrcDelta = std::abs(CandOff - SrcPCOff);
         if (SrcDelta > static_cast<int64_t>(Br.MaxDisp))
           continue;
         if (SrcDelta <= BestSplitDelta)
@@ -1958,7 +2351,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
 
     auto FindBestAnchor = [&](MachineInstr *SrcMI, MachineBasicBlock *SrcMBB,
                               MachineBasicBlock *DestBB, int64_t SrcOff,
-                              int64_t DestOff) {
+                              int64_t SrcPCOff, int64_t DestOff) {
       BBInfoVector &BBInfo = BBUtils->getBBInfo();
       const int64_t AnchorMaxDisp = static_cast<int64_t>(BranchMaxDisp) - 2;
       MachineBasicBlock *BestAnchor = nullptr;
@@ -1975,7 +2368,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
           if (!(CandOff < SrcOff && CandOff > DestOff))
             continue;
         }
-        int64_t SrcDelta = std::abs(CandOff - SrcOff);
+        int64_t SrcDelta = std::abs(CandOff - SrcPCOff);
         if (SrcDelta > AnchorMaxDisp)
           continue;
         if (SrcDelta <= BestStep)
@@ -1997,7 +2390,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
             if (!(CandOff < SrcOff && CandOff > DestOff))
               continue;
           }
-          int64_t SrcDelta = std::abs(CandOff - SrcOff);
+          int64_t SrcDelta = std::abs(CandOff - SrcPCOff);
           if (SrcDelta > AnchorMaxDisp)
             continue;
           if (SrcDelta <= BestStep)
@@ -2032,8 +2425,8 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
             }
             const int64_t MaxReach =
                 DestOff > SrcOff
-                    ? SrcOff + AnchorMaxDisp
-                    : SrcOff - AnchorMaxDisp;
+                    ? SrcPCOff + AnchorMaxDisp
+                    : SrcPCOff - AnchorMaxDisp;
             int64_t AnchorOff =
                 DestOff > SrcOff
                     ? std::min<int64_t>(CandOff + SpaceSize + SplitBranchSize -
@@ -2044,7 +2437,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
             int64_t PrefixSize = AnchorOff - CandOff - SplitBranchSize;
             if (PrefixSize <= 0 || PrefixSize >= SpaceSize)
               continue;
-            const int64_t Step = std::abs(AnchorOff - SrcOff);
+            const int64_t Step = std::abs(AnchorOff - SrcPCOff);
             if (Step <= LocalBestStep)
               continue;
             SplitSpaceMI = CandMI;
@@ -2072,7 +2465,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
         return true;
       };
 
-      if (std::abs(DestOff - SrcOff) > static_cast<int64_t>(BranchMaxDisp))
+      if (std::abs(DestOff - SrcPCOff) > static_cast<int64_t>(BranchMaxDisp))
         TrySplitSpaceForAnchor();
 
       if (!BestAnchor) {
@@ -2094,7 +2487,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
               if (!(CandOff < SrcOff && CandOff > DestOff))
                 continue;
             }
-            int64_t SrcDelta = std::abs(CandOff - SrcOff);
+            int64_t SrcDelta = std::abs(CandOff - SrcPCOff);
             if (SrcDelta > AnchorMaxDisp)
               continue;
             if (SrcDelta <= BestSplitDelta)
@@ -2135,8 +2528,9 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
     while (true) {
       BBInfoVector &BBInfo = BBUtils->getBBInfo();
       const int64_t SrcOff = BBUtils->getOffsetOf(CurrBrMI);
+      const int64_t SrcPCOff = getThumbBranchPCOffset(SrcOff);
       const int64_t DestOff = BBInfo[FinalDestBB->getNumber()].Offset;
-      const int64_t CurDist = std::abs(DestOff - SrcOff);
+      const int64_t CurDist = std::abs(DestOff - SrcPCOff);
       if (CurDist <= static_cast<int64_t>(BranchMaxDisp))
         break;
 
@@ -2154,7 +2548,8 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       }
 
       auto [BestAnchor, BestStep] =
-          FindBestAnchor(CurrBrMI, CurrMBB, FinalDestBB, SrcOff, DestOff);
+          FindBestAnchor(CurrBrMI, CurrMBB, FinalDestBB, SrcOff, SrcPCOff,
+                         DestOff);
       (void)BestStep;
       if (!BestAnchor)
         report_fatal_error("underestimated function size");
@@ -2348,6 +2743,9 @@ bool ARMConstantIslands::optimizeThumb2Instructions() {
     if (isCPEntryInRange(U.MI, UserOffset, U.CPEMI, MaxOffs, false, true)) {
       LLVM_DEBUG(dbgs() << "Shrink: " << *U.MI);
       U.MI->setDesc(TII->get(NewOpc));
+      U.MaxDisp = MaxOffs;
+      U.NegOk = false;
+      U.IsSoImm = false;
       MachineBasicBlock *MBB = U.MI->getParent();
       BBUtils->adjustBBSize(MBB, -2);
       BBUtils->adjustBBOffsetsAfter(MBB);
@@ -2386,6 +2784,9 @@ bool ARMConstantIslands::optimizeThumb2Branches() {
       if (BBUtils->isBBInRange(Br.MI, DestBB, MaxOffs)) {
         LLVM_DEBUG(dbgs() << "Shrink branch: " << *Br.MI);
         Br.MI->setDesc(TII->get(NewOpc));
+        Br.MaxDisp = MaxOffs;
+        if (NewOpc == ARM::tBcc)
+          Br.UncondBr = ARM::tB;
         MachineBasicBlock *MBB = Br.MI->getParent();
         BBUtils->adjustBBSize(MBB, -2);
         BBUtils->adjustBBOffsetsAfter(MBB);
@@ -2981,6 +3382,10 @@ MachineBasicBlock *ARMConstantIslands::adjustJTTargetBlockForward(
     BuildMI(NewBB, DebugLoc(), TII->get(ARM::tB))
         .addMBB(BB)
         .add(predOps(ARMCC::AL));
+  ImmBranches.push_back(
+      ImmBranch(&NewBB->back(),
+                getUnconditionalBrDisp(isThumb2 ? ARM::t2B : ARM::tB), false,
+                false, 0, isThumb2 ? ARM::t2B : ARM::tB));
 
   // Update internal data structures to account for the newly inserted MBB.
   MF->RenumberBlocks(NewBB);
