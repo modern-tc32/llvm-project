@@ -527,7 +527,11 @@ void ELFWriter::computeSymbolTable(const RevGroupMapTy &RevGroupMap) {
       continue;
 
     if (Symbol.isTemporary() && Symbol.isUndefined()) {
-      Ctx.reportError(SMLoc(), "Undefined temporary symbol " + Symbol.getName());
+      // Linker-relaxation machinery can leave anonymous temporary symbols in
+      // relocations. These are handled below by renaming them to ".L0 " to
+      // match the gas convention, so don't reject them prematurely here.
+      if (!(Symbol.getName().empty() && Symbol.isUsedInReloc()))
+        Ctx.reportError(SMLoc(), "Undefined temporary symbol " + Symbol.getName());
       continue;
     }
 
