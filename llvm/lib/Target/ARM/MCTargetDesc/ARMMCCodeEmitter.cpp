@@ -673,8 +673,8 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
       break;
     }
     default:
-      report_fatal_error(Twine("unhandled TC32 opcode in ARM code emitter: ") +
-                         Twine(MCII.getName(MI.getOpcode())));
+      CTX.reportError(MI.getLoc(), "instruction is not supported on TC32");
+      return false;
     }
 
     if (Size == 2) {
@@ -2596,8 +2596,8 @@ void ARMMCCodeEmitter::encodeInstruction(const MCInst &MI,
     llvm_unreachable("Unexpected instruction size!");
 
   if (STI.getTargetTriple().isTC32()) {
-    encodeTC32Instruction(MI, CB, Fixups, STI);
-    ++MCNumEmitted;
+    if (encodeTC32Instruction(MI, CB, Fixups, STI))
+      ++MCNumEmitted;
     return;
   }
 
