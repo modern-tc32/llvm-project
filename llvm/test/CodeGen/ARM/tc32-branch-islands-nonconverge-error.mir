@@ -8,6 +8,7 @@
 # CHECK: split_attempts={{[0-9]+}}
 # CHECK: split_success={{[0-9]+}}
 # CHECK: forced_source_anchors={{[0-9]+}}
+# CHECK: cond_long_fallbacks={{[0-9]+}}
 # CHECK: first_offender_src={{[0-9a-f]+}}
 # CHECK: first_offender_dst={{[0-9a-f]+}}
 # CHECK: first_offender_maxdisp={{[0-9]+}}
