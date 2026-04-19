@@ -328,6 +328,8 @@ class VectorType;
     bool shouldConvertConstantLoadToIntImm(const APInt &Imm,
                                            Type *Ty) const override;
 
+    bool areJTsAllowed(const Function *Fn) const override;
+
     /// Return the cost of EXTRACT_SUBVECTOR for this result type with this
     /// index.
     ExtractSubvectorCost getExtractSubvectorCost(EVT ResVT, EVT SrcVT,

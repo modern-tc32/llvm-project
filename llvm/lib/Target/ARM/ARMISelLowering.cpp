@@ -1506,8 +1506,15 @@ ARMTargetLowering::findRepresentativeClass(const TargetRegisterInfo *TRI,
   return std::make_pair(RRC, Cost);
 }
 
-EVT ARMTargetLowering::getSetCCResultType(const DataLayout &DL, LLVMContext &C,
-                                          EVT VT) const {
+bool ARMTargetLowering::areJTsAllowed(const Function *Fn) const {
+  if (Subtarget->getTargetTriple().isTC32())
+    return false;
+
+  return TargetLowering::areJTsAllowed(Fn);
+}
+
+ EVT ARMTargetLowering::getSetCCResultType(const DataLayout &DL, LLVMContext &C,
+                                            EVT VT) const {
   if (!VT.isVector())
     return getPointerTy(DL);
 
