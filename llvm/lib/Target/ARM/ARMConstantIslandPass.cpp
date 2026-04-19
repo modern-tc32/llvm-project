@@ -3348,6 +3348,11 @@ static void RemoveDeadAddBetweenLEAAndJT(MachineInstr *LEAMI,
 /// optimizeThumb2JumpTables - Use tbb / tbh instructions to generate smaller
 /// jumptables when it's possible.
 bool ARMConstantIslands::optimizeThumb2JumpTables() {
+  // TC32 uses its own inline 32-bit jump-table lowering. Thumb-style TBB/TBH
+  // shrinking is not supported there and can corrupt the island bookkeeping.
+  if (STI->getTargetTriple().isTC32())
+    return false;
+
   bool MadeChange = false;
 
   // FIXME: After the tables are shrunk, can we get rid some of the

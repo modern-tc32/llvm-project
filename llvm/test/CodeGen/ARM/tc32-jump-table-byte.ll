@@ -6,18 +6,18 @@ define i32 @byte_jumptable(i32 %x) {
 ; CHECK-LABEL: byte_jumptable:
 ; CHECK:       tcmp r0, #5
 ; CHECK-NEXT:  tjhi [[DEFAULT:\.LBB0_[0-9]+]]
-; CHECK:       tadd r0, pc
-; CHECK-NEXT:  tloadrb r0, [r0, #4]
-; CHECK-NEXT:  tshftl r0, r0, #1
-; CHECK:       [[ANCHOR:\.LCPI0_0]]:
-; CHECK-NEXT:  tadd pc, r0
+; CHECK:       tshftl r0, r0, #2
+; CHECK-NEXT:  tadd r0, pc
+; CHECK-NEXT:  tloadr r0, [r0, #4]
+; CHECK-NEXT:  tmov pc, r0
 ; CHECK:       [[JTI:\.LJTI0_0]]:
-; CHECK-NEXT:  .byte ([[CASE0:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .byte ([[CASE1:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .byte ([[CASE2:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .byte ([[CASE3:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .byte ([[CASE4:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .byte ([[CASE5:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
+; CHECK-NEXT:  .long [[CASE0:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE1:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE2:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE3:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE4:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE5:\.LBB0_[0-9]+]]+1
+; CHECK-NOT:   .byte
 ; CHECK:       [[DEFAULT]]:
 entry:
   switch i32 %x, label %default [
