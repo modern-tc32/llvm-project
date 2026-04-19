@@ -24,6 +24,8 @@ test_tc32_disasm:
         .short 0x0441
         .short 0x0800
         .short 0x9001
+        .short 0x21c4
+        .short 0x9001
         .short 0x69c4
         .short 0x93ff
         .short 0x9ffe
@@ -49,6 +51,7 @@ test_tc32_disasm:
 // CHECK:      tcmp{{[ \t]+}}r8, r1
 // CHECK:      tadd{{[ \t]+}}r1, r8
 // CHECK:      tloadr{{[ \t]+}}r0, [pc, #0x0]
+// CHECK:      tjeq
 // CHECK:      tj
 // CHECK:      tjl
 // CHECK:      tjl

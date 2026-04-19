@@ -199,6 +199,11 @@ static void addTC32PredicateOperands(MCInst &MI) {
   MI.addOperand(MCOperand::createReg(ARM::NoRegister));
 }
 
+static void addTC32CondOperands(MCInst &MI, ARMCC::CondCodes CC) {
+  MI.addOperand(MCOperand::createImm(CC));
+  MI.addOperand(MCOperand::createReg(ARM::CPSR));
+}
+
 static void addTC32CCOutOperand(MCInst &MI) {
   MI.addOperand(MCOperand::createReg(ARM::CPSR));
 }
@@ -6792,6 +6797,33 @@ DecodeStatus ARMDisassembler::getThumbInstruction(MCInst &MI, uint64_t &Size,
     uint32_t Insn32 =
         (uint32_t(Insn16) << 16) | llvm::support::endian::read<uint16_t>(
                                        Bytes.data() + 2, InstructionEndianness);
+    uint16_t FirstHalf = Insn32 >> 16;
+    uint16_t SecondHalf = Insn32 & 0xFFFFu;
+
+    bool LooksLikeTC32LongBcc =
+        (FirstHalf & 0xF000u) == 0x9000u &&
+        (SecondHalf & 0xA000u) == 0x2000u &&
+        (((SecondHalf & 0x1000u) != 0) == ((SecondHalf & 0x4000u) != 0)) &&
+        (((FirstHalf & 0x0400u) != 0) == ((SecondHalf & 0x0800u) != 0));
+
+    if (LooksLikeTC32LongBcc) {
+      ARMCC::CondCodes CC =
+          static_cast<ARMCC::CondCodes>((FirstHalf >> 6) & 0xFu);
+      if (CC < ARMCC::AL) {
+        MI.setOpcode(ARM::tTC32Bcc32);
+        uint32_t Upper = (FirstHalf & 0x003Fu) |
+                         ((SecondHalf & 0x4000u) ? 0x40u : 0u) |
+                         ((FirstHalf & 0x0400u) ? 0x80u : 0u);
+        uint32_t EncImm = (Upper << 11) | (SecondHalf & 0x07FFu);
+        int32_t Imm = SignExtend32<19>(EncImm) << 1;
+        if (!::tryAddingSymbolicOperand(Address, Address + Imm + 4, true, 4,
+                                        MI, this))
+          MI.addOperand(MCOperand::createImm(Imm));
+        addTC32CondOperands(MI, CC);
+        Size = 4;
+        return MCDisassembler::Success;
+      }
+    }
 
     if ((Insn32 & 0xF800F800u) == 0x90006800u) {
       MI.setOpcode(ARM::tTC32B32);

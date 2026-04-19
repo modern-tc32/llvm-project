@@ -87,6 +87,7 @@ MCFixupKindInfo ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_t2_uncondbranch", 0, 32, 0},
       {"fixup_arm_thumb_br", 0, 16, 0},
       {"fixup_tc32_long_br", 0, 32, 0},
+      {"fixup_tc32_long_bcc", 0, 32, 0},
       {"fixup_arm_uncondbl", 0, 24, 0},
       {"fixup_arm_condbl", 0, 24, 0},
       {"fixup_arm_blx", 0, 24, 0},
@@ -137,6 +138,7 @@ MCFixupKindInfo ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_t2_uncondbranch", 0, 32, 0},
       {"fixup_arm_thumb_br", 0, 16, 0},
       {"fixup_tc32_long_br", 0, 32, 0},
+      {"fixup_tc32_long_bcc", 0, 32, 0},
       {"fixup_arm_uncondbl", 8, 24, 0},
       {"fixup_arm_condbl", 8, 24, 0},
       {"fixup_arm_blx", 8, 24, 0},
@@ -189,6 +191,8 @@ unsigned ARMAsmBackend::getRelaxedOpcode(unsigned Op,
       return Op;
     case ARM::tB:
       return ARM::tTC32B32;
+    case ARM::tBcc:
+      return ARM::tTC32Bcc32;
     }
   }
 
@@ -334,7 +338,8 @@ bool ARMAsmBackend::fixupNeedsRelaxationAdvanced(const MCFragment &,
 
   if (!Resolved) {
     if (Asm && Asm->getContext().getTargetTriple().isTC32() &&
-        Fixup.getKind() == ARM::fixup_arm_thumb_br)
+        (Fixup.getKind() == ARM::fixup_arm_thumb_br ||
+         Fixup.getKind() == ARM::fixup_arm_thumb_bcc))
       return false;
     return true;
   }
@@ -1108,6 +1113,7 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
   case ARM::fixup_t2_pcrel_9:
   case ARM::fixup_t2_adr_pcrel_12:
   case ARM::fixup_tc32_long_br:
+  case ARM::fixup_tc32_long_bcc:
   case ARM::fixup_arm_thumb_bl:
   case ARM::fixup_arm_thumb_blx:
   case ARM::fixup_arm_movt_hi16:
@@ -1174,6 +1180,7 @@ static unsigned getFixupKindContainerSizeBytes(unsigned Kind) {
   case ARM::fixup_t2_pcrel_9:
   case ARM::fixup_t2_adr_pcrel_12:
   case ARM::fixup_tc32_long_br:
+  case ARM::fixup_tc32_long_bcc:
   case ARM::fixup_arm_thumb_bl:
   case ARM::fixup_arm_thumb_blx:
   case ARM::fixup_arm_movt_hi16:
@@ -1231,6 +1238,7 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
     case ARM::fixup_arm_thumb_bcc:
     case ARM::fixup_arm_thumb_br:
     case ARM::fixup_tc32_long_br:
+    case ARM::fixup_tc32_long_bcc:
     case ARM::fixup_arm_thumb_cp:
     case ARM::fixup_arm_thumb_bl: {
       // Recompute the final fixup value from the converged layout. These TC32
@@ -1262,7 +1270,43 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
   if (mc::isRelocation(Kind))
     return;
   MCContext &Ctx = getContext();
-  Value = adjustFixupValue(*Asm, Fixup, Target, Value, IsResolved, Ctx, STI);
+  if (Kind == ARM::fixup_tc32_long_bcc) {
+    if ((Value & 1) != 0) {
+      Ctx.reportError(Fixup.getLoc(),
+                      Twine("unaligned TC32 long conditional branch"));
+      return;
+    }
+
+    uint16_t FirstHalf = llvm::support::endian::read<uint16_t>(
+        Data + Fixup.getOffset(), Endian);
+    unsigned Cond = (FirstHalf >> 6) & 0xFu;
+    if (Cond > 13) {
+      Ctx.reportError(Fixup.getLoc(),
+                      Twine("unsupported TC32 long conditional branch"));
+      return;
+    }
+
+    int64_t Enc = (static_cast<int64_t>(Value) - 4) >> 1;
+    if (!isInt<19>(Enc)) {
+      Ctx.reportError(Fixup.getLoc(),
+                      Twine("TC32 long conditional branch out of range")
+                          + ", value=" + Twine(Value)
+                          + ", enc=" + Twine(Enc));
+      return;
+    }
+
+    uint32_t EncImm = static_cast<uint32_t>(Enc) & 0x7FFFFu;
+    uint32_t Upper = EncImm >> 11;
+    uint32_t EncodedFirst = 0x9000u | (Cond << 6) | (Upper & 0x3Fu) |
+                            ((Upper & 0x80u) ? 0x0400u : 0u);
+    uint32_t EncodedSecond = 0x2000u | (EncImm & 0x07FFu) |
+                             ((Upper & 0x40u) ? 0x5000u : 0u) |
+                             ((Upper & 0x80u) ? 0x0800u : 0u);
+    Value = joinHalfWords(EncodedFirst, EncodedSecond,
+                          Endian == llvm::endianness::little);
+  } else {
+    Value = adjustFixupValue(*Asm, Fixup, Target, Value, IsResolved, Ctx, STI);
+  }
   if (!Value)
     return; // Doesn't change encoding.
   const unsigned NumBytes = getFixupKindNumBytes(Kind);
