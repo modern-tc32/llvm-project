@@ -146,8 +146,10 @@ unsigned ARMELFObjectWriter::getRelocType(const MCFixup &Fixup,
     case ARM::fixup_arm_uncondbranch:
       return ELF::R_ARM_JUMP24;
     case ARM::fixup_t2_condbranch:
+    case ARM::fixup_tc32_long_bcc:
       return ELF::R_ARM_THM_JUMP19;
     case ARM::fixup_t2_uncondbranch:
+    case ARM::fixup_tc32_long_br:
       return ELF::R_ARM_THM_JUMP24;
     case ARM::fixup_arm_movt_hi16:
       return ELF::R_ARM_MOVT_PREL;
