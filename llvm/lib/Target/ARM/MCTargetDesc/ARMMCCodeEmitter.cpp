@@ -431,6 +431,36 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
            ((EncImm & 0x07FFu) << 16);
   }
 
+  uint32_t encodeTC32LongBranch(const MCInst &MI,
+                                SmallVectorImpl<MCFixup> &Fixups,
+                                ARMCC::CondCodes CC) const {
+    checkTC32Encoding(CC <= ARMCC::LE,
+                      "unsupported TC32 long conditional branch");
+    const MCOperand &Target = MI.getOperand(0);
+    if (Target.isExpr()) {
+      addTC32Fixup(Fixups, 0, Target.getExpr(), ARM::fixup_tc32_long_bcc);
+      return static_cast<uint32_t>(0x9000u |
+                                   (static_cast<unsigned>(CC) << 6)) |
+             (0x2000u << 16);
+    }
+
+    int64_t Imm = Target.getImm();
+    checkTC32Encoding((Imm & 1) == 0,
+                      "long conditional branch target must be 2-byte aligned");
+    int64_t Enc = ((Imm - 4) >> 1);
+    checkTC32Encoding(isInt<19>(Enc),
+                      "long conditional branch target out of range");
+    uint32_t EncImm = static_cast<uint32_t>(Enc) & 0x7FFFFu;
+    uint32_t Upper = EncImm >> 11;
+    uint32_t FirstHalf = 0x9000u | (static_cast<unsigned>(CC) << 6) |
+                         (Upper & 0x3Fu) |
+                         ((Upper & 0x80u) ? 0x0400u : 0u);
+    uint32_t SecondHalf = 0x2000u | (EncImm & 0x07FFu) |
+                          ((Upper & 0x40u) ? 0x5000u : 0u) |
+                          ((Upper & 0x80u) ? 0x0800u : 0u);
+    return FirstHalf | (SecondHalf << 16);
+  }
+
   bool encodeTC32Instruction(const MCInst &MI, SmallVectorImpl<char> &CB,
                              SmallVectorImpl<MCFixup> &Fixups,
                              const MCSubtargetInfo &STI) const {
@@ -676,6 +706,11 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
     case ARM::tBcc:
       Bits16 = encodeTC32Branch(MI, Fixups,
                                 static_cast<ARMCC::CondCodes>(MI.getOperand(1).getImm()));
+      break;
+    case ARM::tTC32Bcc32:
+      Size = 4;
+      Bits32 = encodeTC32LongBranch(
+          MI, Fixups, static_cast<ARMCC::CondCodes>(MI.getOperand(1).getImm()));
       break;
     case ARM::tBL: {
       const MCOperand &Target = MI.getOperand(2);
@@ -1114,6 +1149,7 @@ static void addFixup(SmallVectorImpl<MCFixup> &Fixups, uint32_t Offset,
   case ARM::fixup_t2_uncondbranch:
   case ARM::fixup_arm_thumb_br:
   case ARM::fixup_tc32_long_br:
+  case ARM::fixup_tc32_long_bcc:
   case ARM::fixup_arm_uncondbl:
   case ARM::fixup_arm_condbl:
   case ARM::fixup_arm_blx:
