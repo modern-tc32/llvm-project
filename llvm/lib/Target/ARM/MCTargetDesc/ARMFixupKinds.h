@@ -59,6 +59,9 @@ enum Fixups {
   // 12-bit fixup for Thumb B instructions.
   fixup_arm_thumb_br,
 
+  // Fixup for TC32 32-bit long-jump instructions.
+  fixup_tc32_long_br,
+
   // The following fixups handle the ARM BL instructions. These can be
   // conditionalised; however, the ARM ELF ABI requires a different relocation
   // in that case: R_ARM_JUMP24 instead of R_ARM_CALL. The difference is that

@@ -635,6 +635,22 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
     let AsmMatchConverter = "cvtThumbBranches";
  }
 
+  // TC32 vendor assembler has a dedicated 32-bit long form for TJ.
+  def tTC32B32 : ThumbXI<(outs), (ins t_brtarget:$target), AddrModeNone, 4,
+                         IIC_Br, "tj\t$target", "", []>,
+                 Sched<[WriteBr]> {
+    bits<24> target;
+    let Inst{31-27} = 0b00000;
+    let Inst{15-14} = 0b00;
+    let Inst{12} = 0;
+    let Inst{26} = target{23};
+    let Inst{13} = target{22};
+    let Inst{11} = target{21};
+    let Inst{25-16} = target{20-11};
+    let Inst{10-0} = target{10-0};
+    let AsmMatchConverter = "cvtThumbBranches";
+  }
+
   // Far jump
   // Just a pseudo for a tBL instruction. Needed to let regalloc know about
   // the clobber of LR.

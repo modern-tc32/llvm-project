@@ -6793,6 +6793,19 @@ DecodeStatus ARMDisassembler::getThumbInstruction(MCInst &MI, uint64_t &Size,
         (uint32_t(Insn16) << 16) | llvm::support::endian::read<uint16_t>(
                                        Bytes.data() + 2, InstructionEndianness);
 
+    if ((Insn32 & 0xF800F800u) == 0x90006800u) {
+      MI.setOpcode(ARM::tTC32B32);
+
+      uint32_t EncImm =
+          (((Insn32 >> 16) & 0x07FFu) << 11) | (Insn32 & 0x07FFu);
+      int32_t Imm = SignExtend32<22>(EncImm) << 1;
+      if (!::tryAddingSymbolicOperand(Address, Address + Imm + 4, true, 4, MI,
+                                      this))
+        MI.addOperand(MCOperand::createImm(Imm));
+      Size = 4;
+      return MCDisassembler::Success;
+    }
+
     if ((Insn32 & 0xF800F800u) == 0x90009800u) {
       MI.setOpcode(ARM::tBL);
       addTC32PredicateOperands(MI);
