@@ -2804,6 +2804,10 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       BBUtils->adjustBBOffsetsAfter(BestAnchor);
 
       CurrBrMI->getOperand(CurrDestOpnd).setMBB(VeneerBB);
+      if (CurrMBB->isSuccessor(FinalDestBB))
+        CurrMBB->replaceSuccessor(FinalDestBB, VeneerBB);
+      else
+        CurrMBB->addSuccessor(VeneerBB);
       CurrBrMI = &VeneerBB->back();
       CurrMBB = VeneerBB;
       CurrDestOpnd = 0;
