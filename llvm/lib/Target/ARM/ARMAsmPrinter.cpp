@@ -2347,6 +2347,8 @@ void ARMAsmPrinter::emitInstruction(const MachineInstr *MI) {
     return;
   }
   case ARM::JUMPTABLE_ADDRS:
+    if (TM.getTargetTriple().isTC32())
+      return;
     emitJumpTableAddrs(MI);
     return;
   case ARM::JUMPTABLE_INSTS:
@@ -2465,20 +2467,39 @@ void ARMAsmPrinter::emitInstruction(const MachineInstr *MI) {
   }
   case ARM::tBR_JTr:
   case ARM::BR_JTr: {
-    // mov pc, target
-    MCInst TmpInst;
-    unsigned Opc = MI->getOpcode() == ARM::BR_JTr ?
-      ARM::MOVr : ARM::tMOVr;
-    TmpInst.setOpcode(Opc);
-    TmpInst.addOperand(MCOperand::createReg(ARM::PC));
-    TmpInst.addOperand(MCOperand::createReg(MI->getOperand(0).getReg()));
-    // Add predicate operands.
-    TmpInst.addOperand(MCOperand::createImm(ARMCC::AL));
-    TmpInst.addOperand(MCOperand::createReg(0));
-    // Add 's' bit operand (always reg0 for this)
-    if (Opc == ARM::MOVr)
+    if (MI->getOpcode() == ARM::tBR_JTr && TM.getTargetTriple().isTC32()) {
+      Register Idx = MI->getOperand(0).getReg();
+      EmitToStreamer(*OutStreamer, MCInstBuilder(ARM::tADDhirr)
+                                       .addReg(Idx)
+                                       .addReg(Idx)
+                                       .addReg(ARM::PC)
+                                       .addImm(ARMCC::AL)
+                                       .addReg(0));
+      EmitToStreamer(*OutStreamer, MCInstBuilder(ARM::tLDRi)
+                                       .addReg(Idx)
+                                       .addReg(Idx)
+                                       .addImm(1)
+                                       .addImm(ARMCC::AL)
+                                       .addReg(0));
+      EmitToStreamer(*OutStreamer, MCInstBuilder(ARM::tMOVr)
+                                       .addReg(ARM::PC)
+                                       .addReg(Idx)
+                                       .addImm(ARMCC::AL)
+                                       .addReg(0));
+      emitJumpTableAddrs(MI);
+    } else {
+      // mov pc, target
+      MCInst TmpInst;
+      unsigned Opc = MI->getOpcode() == ARM::BR_JTr ? ARM::MOVr : ARM::tMOVr;
+      TmpInst.setOpcode(Opc);
+      TmpInst.addOperand(MCOperand::createReg(ARM::PC));
+      TmpInst.addOperand(MCOperand::createReg(MI->getOperand(0).getReg()));
+      TmpInst.addOperand(MCOperand::createImm(ARMCC::AL));
       TmpInst.addOperand(MCOperand::createReg(0));
-    EmitToStreamer(*OutStreamer, TmpInst);
+      if (Opc == ARM::MOVr)
+        TmpInst.addOperand(MCOperand::createReg(0));
+      EmitToStreamer(*OutStreamer, TmpInst);
+    }
     return;
   }
   case ARM::BR_JTm_i12: {
