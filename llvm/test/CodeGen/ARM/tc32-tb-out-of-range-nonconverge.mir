@@ -1,10 +1,13 @@
 # RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - | FileCheck %s
 
 # CHECK: bb.0:
+# CHECK-NEXT: successors: %bb.2
 # CHECK: tB %bb.2, 14
 # CHECK: bb.1:
+# CHECK-NEXT: successors: %bb.3
 # CHECK: tB %bb.3, 14
 # CHECK: bb.2:
+# CHECK-NEXT: successors: %bb.4
 # CHECK: tB %bb.4, 14
 
 --- |
