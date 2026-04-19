@@ -2360,6 +2360,9 @@ bool ARMConstantIslands::removeUnusedCPEntries() {
   unsigned MadeChange = false;
   for (std::vector<CPEntry> &CPEs : CPEntries) {
     for (CPEntry &CPE : CPEs) {
+      if (STI->getTargetTriple().isTC32() && CPE.CPEMI &&
+          CPE.CPEMI->getOpcode() == ARM::JUMPTABLE_ADDRS)
+        continue;
       if (CPE.RefCount == 0 && CPE.CPEMI) {
         removeDeadCPEMI(CPE.CPEMI);
         CPE.CPEMI = nullptr;

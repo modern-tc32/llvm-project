@@ -1507,9 +1507,6 @@ ARMTargetLowering::findRepresentativeClass(const TargetRegisterInfo *TRI,
 }
 
 bool ARMTargetLowering::areJTsAllowed(const Function *Fn) const {
-  if (Subtarget->getTargetTriple().isTC32())
-    return false;
-
   return TargetLowering::areJTsAllowed(Fn);
 }
 
@@ -5703,6 +5700,10 @@ SDValue ARMTargetLowering::LowerBR_JT(SDValue Op, SelectionDAG &DAG) const {
   EVT PTy = getPointerTy(DAG.getDataLayout());
   JumpTableSDNode *JT = cast<JumpTableSDNode>(Table);
   SDValue JTI = DAG.getTargetJumpTable(JT->getIndex(), PTy);
+  if (Subtarget->getTargetTriple().isTC32()) {
+    Index = DAG.getNode(ISD::MUL, dl, PTy, Index, DAG.getConstant(4, dl, PTy));
+    return DAG.getNode(ARMISD::BR_JT, dl, MVT::Other, Chain, Index, JTI);
+  }
   Table = DAG.getNode(ARMISD::WrapperJT, dl, MVT::i32, JTI);
   Index = DAG.getNode(ISD::MUL, dl, PTy, Index, DAG.getConstant(4, dl, PTy));
   SDValue Addr = DAG.getNode(ISD::ADD, dl, PTy, Table, Index);
@@ -11143,6 +11144,13 @@ void ARMTargetLowering::EmitSjLjDispatchBlock(MachineInstr &MI,
         .addReg(NewVReg1)
         .addImm(2)
         .add(predOps(ARMCC::AL));
+
+    if (Subtarget->getTargetTriple().isTC32()) {
+      BuildMI(DispContBB, dl, TII->get(ARM::tBR_JTr))
+          .addReg(NewVReg2, RegState::Kill)
+          .addJumpTableIndex(MJTI);
+      return;
+    }
 
     Register NewVReg3 = MRI->createVirtualRegister(TRC);
     BuildMI(DispContBB, dl, TII->get(ARM::tLEApcrelJT), NewVReg3)
