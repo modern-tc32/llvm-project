@@ -86,6 +86,7 @@ MCFixupKindInfo ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_t2_condbranch", 0, 32, 0},
       {"fixup_t2_uncondbranch", 0, 32, 0},
       {"fixup_arm_thumb_br", 0, 16, 0},
+      {"fixup_tc32_long_br", 0, 32, 0},
       {"fixup_arm_uncondbl", 0, 24, 0},
       {"fixup_arm_condbl", 0, 24, 0},
       {"fixup_arm_blx", 0, 24, 0},
@@ -135,6 +136,7 @@ MCFixupKindInfo ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
       {"fixup_t2_condbranch", 0, 32, 0},
       {"fixup_t2_uncondbranch", 0, 32, 0},
       {"fixup_arm_thumb_br", 0, 16, 0},
+      {"fixup_tc32_long_br", 0, 32, 0},
       {"fixup_arm_uncondbl", 8, 24, 0},
       {"fixup_arm_condbl", 8, 24, 0},
       {"fixup_arm_blx", 8, 24, 0},
@@ -181,10 +183,14 @@ MCFixupKindInfo ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
 
 unsigned ARMAsmBackend::getRelaxedOpcode(unsigned Op,
                                          const MCSubtargetInfo &STI) const {
-  // TC32 reuses Thumb opcodes in the backend but does not support promoting
-  // short branches to Thumb2 encodings as a relaxation strategy.
-  if (STI.getTargetTriple().isTC32())
-    return Op;
+  if (STI.getTargetTriple().isTC32()) {
+    switch (Op) {
+    default:
+      return Op;
+    case ARM::tB:
+      return ARM::tTC32B32;
+    }
+  }
 
   bool HasThumb2 = STI.hasFeature(ARM::FeatureThumb2);
   bool HasV8MBaselineOps = STI.hasFeature(ARM::HasV8MBaselineOps);
@@ -326,8 +332,12 @@ bool ARMAsmBackend::fixupNeedsRelaxationAdvanced(const MCFragment &,
   if (needsInterworking(*Asm, Sym, Fixup.getKind()))
     return true;
 
-  if (!Resolved)
+  if (!Resolved) {
+    if (Asm && Asm->getContext().getTargetTriple().isTC32() &&
+        Fixup.getKind() == ARM::fixup_arm_thumb_br)
+      return false;
     return true;
+  }
   return reasonForFixupRelaxation(Fixup, Value);
 }
 
@@ -504,6 +514,26 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCAssembler &Asm,
         return 0;
       }
       return static_cast<uint16_t>(Enc) & 0x07ffu;
+    }
+    case ARM::fixup_tc32_long_br: {
+      if ((Value & 1) != 0) {
+        Ctx.reportError(Fixup.getLoc(),
+                        Twine("unaligned TC32 long jump") +
+                            DescribeTC32Fixup());
+        return 0;
+      }
+      int64_t Enc = (static_cast<int64_t>(Value) - 4) >> 1;
+      if (!isInt<22>(Enc)) {
+        Ctx.reportError(Fixup.getLoc(),
+                        Twine("TC32 long jump out of range") +
+                            DescribeTC32Fixup() + ", enc=" + Twine(Enc));
+        return 0;
+      }
+      uint32_t EncImm = static_cast<uint32_t>(Enc) & 0x3FFFFFu;
+      uint32_t FirstHalf = 0x9000u | ((EncImm >> 11) & 0x07FFu);
+      uint32_t SecondHalf = 0x6800u | (EncImm & 0x07FFu);
+      return joinHalfWords(FirstHalf, SecondHalf,
+                           Endian == llvm::endianness::little);
     }
     case ARM::fixup_arm_thumb_bl: {
       if (!IsResolved)
@@ -1077,6 +1107,7 @@ static unsigned getFixupKindNumBytes(unsigned Kind) {
   case ARM::fixup_t2_pcrel_10:
   case ARM::fixup_t2_pcrel_9:
   case ARM::fixup_t2_adr_pcrel_12:
+  case ARM::fixup_tc32_long_br:
   case ARM::fixup_arm_thumb_bl:
   case ARM::fixup_arm_thumb_blx:
   case ARM::fixup_arm_movt_hi16:
@@ -1142,6 +1173,7 @@ static unsigned getFixupKindContainerSizeBytes(unsigned Kind) {
   case ARM::fixup_t2_pcrel_10:
   case ARM::fixup_t2_pcrel_9:
   case ARM::fixup_t2_adr_pcrel_12:
+  case ARM::fixup_tc32_long_br:
   case ARM::fixup_arm_thumb_bl:
   case ARM::fixup_arm_thumb_blx:
   case ARM::fixup_arm_movt_hi16:
@@ -1198,6 +1230,7 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
     switch (Fixup.getKind()) {
     case ARM::fixup_arm_thumb_bcc:
     case ARM::fixup_arm_thumb_br:
+    case ARM::fixup_tc32_long_br:
     case ARM::fixup_arm_thumb_cp:
     case ARM::fixup_arm_thumb_bl: {
       // Recompute the final fixup value from the converged layout. These TC32
