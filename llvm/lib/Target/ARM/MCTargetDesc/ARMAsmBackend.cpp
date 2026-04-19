@@ -339,8 +339,11 @@ bool ARMAsmBackend::fixupNeedsRelaxationAdvanced(const MCFragment &,
   if (!Resolved) {
     if (Asm && Asm->getContext().getTargetTriple().isTC32() &&
         (Fixup.getKind() == ARM::fixup_arm_thumb_br ||
-         Fixup.getKind() == ARM::fixup_arm_thumb_bcc))
+         Fixup.getKind() == ARM::fixup_arm_thumb_bcc)) {
+      if (const MCSymbol *Sym = Target.getAddSym(); Sym && !Sym->isDefined())
+        return true;
       return false;
+    }
     return true;
   }
   return reasonForFixupRelaxation(Fixup, Value);
