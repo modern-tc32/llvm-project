@@ -7,24 +7,23 @@ declare i32 @llvm.arm.space(i32, i32)
 define i32 @halfword_jumptable(i32 %x) {
 ; CHECK-LABEL: halfword_jumptable:
 ; CHECK:       tcmp r0, #7
-; CHECK-NEXT:  tjls [[JTBB:\.LBB0_[0-9]+]]
+; CHECK-NEXT:  tjls [[TABLE:\.LBB0_[0-9]+]]
 ; CHECK-NEXT:  tj [[DEFAULT:\.LBB0_[0-9]+]]
-; CHECK:       [[JTBB]]:
-; CHECK:       tshftl r0, r0, #1
+; CHECK:       [[TABLE]]:
+; CHECK-NEXT:  tshftl r0, r0, #2
 ; CHECK:       tadd r0, pc
-; CHECK-NEXT:  tloadrh r0, [r0, #4]
-; CHECK-NEXT:  tshftl r0, r0, #1
-; CHECK:       [[ANCHOR:\.LCPI0_0]]:
-; CHECK-NEXT:  tadd pc, r0
+; CHECK-NEXT:  tloadr r0, [r0, #4]
+; CHECK-NEXT:  tmov pc, r0
 ; CHECK:       [[JTI:\.LJTI0_0]]:
-; CHECK-NEXT:  .short ([[CASE0:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .short ([[CASE1:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .short ([[CASE2:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .short ([[CASE3:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .short ([[CASE4:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .short ([[CASE5:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .short ([[CASE6:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
-; CHECK-NEXT:  .short ([[CASE7:\.LBB0_[0-9]+]]-([[ANCHOR]]+4))/2
+; CHECK-NEXT:  .long [[CASE0:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE1:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE2:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE3:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE4:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE5:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE6:\.LBB0_[0-9]+]]+1
+; CHECK-NEXT:  .long [[CASE7:\.LBB0_[0-9]+]]+1
+; CHECK-NOT:   .short
 ; CHECK:       [[DEFAULT]]:
 entry:
   switch i32 %x, label %default [
