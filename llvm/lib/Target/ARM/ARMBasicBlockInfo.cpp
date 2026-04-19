@@ -59,7 +59,7 @@ void ARMBasicBlockUtils::computeBlockSize(MachineBasicBlock *MBB) {
       BBI.Unalign = 1;
   }
 
-  // tBR_JTr contains a .align 2 directive.
+  // Thumb1 inline jump tables align the following table to 4 bytes.
   if (!MBB->empty() && MBB->back().getOpcode() == ARM::tBR_JTr) {
     BBI.PostAlign = Align(4);
     MBB->getParent()->ensureAlignment(Align(4));
