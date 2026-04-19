@@ -673,7 +673,7 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
 
 // FIXME: should be able to write a pattern for ARMBrcond, but can't use
 // a two-value operand where a dag node expects two operands. :(
-let isBranch = 1, isTerminator = 1, hasSideEffects = 0 in
+let isBranch = 1, isTerminator = 1, hasSideEffects = 0 in {
   def tBcc : T1I<(outs), (ins thumb_bcc_target:$target, pred:$p), IIC_Br,
                  "b${p}\t$target",
                  [/*(ARMbrcond bb:$target, imm:$cc)*/]>,
@@ -683,6 +683,17 @@ let isBranch = 1, isTerminator = 1, hasSideEffects = 0 in
   let Inst{11-8} = p;
   let Inst{7-0} = target;
   let AsmMatchConverter = "cvtThumbBranches";
+}
+
+  def tTC32Bcc32 : ThumbXI<(outs), (ins thumb_bcc_target:$target, pred:$p),
+                           AddrModeNone, 4, IIC_Br, "tj${p}\t$target", "", []>,
+                    Sched<[WriteBr]> {
+    bits<4> p;
+    bits<19> target;
+    let Inst{31-13} = target;
+    let Inst{11-8} = p;
+    let AsmMatchConverter = "cvtThumbBranches";
+  }
 }
 
 
