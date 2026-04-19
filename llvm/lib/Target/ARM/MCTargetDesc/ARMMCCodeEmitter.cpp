@@ -412,6 +412,25 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
                                  (static_cast<uint16_t>(Enc) & 0x07FFu));
   }
 
+  uint32_t encodeTC32LongJump(const MCInst &MI,
+                              SmallVectorImpl<MCFixup> &Fixups) const {
+    const MCOperand &Target = MI.getOperand(0);
+    if (Target.isExpr()) {
+      addTC32Fixup(Fixups, 0, Target.getExpr(), ARM::fixup_tc32_long_br);
+      return 0x68009000u;
+    }
+
+    int64_t Imm = Target.getImm();
+    checkTC32Encoding((Imm & 1) == 0,
+                      "long jump target must be 2-byte aligned");
+    int64_t Enc = ((Imm - 4) >> 1);
+    checkTC32Encoding(isInt<22>(Enc), "long jump target out of range");
+    uint32_t EncImm = static_cast<uint32_t>(Enc) & 0x3FFFFFu;
+    return 0x68009000u |
+           ((EncImm >> 11) & 0x07FFu) |
+           ((EncImm & 0x07FFu) << 16);
+  }
+
   bool encodeTC32Instruction(const MCInst &MI, SmallVectorImpl<char> &CB,
                              SmallVectorImpl<MCFixup> &Fixups,
                              const MCSubtargetInfo &STI) const {
@@ -649,6 +668,10 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
       break;
     case ARM::tB:
       Bits16 = encodeTC32Jump(MI, Fixups);
+      break;
+    case ARM::tTC32B32:
+      Size = 4;
+      Bits32 = encodeTC32LongJump(MI, Fixups);
       break;
     case ARM::tBcc:
       Bits16 = encodeTC32Branch(MI, Fixups,
@@ -1090,6 +1113,7 @@ static void addFixup(SmallVectorImpl<MCFixup> &Fixups, uint32_t Offset,
   case ARM::fixup_t2_condbranch:
   case ARM::fixup_t2_uncondbranch:
   case ARM::fixup_arm_thumb_br:
+  case ARM::fixup_tc32_long_br:
   case ARM::fixup_arm_uncondbl:
   case ARM::fixup_arm_condbl:
   case ARM::fixup_arm_blx:
