@@ -175,12 +175,11 @@ typedef DecodeStatus OperandDecoder(MCInst &Inst, unsigned Val,
 /// Value is done and if a symbol is found an MCExpr is created with that, else
 /// an MCExpr with Value is created.  This function returns true if it adds an
 /// operand to the MCInst and false otherwise.
-static bool tryAddingSymbolicOperand(uint64_t Address, int32_t Value,
+static bool tryAddingSymbolicOperand(uint64_t Address, int64_t Value,
                                      bool isBranch, uint64_t InstSize,
                                      MCInst &MI,
                                      const MCDisassembler *Decoder) {
-  // FIXME: Does it make sense for value to be negative?
-  return Decoder->tryAddingSymbolicOperand(MI, (uint32_t)Value, Address,
+  return Decoder->tryAddingSymbolicOperand(MI, Value, Address,
                                            isBranch, /*Offset=*/0, /*OpSize=*/0,
                                            InstSize);
 }
@@ -219,7 +218,7 @@ DecodeStatus ARMDisassembler::decodeTC32Instruction(MCInst &MI, uint16_t Insn16,
     return MCDisassembler::Fail;
 
   auto addJumpTarget = [&](unsigned Enc, unsigned Bits) {
-    int32_t Imm = SignExtend32(Enc << 1, Bits + 1);
+    int32_t Imm = SignExtend32(Enc << 1, Bits);
     if (!::tryAddingSymbolicOperand(Address, Address + Imm + 4, true, 2, MI,
                                     this))
       MI.addOperand(MCOperand::createImm(Imm));
