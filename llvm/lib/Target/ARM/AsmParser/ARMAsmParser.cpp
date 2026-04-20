@@ -1138,9 +1138,9 @@ public:
   bool isThumbMemPC() const {
     int64_t Val = 0;
     if (isImm()) {
-      if (isa<MCSymbolRefExpr>(Imm.Val)) return true;
+      if (!isa<MCConstantExpr>(Imm.Val))
+        return true;
       const MCConstantExpr *CE = dyn_cast<MCConstantExpr>(Imm.Val);
-      if (!CE) return false;
       Val = CE->getValue();
     }
     else if (isGPRMem()) {
@@ -1149,7 +1149,7 @@ public:
       if (const auto *CE = dyn_cast<MCConstantExpr>(Memory.OffsetImm))
         Val = CE->getValue();
       else
-        return false;
+        return true;
     }
     else return false;
     return ((Val % 4) == 0) && (Val >= 0) && (Val <= 1020);
@@ -7357,7 +7357,8 @@ bool ARMAsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
       return true;
     if (Parser.getTok().is(AsmToken::Equal) ||
         Parser.getTok().isNot(AsmToken::LBrac)) {
-      if (Parser.getTok().is(AsmToken::Equal))
+      bool IsConstPoolPseudo = Parser.getTok().is(AsmToken::Equal);
+      if (IsConstPoolPseudo)
         Parser.Lex(); // Eat '='.
       // TC32 vendor assembly uses label operands for literal loads even with
       // suffixed mnemonics like tloadrb/tloadrh. The vendor assembler lowers
@@ -7370,8 +7371,11 @@ bool ARMAsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
         return true;
       SMLoc E =
           SMLoc::getFromPointer(Parser.getTok().getLoc().getPointer() - 1);
-      Operands.push_back(
-          ARMOperand::CreateConstantPoolImm(SubExprVal, S, E, *this));
+      if (IsConstPoolPseudo)
+        Operands.push_back(
+            ARMOperand::CreateConstantPoolImm(SubExprVal, S, E, *this));
+      else
+        Operands.push_back(ARMOperand::CreateImm(SubExprVal, S, E, *this));
       ParsedOperands = true;
     }
   }
