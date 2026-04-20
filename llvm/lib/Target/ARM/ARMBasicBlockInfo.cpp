@@ -13,6 +13,7 @@
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/TargetSubtargetInfo.h"
+#include "llvm/Target/TargetMachine.h"
 #include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "arm-bb-utils"
@@ -70,6 +71,26 @@ void ARMBasicBlockUtils::computeBlockSize(MachineBasicBlock *MBB) {
 /// from the start of the function.  This offset changes as stuff is moved
 /// around inside the function.
 unsigned ARMBasicBlockUtils::getOffsetOf(MachineInstr *MI) const {
+  if (MF.getTarget().getTargetTriple().isTC32() &&
+      MI->getOpcode() == ARM::JUMPTABLE_ADDRS) {
+    unsigned JTI = MI->getOperand(1).getIndex();
+    for (const MachineBasicBlock &MBB : MF) {
+      auto It = MBB.getLastNonDebugInstr();
+      if (It == MBB.end() || It->getOpcode() != ARM::tBR_JTr)
+        continue;
+
+      const MCInstrDesc &MCID = It->getDesc();
+      unsigned JTOpIdx = MCID.getNumOperands() - (It->isPredicable() ? 2 : 1);
+      const MachineOperand &JTOp = It->getOperand(JTOpIdx);
+      if (!JTOp.isJTI() ||
+          static_cast<unsigned>(JTOp.getIndex()) != JTI)
+        continue;
+
+      unsigned Offset = getOffsetOf(const_cast<MachineInstr *>(&*It));
+      return alignTo(Offset + 6, Align(4));
+    }
+  }
+
   const MachineBasicBlock *MBB = MI->getParent();
 
   // The offset is composed of two things: the sum of the sizes of all MBB's
