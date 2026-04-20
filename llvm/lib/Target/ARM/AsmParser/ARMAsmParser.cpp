@@ -6633,6 +6633,12 @@ static bool isUnsupportedTC32Mnemonic(StringRef Mnemonic) {
       .Default(false);
 }
 
+static bool isTC32VendorLiteralLoadMnemonic(StringRef Name) {
+  return StringSwitch<bool>(Name.lower())
+      .Cases({"tloadr", "tloadrb", "tloadrh", "tloadrsb", "tloadrsh"}, true)
+      .Default(false);
+}
+
 /// Given a mnemonic, split out possible predication code and carry
 /// setting letters to form a canonical mnemonic and flags.
 //
@@ -7343,13 +7349,21 @@ bool ARMAsmParser::parseInstruction(ParseInstructionInfo &Info, StringRef Name,
   // Read the remaining operands.
   bool ParsedOperands = false;
   if (getSTI().getTargetTriple().getArchName() == "tc32" &&
-      Name == "tloadr" && getLexer().isNot(AsmToken::EndOfStatement)) {
+      isTC32VendorLiteralLoadMnemonic(Name) &&
+      getLexer().isNot(AsmToken::EndOfStatement)) {
     if (parseOperand(Operands, Mnemonic))
       return true;
     if (parseToken(AsmToken::Comma, "unexpected token in argument list"))
       return true;
-    if (Parser.getTok().is(AsmToken::Equal)) {
-      Parser.Lex(); // Eat '='.
+    if (Parser.getTok().is(AsmToken::Equal) ||
+        Parser.getTok().isNot(AsmToken::LBrac)) {
+      if (Parser.getTok().is(AsmToken::Equal))
+        Parser.Lex(); // Eat '='.
+      // TC32 vendor assembly uses label operands for literal loads even with
+      // suffixed mnemonics like tloadrb/tloadrh. The vendor assembler lowers
+      // all of these forms through the plain literal-load encoding.
+      if (!Name.equals_insensitive("tloadr"))
+        Operands[0] = ARMOperand::CreateToken("ldr", NameLoc, *this);
       SMLoc S = Parser.getTok().getLoc();
       const MCExpr *SubExprVal;
       if (getParser().parseExpression(SubExprVal))
