@@ -23,6 +23,7 @@ start:
 // CHECK-NEXT: tloadr r5, [pc,
 // CHECK-NEXT: tloadr r6, [pc,
 
+  .p2align 2
 table:
   .word 0x11111111
   .word 0x22222222
