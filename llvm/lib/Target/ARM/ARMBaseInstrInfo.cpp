@@ -617,6 +617,23 @@ unsigned ARMBaseInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     // contrast to AArch64 instructions which have a default size of 4 bytes for
     // example.
     return MCID.getSize();
+  case ARM::tBR_JTr:
+    if (MF->getTarget().getTargetTriple().isTC32()) {
+      unsigned Size = 6;
+      if (const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo()) {
+        unsigned JTI = MI.getOperand(1).getIndex();
+        const auto &JTs = MJTI->getJumpTables();
+        if (JTI < JTs.size())
+          Size += JTs[JTI].MBBs.size() * sizeof(uint32_t);
+      }
+      return Size;
+    }
+    return MCID.getSize();
+  case ARM::tB:
+  case ARM::tBcc:
+    if (MF->getTarget().getTargetTriple().isTC32())
+      return 4;
+    return MCID.getSize();
   case TargetOpcode::BUNDLE:
     return getInstBundleLength(MI);
   case TargetOpcode::COPY:
@@ -626,11 +643,17 @@ unsigned ARMBaseInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
       return 2;
   case ARM::CONSTPOOL_ENTRY:
   case ARM::JUMPTABLE_INSTS:
-  case ARM::JUMPTABLE_ADDRS:
   case ARM::JUMPTABLE_TBB:
   case ARM::JUMPTABLE_TBH:
     // If this machine instr is a constant pool entry, its size is recorded as
     // operand #2.
+    return MI.getOperand(2).getImm();
+  case ARM::JUMPTABLE_ADDRS:
+    // TC32 emits Thumb1 jump tables inline from tBR_JTr, so the dedicated
+    // JUMPTABLE_ADDRS placeholder block is layout-only metadata and does not
+    // contribute bytes at its MachineBasicBlock position.
+    if (MF->getTarget().getTargetTriple().isTC32())
+      return 0;
     return MI.getOperand(2).getImm();
   case ARM::SPACE:
     return MI.getOperand(1).getImm();
