@@ -1544,6 +1544,10 @@ bool ARMConstantIslands::classifyImmBranch(const MachineInstr &MI,
     Bits = 11;
     Scale = 2;
     break;
+  case ARM::tTC32B32:
+    Bits = 24;
+    Scale = 2;
+    break;
   case ARM::t2Bcc:
     IsCond = true;
     UncondBr = ARM::t2B;
@@ -1949,6 +1953,7 @@ static inline unsigned getUnconditionalBrDisp(int Opc) {
   switch (Opc) {
   case ARM::tB:
     return ((1<<10)-1)*2;
+  case ARM::tTC32B32:
   case ARM::t2B:
     return ((1<<23)-1)*2;
   default:
@@ -2576,6 +2581,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
 
   if (STI->getTargetTriple().isTC32()) {
     const unsigned BranchMaxDisp = Br.MaxDisp;
+    const unsigned LongBranchMaxDisp = getUnconditionalBrDisp(ARM::tTC32B32);
     MachineBasicBlock *FinalDestBB = MI->getOperand(Br.DestOpnd).getMBB();
     MachineInstr *CurrBrMI = MI;
     MachineBasicBlock *CurrMBB = MBB;
@@ -2767,6 +2773,22 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       const int64_t CurDist = std::abs(DestOff - SrcPCOff);
       if (CurDist <= static_cast<int64_t>(BranchMaxDisp))
         break;
+
+      if (!Changed && CurrBrMI == MI && CurrBrMI->getOpcode() == ARM::tB &&
+          CurDist <= static_cast<int64_t>(LongBranchMaxDisp)) {
+        MachineInstr *NewMI =
+            BuildMI(*MBB, MI, MI->getDebugLoc(), TII->get(ARM::tTC32B32))
+                .addMBB(FinalDestBB);
+        MI->eraseFromParent();
+        MI = NewMI;
+        Br.MI = MI;
+        Br.MaxDisp = LongBranchMaxDisp;
+        Br.UncondBr = ARM::tTC32B32;
+        BBInfo[MBB->getNumber()].Size += 2;
+        BBUtils->adjustBBOffsetsAfter(MBB);
+        ++NumUBrFixed;
+        return true;
+      }
 
       // Extremely distant jumps can require thousands of tiny island hops and
       // may exceed the global branch-fixup iteration budget. Only use long form
