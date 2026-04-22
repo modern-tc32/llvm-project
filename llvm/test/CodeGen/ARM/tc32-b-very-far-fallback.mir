@@ -1,16 +1,15 @@
 # RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - | FileCheck %s
 
+# CHECK-LABEL: name: tc32_b_very_far_fallback
 # CHECK: bb.0:
-# CHECK-NEXT: successors: %bb.2
+# CHECK-NOT: tB %bb.2
 # CHECK: tTC32B32 %bb.2
-# CHECK: bb.1:
-# CHECK-NEXT: successors: %bb.2
 
 --- |
-  define void @tb_out_of_range_nonconverge() { ret void }
+  define void @tc32_b_very_far_fallback() { ret void }
 ...
 ---
-name:            tb_out_of_range_nonconverge
+name:            tc32_b_very_far_fallback
 alignment:       2
 tracksRegLiveness: false
 body:             |
@@ -18,7 +17,7 @@ body:             |
     tB %bb.2, 14, $noreg
 
   bb.1:
-    dead $r0 = SPACE 2050, undef $r0
+    dead $r0 = SPACE 3000, undef $r0
 
   bb.2:
     tPOP_RET 14, $noreg, def $pc
