@@ -1,9 +1,9 @@
 # RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - | FileCheck %s
 
 # CHECK: bb.0:
-# CHECK: tB %bb.2, 14
+# CHECK: tTC32B32 %bb.2
 # CHECK: bb.1:
-# CHECK: tB %bb.3, 14
+# CHECK-NEXT: successors: %bb.2
 
 --- |
   define void @f() { ret void }
