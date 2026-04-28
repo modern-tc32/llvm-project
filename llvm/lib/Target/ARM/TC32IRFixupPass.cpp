@@ -59,22 +59,29 @@ public:
   bool rejectAtomicIR(Instruction &I,
                       SmallVectorImpl<Instruction *> &ToErase) {
     if (auto *LI = dyn_cast<LoadInst>(&I)) {
-      if (LI->isAtomic())
+      if (LI->isAtomic() && LI->getSyncScopeID() != SyncScope::SingleThread)
         return rejectUnsupportedInstruction(
             I, ToErase, "TC32 does not support atomic operations");
       return false;
     }
 
     if (auto *SI = dyn_cast<StoreInst>(&I)) {
-      if (SI->isAtomic())
+      if (SI->isAtomic() && SI->getSyncScopeID() != SyncScope::SingleThread)
         return rejectUnsupportedInstruction(
             I, ToErase, "TC32 does not support atomic operations");
       return false;
     }
 
-    if (isa<AtomicRMWInst>(I) || isa<AtomicCmpXchgInst>(I) || isa<FenceInst>(I))
+    if (isa<AtomicRMWInst>(I) || isa<AtomicCmpXchgInst>(I))
       return rejectUnsupportedInstruction(
           I, ToErase, "TC32 does not support atomic operations");
+
+    if (auto *FI = dyn_cast<FenceInst>(&I)) {
+      if (FI->getSyncScopeID() != SyncScope::SingleThread)
+        return rejectUnsupportedInstruction(
+            I, ToErase, "TC32 does not support atomic operations");
+      return false;
+    }
 
     return false;
   }
