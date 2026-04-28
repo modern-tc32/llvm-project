@@ -1,5 +1,6 @@
 add_lldb_unittest(TargetTests
   ABITest.cpp
+  ArchitecturePluginTest.cpp
   DynamicRegisterInfoTest.cpp
   ExecutionContextTest.cpp
   LanguageTest.cpp
@@ -23,6 +24,7 @@ add_lldb_unittest(TargetTests
       lldbHost
       lldbPluginObjectFileBreakpad
       lldbPluginObjectFileELF
+      lldbPluginArchitectureArm
       lldbPluginPlatformLinux
       lldbPluginPlatformMacOSX
       lldbPluginPlatformAndroid

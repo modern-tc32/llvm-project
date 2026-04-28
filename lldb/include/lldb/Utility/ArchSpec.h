@@ -144,6 +144,7 @@ public:
     eCore_arm_armv8m_main,
     eCore_arm_armv8_1m_main,
     eCore_arm_xscale,
+    eCore_tc32,
 
     eCore_thumb,
     eCore_thumbv4t,
@@ -332,7 +333,7 @@ public:
     kCore_hexagon_any,
 
     kCore_arm_first = eCore_arm_generic,
-    kCore_arm_last = eCore_arm_xscale,
+    kCore_arm_last = eCore_tc32,
 
     kCore_thumb_first = eCore_thumb,
     kCore_thumb_last = eCore_thumbv7em,
