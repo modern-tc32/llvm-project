@@ -139,6 +139,13 @@ TEST(ArchSpecTest, TestSetTriple) {
   EXPECT_EQ(ArchSpec::eCore_msp430, AS.GetCore());
 
   AS = ArchSpec();
+  EXPECT_TRUE(AS.SetTriple("tc32-unknown-none-elf"));
+  EXPECT_EQ(llvm::Triple::tc32, AS.GetTriple().getArch());
+  EXPECT_EQ(llvm::Triple::tc32, AS.GetMachine());
+  EXPECT_STREQ("tc32", AS.GetArchitectureName());
+  EXPECT_EQ(ArchSpec::eCore_tc32, AS.GetCore());
+
+  AS = ArchSpec();
   EXPECT_TRUE(AS.SetTriple("amd64-unknown-openbsd"));
   EXPECT_EQ(llvm::Triple::x86_64, AS.GetTriple().getArch());
   EXPECT_STREQ("amd64", AS.GetArchitectureName());
@@ -272,6 +279,18 @@ TEST(ArchSpecTest, MergeFrom) {
     EXPECT_EQ(llvm::Triple::EnvironmentType::EABIHF,
               A.GetTriple().getEnvironment());
   }
+}
+
+TEST(ArchSpecTest, SetArchitectureELFTC32) {
+  ArchSpec AS;
+  EXPECT_TRUE(AS.SetArchitecture(eArchTypeELF, llvm::ELF::EM_TC32,
+                                 LLDB_INVALID_CPUTYPE,
+                                 llvm::ELF::ELFOSABI_STANDALONE));
+  EXPECT_EQ(ArchSpec::eCore_tc32, AS.GetCore());
+  EXPECT_EQ(llvm::Triple::tc32, AS.GetTriple().getArch());
+  EXPECT_EQ(llvm::Triple::UnknownVendor, AS.GetTriple().getVendor());
+  EXPECT_EQ(llvm::Triple::UnknownOS, AS.GetTriple().getOS());
+  EXPECT_STREQ("tc32", AS.GetArchitectureName());
 }
 
 TEST(ArchSpecTest, MergeFromMachOUnknown) {

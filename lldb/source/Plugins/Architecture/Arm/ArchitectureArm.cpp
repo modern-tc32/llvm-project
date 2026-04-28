@@ -27,6 +27,16 @@ using namespace lldb;
 
 LLDB_PLUGIN_DEFINE(ArchitectureArm)
 
+static bool SupportsARMArchitecturePlugin(const ArchSpec &arch) {
+  switch (arch.GetMachine()) {
+  case llvm::Triple::arm:
+  case llvm::Triple::tc32:
+    return true;
+  default:
+    return false;
+  }
+}
+
 void ArchitectureArm::Initialize() {
   PluginManager::RegisterPlugin(GetPluginNameStatic(),
                                 "Arm-specific algorithms",
@@ -38,7 +48,7 @@ void ArchitectureArm::Terminate() {
 }
 
 std::unique_ptr<Architecture> ArchitectureArm::Create(const ArchSpec &arch) {
-  if (arch.GetMachine() != llvm::Triple::arm)
+  if (!SupportsARMArchitecturePlugin(arch))
     return nullptr;
   return std::unique_ptr<Architecture>(new ArchitectureArm());
 }

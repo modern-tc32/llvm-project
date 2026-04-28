@@ -76,6 +76,8 @@ static constexpr const CoreDefinition g_core_definitions[] = {
      "armv7em"},
     {eByteOrderLittle, 4, 2, 4, llvm::Triple::arm, ArchSpec::eCore_arm_xscale,
      "xscale"},
+    {eByteOrderLittle, 4, 2, 4, llvm::Triple::tc32, ArchSpec::eCore_tc32,
+     "tc32"},
     {eByteOrderLittle, 4, 2, 4, llvm::Triple::thumb, ArchSpec::eCore_thumb,
      "thumb"},
     {eByteOrderLittle, 4, 2, 4, llvm::Triple::thumb, ArchSpec::eCore_thumbv4t,
@@ -412,6 +414,7 @@ static const ArchDefinitionEntry g_elf_arch_entries[] = {
     {ArchSpec::eCore_riscv64,         llvm::ELF::EM_RISCV,      ArchSpec::eRISCVSubType_riscv64}, // riscv64
     {ArchSpec::eCore_loongarch32,     llvm::ELF::EM_LOONGARCH,  ArchSpec::eLoongArchSubType_loongarch32}, // loongarch32
     {ArchSpec::eCore_loongarch64,     llvm::ELF::EM_LOONGARCH,  ArchSpec::eLoongArchSubType_loongarch64}, // loongarch64
+    {ArchSpec::eCore_tc32,            llvm::ELF::EM_TC32        }, // TC32
 };
 // clang-format on
 
@@ -641,7 +644,7 @@ std::string ArchSpec::GetClangTargetCPU() const {
     }
   }
 
-  if (GetTriple().isARM())
+  if (GetTriple().isARM() || GetTriple().isTC32())
     cpu = llvm::ARM::getARMCPUForArch(GetTriple(), "").str();
   return cpu;
 }
@@ -709,6 +712,7 @@ bool ArchSpec::CharIsSignedByDefault() const {
   case llvm::Triple::aarch64_be:
   case llvm::Triple::arm:
   case llvm::Triple::armeb:
+  case llvm::Triple::tc32:
   case llvm::Triple::thumb:
   case llvm::Triple::thumbeb:
     return m_triple.isOSDarwin() || m_triple.isOSWindows();
@@ -828,8 +832,10 @@ void ArchSpec::MergeFrom(const ArchSpec &other) {
   // If this and other are both arm ArchSpecs and this ArchSpec is a generic
   // "some kind of arm" spec but the other ArchSpec is a specific arm core,
   // adopt the specific arm core.
-  if (GetTriple().getArch() == llvm::Triple::arm &&
-      other.GetTriple().getArch() == llvm::Triple::arm &&
+  if ((GetTriple().getArch() == llvm::Triple::arm ||
+       GetTriple().getArch() == llvm::Triple::tc32) &&
+      (other.GetTriple().getArch() == llvm::Triple::arm ||
+       other.GetTriple().getArch() == llvm::Triple::tc32) &&
       IsCompatibleMatch(other) && GetCore() == ArchSpec::eCore_arm_generic &&
       other.GetCore() != ArchSpec::eCore_arm_generic) {
     m_core = other.GetCore();
@@ -1428,6 +1434,7 @@ bool ArchSpec::IsFullySpecifiedTriple() const {
 
 bool ArchSpec::IsAlwaysThumbInstructions() const {
   if (GetTriple().getArch() == llvm::Triple::arm ||
+      GetTriple().getArch() == llvm::Triple::tc32 ||
       GetTriple().getArch() == llvm::Triple::thumb) {
     // v. https://en.wikipedia.org/wiki/ARM_Cortex-M
     //
