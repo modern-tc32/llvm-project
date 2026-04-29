@@ -8,6 +8,7 @@ on:
       - "llvm/**"
       - "clang/**"
       - "lld/**"
+      - "lldb/**"
       - ".github/workflows/build-tc32-toolchain.yml"
 
 permissions:
@@ -19,7 +20,8 @@ concurrency:
 
 env:
   BUILD_TYPE: Release
-  LLVM_ENABLE_PROJECTS: clang;lld
+  TOOLCHAIN_ENABLE_PROJECTS: clang;lld
+  FULL_ENABLE_PROJECTS: clang;lld;lldb
   LLVM_TARGETS_TO_BUILD: X86;AArch64;ARM
   LLVM_TOOLCHAIN_TOOLS: llc;opt;llvm-ar;llvm-nm;llvm-objcopy;llvm-objdump;llvm-ranlib;llvm-readobj;llvm-size;llvm-strip
   RUST_LLVM_COMPONENTS: aarch64 arm asmparser bitreader bitwriter coverage instrumentation ipo linker lto x86
@@ -120,7 +122,7 @@ jobs:
           cmake -S llvm -B "$BUILD_DIR" -G Ninja \
             -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
-            -DLLVM_ENABLE_PROJECTS="$LLVM_ENABLE_PROJECTS" \
+            -DLLVM_ENABLE_PROJECTS="$TOOLCHAIN_ENABLE_PROJECTS" \
             -DLLVM_TARGETS_TO_BUILD="$LLVM_TARGETS_TO_BUILD" \
             -DLLVM_ENABLE_ZSTD=OFF \
             -DLLVM_ENABLE_LIBXML2=OFF \
@@ -149,7 +151,7 @@ jobs:
             "-DCMAKE_BUILD_TYPE=$env:BUILD_TYPE" `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
             "-DCMAKE_INSTALL_PREFIX=$installDir" `
-            "-DLLVM_ENABLE_PROJECTS=$env:LLVM_ENABLE_PROJECTS" `
+            "-DLLVM_ENABLE_PROJECTS=$env:TOOLCHAIN_ENABLE_PROJECTS" `
             "-DLLVM_TARGETS_TO_BUILD=$env:LLVM_TARGETS_TO_BUILD" `
             "-DLLVM_ENABLE_ZSTD=OFF" `
             "-DLLVM_ENABLE_LIBXML2=OFF" `
@@ -350,7 +352,7 @@ jobs:
           cmake -S llvm -B "$BUILD_DIR" -G Ninja \
             -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
             -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
-            -DLLVM_ENABLE_PROJECTS="$LLVM_ENABLE_PROJECTS" \
+            -DLLVM_ENABLE_PROJECTS="$FULL_ENABLE_PROJECTS" \
             -DLLVM_TARGETS_TO_BUILD="$LLVM_TARGETS_TO_BUILD" \
             -DLLVM_ENABLE_ZSTD=OFF \
             -DLLVM_ENABLE_LIBXML2=OFF \
@@ -365,6 +367,11 @@ jobs:
             -DLLVM_BUILD_EXAMPLES=OFF \
             -DLLVM_BUILD_DOCS=OFF \
             -DCLANG_INCLUDE_TESTS=OFF \
+            -DLLDB_ENABLE_PYTHON=OFF \
+            -DLLDB_ENABLE_SWIG=OFF \
+            -DLLDB_ENABLE_CURSES=OFF \
+            -DLLDB_ENABLE_LIBEDIT=OFF \
+            -DLLDB_ENABLE_LIBXML2=OFF \
             $EXTRA_ARGS
 
       - name: Configure LLVM full install (Windows)
@@ -378,7 +385,7 @@ jobs:
             "-DCMAKE_BUILD_TYPE=$env:BUILD_TYPE" `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
             "-DCMAKE_INSTALL_PREFIX=$installDir" `
-            "-DLLVM_ENABLE_PROJECTS=$env:LLVM_ENABLE_PROJECTS" `
+            "-DLLVM_ENABLE_PROJECTS=$env:FULL_ENABLE_PROJECTS" `
             "-DLLVM_TARGETS_TO_BUILD=$env:LLVM_TARGETS_TO_BUILD" `
             "-DLLVM_ENABLE_ZSTD=OFF" `
             "-DLLVM_ENABLE_LIBXML2=OFF" `
@@ -392,7 +399,12 @@ jobs:
             "-DLLVM_BUILD_BENCHMARKS=OFF" `
             "-DLLVM_BUILD_EXAMPLES=OFF" `
             "-DLLVM_BUILD_DOCS=OFF" `
-            "-DCLANG_INCLUDE_TESTS=OFF"
+            "-DCLANG_INCLUDE_TESTS=OFF" `
+            "-DLLDB_ENABLE_PYTHON=OFF" `
+            "-DLLDB_ENABLE_SWIG=OFF" `
+            "-DLLDB_ENABLE_CURSES=OFF" `
+            "-DLLDB_ENABLE_LIBEDIT=OFF" `
+            "-DLLDB_ENABLE_LIBXML2=OFF"
 
       - name: Build and install full distribution (Unix)
         if: ${{ !matrix.is_windows }}
@@ -401,7 +413,7 @@ jobs:
           set -euo pipefail
           BUILD_DIR="$GITHUB_WORKSPACE/build/${{ matrix.host }}-full"
           INSTALL_DIR="$GITHUB_WORKSPACE/install/${{ matrix.host }}-full"
-          cmake --build "$BUILD_DIR" --target install llvm-config FileCheck --parallel
+          cmake --build "$BUILD_DIR" --target lldb install llvm-config FileCheck --parallel
           install -m 755 "$BUILD_DIR/bin/llvm-config" "$INSTALL_DIR/bin/llvm-config"
           install -m 755 "$BUILD_DIR/bin/FileCheck" "$INSTALL_DIR/bin/FileCheck"
 
@@ -411,7 +423,7 @@ jobs:
         run: |
           $buildDir = Join-Path $env:GITHUB_WORKSPACE "build/${{ matrix.host }}-full"
           $installDir = Join-Path $env:GITHUB_WORKSPACE "install/${{ matrix.host }}-full"
-          cmake --build $buildDir --target install llvm-config FileCheck --parallel
+          cmake --build $buildDir --target lldb install llvm-config FileCheck --parallel
           Copy-Item -Force (Join-Path $buildDir "bin/llvm-config.exe") (Join-Path $installDir "bin/llvm-config.exe")
           Copy-Item -Force (Join-Path $buildDir "bin/FileCheck.exe") (Join-Path $installDir "bin/FileCheck.exe")
 
@@ -460,6 +472,7 @@ jobs:
         run: |
           set -euo pipefail
           PREFIX="$GITHUB_WORKSPACE/install/${{ matrix.host }}-full"
+          test -x "$PREFIX/bin/lldb"
           "$PREFIX/bin/llvm-config" --components > "$GITHUB_WORKSPACE/llvm-components-full-${{ matrix.host }}.txt"
           "$PREFIX/bin/llvm-config" --system-libs > "$GITHUB_WORKSPACE/llvm-system-libs-full-${{ matrix.host }}.txt"
           "$PREFIX/bin/llvm-config" --link-static --libs --system-libs $RUST_LLVM_COMPONENTS >/dev/null
@@ -473,6 +486,9 @@ jobs:
         shell: pwsh
         run: |
           $prefix = Join-Path $env:GITHUB_WORKSPACE "install/${{ matrix.host }}-full"
+          if (-not (Test-Path (Join-Path $prefix "bin/lldb.exe"))) {
+            throw "Missing LLDB binary in full install."
+          }
           & (Join-Path $prefix "bin/llvm-config.exe") --components |
             Set-Content -Path (Join-Path $env:GITHUB_WORKSPACE "llvm-components-full-${{ matrix.host }}.txt")
           & (Join-Path $prefix "bin/llvm-config.exe") --system-libs |
