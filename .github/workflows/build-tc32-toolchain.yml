@@ -372,6 +372,7 @@ jobs:
             -DLLDB_ENABLE_CURSES=OFF \
             -DLLDB_ENABLE_LIBEDIT=OFF \
             -DLLDB_ENABLE_LIBXML2=OFF \
+            -DLLDB_INCLUDE_TESTS=OFF \
             $EXTRA_ARGS
 
       - name: Configure LLVM full install (Windows)
@@ -404,7 +405,8 @@ jobs:
             "-DLLDB_ENABLE_SWIG=OFF" `
             "-DLLDB_ENABLE_CURSES=OFF" `
             "-DLLDB_ENABLE_LIBEDIT=OFF" `
-            "-DLLDB_ENABLE_LIBXML2=OFF"
+            "-DLLDB_ENABLE_LIBXML2=OFF" `
+            "-DLLDB_INCLUDE_TESTS=OFF"
 
       - name: Build and install full distribution (Unix)
         if: ${{ !matrix.is_windows }}
