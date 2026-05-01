@@ -43,6 +43,13 @@ static bool isRISCVBareMetal(const llvm::Triple &Triple) {
   return Triple.getEnvironmentName() == "elf";
 }
 
+/// Is the triple tc32-*-none-elf?
+static bool isTC32BareMetal(const llvm::Triple &Triple) {
+  return Triple.getArch() == llvm::Triple::tc32 &&
+         Triple.getOS() == llvm::Triple::UnknownOS &&
+         Triple.getEnvironmentName() == "elf";
+}
+
 /// Is the triple powerpc[64][le]-*-none-eabi?
 static bool isPPCBareMetal(const llvm::Triple &Triple) {
   return Triple.isPPC() && Triple.getOS() == llvm::Triple::UnknownOS &&
@@ -281,7 +288,8 @@ void BareMetal::findMultilibs(const Driver &D, const llvm::Triple &Triple,
 bool BareMetal::handlesTarget(const llvm::Triple &Triple) {
   return arm::isARMEABIBareMetal(Triple) ||
          aarch64::isAArch64BareMetal(Triple) || isRISCVBareMetal(Triple) ||
-         isPPCBareMetal(Triple) || isX86BareMetal(Triple);
+         isTC32BareMetal(Triple) || isPPCBareMetal(Triple) ||
+         isX86BareMetal(Triple);
 }
 
 Tool *BareMetal::buildLinker() const {
