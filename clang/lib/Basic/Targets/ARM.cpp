@@ -646,17 +646,31 @@ bool ARMTargetInfo::hasBFloat16Type() const {
 }
 
 bool ARMTargetInfo::isValidCPUName(StringRef Name) const {
+  if (getTriple().isTC32())
+    return Name == "generic" || Name == "tc32";
+
   return Name == "generic" ||
          llvm::ARM::parseCPUArch(Name) != llvm::ARM::ArchKind::INVALID;
 }
 
 void ARMTargetInfo::fillValidCPUList(SmallVectorImpl<StringRef> &Values) const {
+  if (getTriple().isTC32()) {
+    Values.emplace_back("generic");
+    Values.emplace_back("tc32");
+    return;
+  }
+
   llvm::ARM::fillValidCPUArchList(Values);
 }
 
 bool ARMTargetInfo::setCPU(const std::string &Name) {
-  if (Name != "generic")
+  if (getTriple().isTC32()) {
+    if (Name != "generic" && Name != "tc32")
+      return false;
+    setArchInfo(llvm::ARM::ArchKind::ARMV4T);
+  } else if (Name != "generic") {
     setArchInfo(llvm::ARM::parseCPUArch(Name));
+  }
 
   if (ArchKind == llvm::ARM::ArchKind::INVALID)
     return false;

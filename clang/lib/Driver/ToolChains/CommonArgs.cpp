@@ -751,6 +751,11 @@ std::string tools::getCPUName(const Driver &D, const ArgList &Args,
     return arm::getARMTargetCPU(MCPU, MArch, T);
   }
 
+  case llvm::Triple::tc32:
+    if (const Arg *A = Args.getLastArg(options::OPT_mcpu_EQ))
+      return A->getValue();
+    return "tc32";
+
   case llvm::Triple::avr:
     if (const Arg *A = Args.getLastArg(options::OPT_mmcu_EQ))
       return A->getValue();

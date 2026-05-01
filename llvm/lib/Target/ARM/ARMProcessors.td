@@ -130,6 +130,7 @@ def : ProcNoItin<"arm920",                              [ARMv4t]>;
 def : ProcNoItin<"arm920t",                             [ARMv4t]>;
 def : ProcNoItin<"arm922t",                             [ARMv4t]>;
 def : ProcNoItin<"arm940t",                             [ARMv4t]>;
+def : ProcNoItin<"tc32",                                [ARMv4t]>;
 def : ProcNoItin<"ep9312",                              [ARMv4t]>;
 
 def : ProcNoItin<"arm10tdmi",                           [ARMv5t]>;

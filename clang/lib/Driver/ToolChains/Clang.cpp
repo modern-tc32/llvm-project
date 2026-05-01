@@ -1549,6 +1549,7 @@ void Clang::RenderTargetOptions(const llvm::Triple &EffectiveTriple,
 
   case llvm::Triple::arm:
   case llvm::Triple::armeb:
+  case llvm::Triple::tc32:
   case llvm::Triple::thumb:
   case llvm::Triple::thumbeb:
     // Use the effective triple, which takes into account the deployment target.
