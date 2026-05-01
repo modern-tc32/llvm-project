@@ -1314,6 +1314,8 @@ StringRef ELFObjectFile<ELFT>::getFileFormatName() const {
       return "elf32-x86-64";
     case ELF::EM_ARM:
       return (IsLittleEndian ? "elf32-littlearm" : "elf32-bigarm");
+    case ELF::EM_TC32:
+      return "elf32-littletc32";
     case ELF::EM_AVR:
       return "elf32-avr";
     case ELF::EM_HEXAGON:
