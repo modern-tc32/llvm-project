@@ -10,7 +10,7 @@ loop:
     nop
     b loop
 
-# CHECK: {{.*}}tc32-backward-branch{{.*}}:	file format elf32-unknown
+# CHECK: {{.*}}tc32-backward-branch{{.*}}:	file format elf32-littletc32
 # CHECK-EMPTY:
 # CHECK: Disassembly of section .text:
 # CHECK-EMPTY:
