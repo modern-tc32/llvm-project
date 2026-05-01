@@ -614,6 +614,8 @@ const char *tools::getLDMOption(const llvm::Triple &T, const ArgList &Args) {
     return "elf32briscv";
   case llvm::Triple::riscv64be:
     return "elf64briscv";
+  case llvm::Triple::tc32:
+    return "tc32elf";
   case llvm::Triple::sparc:
   case llvm::Triple::sparcel:
     return "elf32_sparc";
