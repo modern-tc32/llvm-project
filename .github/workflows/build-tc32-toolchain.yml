@@ -333,7 +333,7 @@ jobs:
           $header = & (Join-Path $prefix "bin/llvm-readobj.exe") --file-headers (Join-Path $testDir "start.elf")
           $headerText = ($header -join "`n")
           $headerText | Set-Content -Path (Join-Path $testDir "readobj.txt")
-          if ($headerText -notmatch 'Machine:\s+0x8800') {
+          if ($headerText -notmatch 'Machine:.*(8800|TC32)') {
             throw "TC32 machine id was not found in llvm-readobj output."
           }
 
