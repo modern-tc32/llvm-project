@@ -185,16 +185,8 @@ MCFixupKindInfo ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
 
 unsigned ARMAsmBackend::getRelaxedOpcode(unsigned Op,
                                          const MCSubtargetInfo &STI) const {
-  if (STI.getTargetTriple().isTC32()) {
-    switch (Op) {
-    default:
-      return Op;
-    case ARM::tB:
-      return ARM::tTC32B32;
-    case ARM::tBcc:
-      return ARM::tTC32Bcc32;
-    }
-  }
+  if (STI.getTargetTriple().isTC32())
+    return Op;
 
   bool HasThumb2 = STI.hasFeature(ARM::FeatureThumb2);
   bool HasV8MBaselineOps = STI.hasFeature(ARM::HasV8MBaselineOps);
