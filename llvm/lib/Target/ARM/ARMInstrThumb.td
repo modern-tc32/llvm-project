@@ -635,7 +635,7 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
     let AsmMatchConverter = "cvtThumbBranches";
  }
 
-  // TC32 vendor assembler has a dedicated 32-bit long form for TJ.
+  // TC32 codegen has a dedicated 32-bit long form for TJ.
   def tTC32B32 : ThumbXI<(outs), (ins t_brtarget:$target), AddrModeNone, 4,
                          IIC_Br, "tj\t$target", "", []>,
                  Sched<[WriteBr]> {
