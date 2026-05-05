@@ -438,36 +438,15 @@ DecodeStatus ARMDisassembler::decodeTC32Instruction(MCInst &MI, uint16_t Insn16,
   if ((Insn16 & 0xFC00u) == 0xEC00u) {
     unsigned Dst = Insn16 & 0x7;
     unsigned Src = (Insn16 >> 3) & 0x7;
-    unsigned HiBits = (Insn16 >> 8) & 0x3;
-    if (HiBits == 0) {
-      MI.setOpcode(ARM::tMOVr);
-      addTC32LowReg(MI, Dst);
-      addTC32LowReg(MI, Src);
-      addTC32PredicateOperands(MI);
-      return MCDisassembler::Success;
-    }
-
-    if (HiBits == 1 || HiBits == 2) {
-      bool SameReg = (Insn16 & 0x40u) == 0;
-      unsigned ImmOrRhs = (Insn16 >> 6) & 0x3;
-      unsigned FullSrc = (Insn16 >> 3) & 0x7;
-      if (SameReg) {
-        MI.setOpcode(HiBits == 1 ? ARM::tADDi3 : ARM::tSUBi3);
-        addTC32LowReg(MI, Dst);
-        addTC32CCOutOperand(MI);
-        addTC32LowReg(MI, FullSrc);
-        MI.addOperand(MCOperand::createImm(ImmOrRhs));
-        addTC32PredicateOperands(MI);
-      } else {
-        MI.setOpcode(HiBits == 1 ? ARM::tADDrr : ARM::tSUBrr);
-        addTC32LowReg(MI, Dst);
-        addTC32CCOutOperand(MI);
-        addTC32LowReg(MI, FullSrc);
-        addTC32LowReg(MI, ImmOrRhs);
-        addTC32PredicateOperands(MI);
-      }
-      return MCDisassembler::Success;
-    }
+    unsigned Imm = (((Insn16 >> 8) & 0x1) << 2) | ((Insn16 >> 6) & 0x3);
+    bool IsAdd = (Insn16 & 0x0200u) == 0;
+    MI.setOpcode(IsAdd ? ARM::tADDi3 : ARM::tSUBi3);
+    addTC32LowReg(MI, Dst);
+    addTC32CCOutOperand(MI);
+    addTC32LowReg(MI, Src);
+    MI.addOperand(MCOperand::createImm(Imm));
+    addTC32PredicateOperands(MI);
+    return MCDisassembler::Success;
   }
 
   if ((Insn16 & 0xFF00u) >= 0xB000u && (Insn16 & 0xFF00u) <= 0xB700u) {
