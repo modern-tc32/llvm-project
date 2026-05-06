@@ -585,6 +585,7 @@ bool ARM::inBranchRange(RelType type, uint64_t src, uint64_t dst) const {
     switch (type) {
     case R_ARM_THM_JUMP11:
       return llvm::isInt<12>(offset - 4);
+    case R_ARM_THM_JUMP24:
     case R_ARM_THM_CALL:
       return llvm::isInt<23>(offset - 4);
     default:
@@ -859,6 +860,13 @@ void ARM::relocate(uint8_t *loc, const Relocation &rel, uint64_t val) const {
     // Fall through as rest of encoding is the same as B.W
     [[fallthrough]];
   case R_ARM_THM_JUMP24:
+    if (ctx.arg.emachine == EM_TC32) {
+      checkInt(ctx, loc, val - 4, 23, rel);
+      uint32_t encImm = static_cast<uint32_t>((val - 4) >> 1) & 0x003fffff;
+      write16(ctx, loc, 0x9000 | ((encImm >> 11) & 0x07ff));
+      write16(ctx, loc + 2, 0x6800 | (encImm & 0x07ff));
+      break;
+    }
     // Encoding B  T4, BL T1, BLX T2: Val = S:I1:I2:imm10:imm11:0
     checkInt(ctx, loc, val, 25, rel);
     write16(ctx, loc,
@@ -1073,6 +1081,12 @@ int64_t ARM::getImplicitAddend(const uint8_t *buf, RelType type) const {
     }
     [[fallthrough]];
   case R_ARM_THM_JUMP24: {
+    if (ctx.arg.emachine == EM_TC32) {
+      uint16_t hi = read16(ctx, buf);
+      uint16_t lo = read16(ctx, buf + 2);
+      uint32_t encImm = ((hi & 0x07ff) << 11) | (lo & 0x07ff);
+      return (SignExtend64<22>(encImm) << 1) + 4;
+    }
     // Encoding B T4, BL T1, BLX T2: A = S:I1:I2:imm10:imm11:0
     // I1 = NOT(J1 EOR S), I2 = NOT(J2 EOR S)
     uint16_t hi = read16(ctx, buf);
