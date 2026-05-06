@@ -471,6 +471,9 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
     unsigned Size = 2;
 
     switch (MI.getOpcode()) {
+    case ARM::tTC32NOP:
+      Bits16 = 0x06c0u;
+      break;
     case ARM::tMOVr:
       Bits16 = encodeTC32MOVrr(MI, Desc.getNumDefs());
       break;
