@@ -57,6 +57,8 @@ def:
 ; CHECK: tshftl [[IDX]], [[IDX]], #2
 ; CHECK-NEXT: tadd [[IDX]], pc
 ; CHECK-NEXT: tloadr [[IDX]], [[[IDX]], #4]
+; CHECK-NEXT: nop
+; CHECK-NEXT: nop
 ; CHECK-NEXT: tmov pc, [[IDX]]
 ; CHECK-NEXT: .align 2
 ; CHECK-NEXT: .LJTI0_0:
