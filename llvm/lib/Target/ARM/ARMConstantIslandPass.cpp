@@ -83,6 +83,7 @@ STATISTIC(NumTC32VeryFarCallLongFallbacks,
           "Number of TC32 very-far call fallbacks promoted to tBfar");
 
 static inline unsigned getUnconditionalBrDisp(int Opc);
+static inline unsigned getTC32LongConditionalBrDisp();
 static inline int64_t getThumbBranchPCOffset(int64_t InstrOff);
 
 static cl::opt<bool>
@@ -456,6 +457,12 @@ void ARMConstantIslands::verifyIncrementalFunctionState() {
           IsCond = true;
           UOpc = ARM::tB;
           Bits = 8;
+          Scale = 2;
+          break;
+        case ARM::tTC32Bcc32:
+          IsCond = true;
+          UOpc = ARM::tTC32B32;
+          Bits = 19;
           Scale = 2;
           break;
         case ARM::tB:
@@ -1337,6 +1344,12 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
           Bits = 8;
           Scale = 2;
           break;
+        case ARM::tTC32Bcc32:
+          isCond = true;
+          UOpc = ARM::tTC32B32;
+          Bits = 19;
+          Scale = 2;
+          break;
         case ARM::tB:
           Bits = 11;
           Scale = 2;
@@ -1538,6 +1551,12 @@ bool ARMConstantIslands::classifyImmBranch(const MachineInstr &MI,
     IsCond = true;
     UncondBr = ARM::tB;
     Bits = 8;
+    Scale = 2;
+    break;
+  case ARM::tTC32Bcc32:
+    IsCond = true;
+    UncondBr = ARM::tTC32B32;
+    Bits = 19;
     Scale = 2;
     break;
   case ARM::tB:
@@ -1961,6 +1980,10 @@ static inline unsigned getUnconditionalBrDisp(int Opc) {
   }
 
   return ((1<<23)-1)*4;
+}
+
+static inline unsigned getTC32LongConditionalBrDisp() {
+  return ((1 << 18) - 1) * 2;
 }
 
 static inline int64_t getThumbBranchPCOffset(int64_t InstrOff) {
@@ -2582,6 +2605,7 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
   if (STI->getTargetTriple().isTC32()) {
     const unsigned BranchMaxDisp = Br.MaxDisp;
     const unsigned LongBranchMaxDisp = getUnconditionalBrDisp(ARM::tTC32B32);
+    const unsigned LongCondBranchMaxDisp = getTC32LongConditionalBrDisp();
     MachineBasicBlock *FinalDestBB = MI->getOperand(Br.DestOpnd).getMBB();
     MachineInstr *CurrBrMI = MI;
     MachineBasicBlock *CurrMBB = MBB;
@@ -2774,6 +2798,32 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       if (CurDist <= static_cast<int64_t>(BranchMaxDisp))
         break;
 
+      // TC32 has a 32-bit conditional branch. Prefer it over keeping an
+      // inverted short branch followed by a far unconditional branch.
+      if (!Changed && CurrBrMI == MI && CurrBrMI->getOpcode() == ARM::tB &&
+          MI != MBB->begin()) {
+        MachineInstr *CondMI = &*std::prev(MI->getIterator());
+        if (CondMI->getOpcode() == ARM::tBcc) {
+          MachineBasicBlock *CondDestBB = CondMI->getOperand(0).getMBB();
+          if (CondDestBB == MBB->getFallThrough() &&
+              BBUtils->isBBInRange(CondMI, FinalDestBB,
+                                   LongCondBranchMaxDisp)) {
+            LLVM_DEBUG(dbgs() << "  Changed TC32 inverted Bcc+B to long "
+                                 "conditional jump "
+                              << *CondMI);
+            ARMCC::CondCodes CC =
+                static_cast<ARMCC::CondCodes>(CondMI->getOperand(1).getImm());
+            CondMI->setDesc(TII->get(ARM::tTC32Bcc32));
+            CondMI->getOperand(0).setMBB(FinalDestBB);
+            CondMI->getOperand(1).setImm(ARMCC::getOppositeCondition(CC));
+            Br.MI = nullptr;
+            MI->eraseFromParent();
+            ++NumCBrFixed;
+            return true;
+          }
+        }
+      }
+
       if (!Changed && CurrBrMI == MI && CurrBrMI->getOpcode() == ARM::tB &&
           CurDist <= static_cast<int64_t>(LongBranchMaxDisp)) {
         MachineInstr *NewMI =
@@ -2885,9 +2935,28 @@ ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
   case ARM::tBcc:
     ExpectedUncondOpc = ARM::tB;
     break;
+  case ARM::tTC32Bcc32:
+    ExpectedUncondOpc = ARM::tTC32B32;
+    break;
   case ARM::t2Bcc:
     ExpectedUncondOpc = ARM::t2B;
     break;
+  }
+
+  if (STI->getTargetTriple().isTC32() && MI->getOpcode() == ARM::tBcc) {
+    const unsigned LongMaxDisp = getTC32LongConditionalBrDisp();
+    if (BBUtils->isBBInRange(MI, DestBB, LongMaxDisp)) {
+      LLVM_DEBUG(dbgs() << "  Changed TC32 Bcc to long conditional jump "
+                        << *MI);
+      MI->setDesc(TII->get(ARM::tTC32Bcc32));
+      Br.MaxDisp = LongMaxDisp;
+      Br.UncondBr = ARM::tTC32B32;
+      BBInfoVector &BBInfo = BBUtils->getBBInfo();
+      BBInfo[MI->getParent()->getNumber()].Size += 2;
+      BBUtils->adjustBBOffsetsAfter(MI->getParent());
+      ++NumCBrFixed;
+      return true;
+    }
   }
 
   // Add an unconditional branch to the destination and invert the branch
