@@ -4,21 +4,9 @@
 # CHECK-NOT: tBfar
 # CHECK: tPOP_RET
 # CHECK-LABEL: bb.2:
-# CHECK: tB %bb.0
-# CHECK-LABEL: bb.4:
-# CHECK: tB %bb.2
-# CHECK-LABEL: bb.6:
-# CHECK: tB %bb.4
-# CHECK-LABEL: bb.8:
-# CHECK: tB %bb.6
-# CHECK-LABEL: bb.10:
-# CHECK: tB %bb.8
-# CHECK-LABEL: bb.12:
-# CHECK: tB %bb.10
-# CHECK-LABEL: bb.14:
-# CHECK: tBcc %bb.15, 1
-# CHECK: tB %bb.12
-# CHECK-LABEL: bb.15:
+# CHECK: tBcc %bb.3, 1
+# CHECK: tTC32B32 %bb.0
+# CHECK-LABEL: bb.3:
 # CHECK: tPOP_RET
 
 --- |
@@ -33,7 +21,7 @@ body:             |
     tPOP_RET 14, $noreg, def $pc
 
   bb.1:
-    dead $r0 = SPACE 4200, undef $r0
+    dead $r0 = SPACE 600000, undef $r0
 
   bb.2:
     tBcc %bb.0, 0, killed $cpsr

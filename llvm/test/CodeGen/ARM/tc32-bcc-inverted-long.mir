@@ -1,11 +1,10 @@
 # RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - | FileCheck %s
 
 # CHECK-LABEL: bb.0:
-# CHECK-NOT: tBfar
-# CHECK: tBcc %bb.1, 1
-# CHECK: tTC32B32 %bb.[[FINAL:[0-9]+]]
-# CHECK: bb.[[FINAL]]:
-# CHECK: tPOP_RET
+# CHECK: tTC32Bcc32 %bb.3, 4
+# CHECK-NOT: tBcc %bb.1, 5
+# CHECK-NOT: tTC32B32 %bb.3
+# CHECK-LABEL: bb.1:
 
 --- |
   define void @f() { ret void }
@@ -17,12 +16,15 @@ tracksRegLiveness: true
 body:             |
   bb.0:
     liveins: $cpsr
-    tBcc %bb.2, 0, killed $cpsr
-    tPOP_RET 14, $noreg, def $pc
+    tBcc %bb.1, 5, killed $cpsr
+    tB %bb.3, 14, $noreg
 
   bb.1:
-    dead $r0 = SPACE 600000, undef $r0
+    tPOP_RET 14, $noreg, def $pc
 
   bb.2:
+    dead $r0 = SPACE 3000, undef $r0
+
+  bb.3:
     tPOP_RET 14, $noreg, def $pc
 ...
