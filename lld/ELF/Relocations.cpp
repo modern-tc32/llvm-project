@@ -1623,6 +1623,20 @@ static int64_t getPCBias(Ctx &ctx, const InputSection &isec,
   return 0;
 }
 
+static int64_t getThunkTargetAddend(Ctx &ctx, const InputSection &isec,
+                                    const Relocation &rel) {
+  if (ctx.arg.emachine == EM_TC32) {
+    switch (rel.type) {
+    case R_ARM_THM_CALL:
+    case R_ARM_THM_JUMP24:
+      return 0;
+    default:
+      break;
+    }
+  }
+  return -getPCBias(ctx, isec, rel);
+}
+
 // Find or create a ThunkSection within the InputSectionDescription (ISD) that
 // is in range of Src. An ISD maps to a range of InputSections described by a
 // linker script section pattern such as { .text .text.* }.
@@ -1825,7 +1839,9 @@ std::pair<Thunk *, bool> ThunkCreator::getThunk(InputSection *isec,
   for (auto &t : *thunkVec)
     if (isThunkSectionCompatible(isec, *t) && t->isCompatibleWith(*isec, rel) &&
         ctx.target->inBranchRange(rel.type, src,
-                                  t->getThunkTargetSym()->getVA(ctx, -pcBias)))
+                                  t->getThunkTargetSym()->getVA(
+                                      ctx, getThunkTargetAddend(ctx, *isec,
+                                                               rel))))
       return std::make_pair(t.get(), false);
 
   // No existing compatible Thunk in range, create a new one
@@ -1964,7 +1980,7 @@ bool ThunkCreator::createThunks(uint32_t pass,
             // STT_SECTION + non-zero addend, clear the addend after
             // redirection.
             if (ctx.arg.emachine != EM_MIPS)
-              rel.addend = -getPCBias(ctx, *isec, rel);
+              rel.addend = getThunkTargetAddend(ctx, *isec, rel);
           }
 
         for (auto &p : isd->thunkSections)
