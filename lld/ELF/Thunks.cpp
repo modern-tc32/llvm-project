@@ -290,7 +290,7 @@ public:
     alignment = 4;
   }
 
-  uint32_t size() override { return 12; }
+  uint32_t size() override { return 24; }
   void writeTo(uint8_t *buf) override;
   void addSymbols(ThunkSection &isec) override;
 };
@@ -1073,11 +1073,17 @@ static uint64_t getTC32ThunkDestVA(Ctx &ctx, const Symbol &s, int64_t a) {
 
 void TC32ABSLongThunk::writeTo(uint8_t *buf) {
   write16(ctx, buf + 0, 0x6403); // tpush {r0, r1}
-  write16(ctx, buf + 2, 0x0801); // tloadr r0, [pc, #4]
-  write16(ctx, buf + 4, 0x3001); // tstorer r0, [sp, #4]
-  write16(ctx, buf + 6, 0x6d01); // tpop {r0, pc}
-  write32(ctx, buf + 8, 0x00000000);
-  ctx.target->relocateNoSym(buf + 8, R_ARM_ABS32,
+  write16(ctx, buf + 2, 0x0804); // tloadr r0, [pc, #16]
+  write16(ctx, buf + 4, 0x06c0); // nop
+  write16(ctx, buf + 6, 0x06c0); // nop
+  write16(ctx, buf + 8, 0x3001); // tstorer r0, [sp, #4]
+  write16(ctx, buf + 10, 0x06c0); // nop
+  write16(ctx, buf + 12, 0x06c0); // nop
+  write16(ctx, buf + 14, 0x6d01); // tpop {r0, pc}
+  write16(ctx, buf + 16, 0x06c0); // nop
+  write16(ctx, buf + 18, 0x06c0); // nop
+  write32(ctx, buf + 20, 0x00000000);
+  ctx.target->relocateNoSym(buf + 20, R_ARM_ABS32,
                             getTC32ThunkDestVA(ctx, destination, addend));
 }
 
@@ -1085,7 +1091,7 @@ void TC32ABSLongThunk::addSymbols(ThunkSection &isec) {
   addSymbol(ctx.saver.save("__TC32ABSLongThunk_" + destination.getName()),
             STT_FUNC, 0, isec);
   addSymbol("$t", STT_NOTYPE, 0, isec);
-  addSymbol("$d", STT_NOTYPE, 8, isec);
+  addSymbol("$d", STT_NOTYPE, 20, isec);
 }
 
 void ARMV5LongLdrPcThunk::writeLong(uint8_t *buf) {
