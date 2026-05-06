@@ -119,6 +119,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARMTarget() {
   initializeARMFixCortexA57AES1742098Pass(Registry);
   initializeARMDAGToDAGISelLegacyPass(Registry);
   initializeMachineKCFILegacyPass(Registry);
+  initializeTC32LoadHazardFixupPass(Registry);
   initializeTC32PackedByteLoadStorePassPass(Registry);
 }
 
@@ -632,6 +633,9 @@ void ARMPassConfig::addPreEmitPass() {
 }
 
 void ARMPassConfig::addPreEmitPass2() {
+
+  if (TM->getTargetTriple().isTC32())
+    addPass(createTC32LoadHazardFixupPass());
 
   // Inserts fixup instructions before unsafe AES operations. Instructions may
   // be inserted at the start of blocks and at within blocks so this pass has to

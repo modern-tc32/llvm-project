@@ -1,0 +1,75 @@
+# RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=tc32-load-hazard-fixup -verify-machineinstrs %s -o - | FileCheck %s
+
+--- |
+  define void @load_use() { ret void }
+  define void @load_gap_use() { ret void }
+  define void @load_two_gap_use() { ret void }
+  define void @pop_use() { ret void }
+...
+---
+name:            load_use
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r1
+
+    ; CHECK-LABEL: name: load_use
+    ; CHECK: renamable $r0 = tLDRi renamable $r1, 0
+    ; CHECK-NEXT: tTC32NOP
+    ; CHECK-NEXT: tTC32NOP
+    ; CHECK-NEXT: dead renamable $r0, $cpsr = tADDi3 killed renamable $r0, 1
+    renamable $r0 = tLDRi renamable $r1, 0, 14, $noreg :: (load (s32))
+    dead renamable $r0, $cpsr = tADDi3 killed renamable $r0, 1, 14, $noreg
+    tBX_RET 14, $noreg
+...
+---
+name:            load_gap_use
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r1, $r3
+
+    ; CHECK-LABEL: name: load_gap_use
+    ; CHECK: renamable $r0 = tLDRi renamable $r1, 0
+    ; CHECK-NEXT: dead renamable $r3, $cpsr = tADDi3 killed renamable $r3, 1
+    ; CHECK-NEXT: tTC32NOP
+    ; CHECK-NEXT: dead renamable $r0, $cpsr = tADDi3 killed renamable $r0, 1
+    renamable $r0 = tLDRi renamable $r1, 0, 14, $noreg :: (load (s32))
+    dead renamable $r3, $cpsr = tADDi3 killed renamable $r3, 1, 14, $noreg
+    dead renamable $r0, $cpsr = tADDi3 killed renamable $r0, 1, 14, $noreg
+    tBX_RET 14, $noreg
+...
+---
+name:            load_two_gap_use
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $r1, $r3, $r4
+
+    ; CHECK-LABEL: name: load_two_gap_use
+    ; CHECK: renamable $r0 = tLDRi renamable $r1, 0
+    ; CHECK-NEXT: dead renamable $r3, $cpsr = tADDi3 killed renamable $r3, 1
+    ; CHECK-NEXT: dead renamable $r4, $cpsr = tADDi3 killed renamable $r4, 1
+    ; CHECK-NEXT: dead renamable $r0, $cpsr = tADDi3 killed renamable $r0, 1
+    renamable $r0 = tLDRi renamable $r1, 0, 14, $noreg :: (load (s32))
+    dead renamable $r3, $cpsr = tADDi3 killed renamable $r3, 1, 14, $noreg
+    dead renamable $r4, $cpsr = tADDi3 killed renamable $r4, 1, 14, $noreg
+    dead renamable $r0, $cpsr = tADDi3 killed renamable $r0, 1, 14, $noreg
+    tBX_RET 14, $noreg
+...
+---
+name:            pop_use
+tracksRegLiveness: true
+body:             |
+  bb.0:
+    liveins: $sp
+
+    ; CHECK-LABEL: name: pop_use
+    ; CHECK: tPOP 14
+    ; CHECK-NEXT: tTC32NOP
+    ; CHECK-NEXT: tTC32NOP
+    ; CHECK-NEXT: dead renamable $r0, $cpsr = tADDi3 killed renamable $r0, 1
+    tPOP 14, $noreg, def $r0, implicit-def $sp, implicit $sp
+    dead renamable $r0, $cpsr = tADDi3 killed renamable $r0, 1, 14, $noreg
+    tBX_RET 14, $noreg
+...

@@ -619,7 +619,7 @@ unsigned ARMBaseInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     return MCID.getSize();
   case ARM::tBR_JTr:
     if (MF->getTarget().getTargetTriple().isTC32()) {
-      unsigned Size = 6;
+      unsigned Size = 10;
       if (const MachineJumpTableInfo *MJTI = MF->getJumpTableInfo()) {
         unsigned JTI = MI.getOperand(1).getIndex();
         const auto &JTs = MJTI->getJumpTables();

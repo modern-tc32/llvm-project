@@ -9,6 +9,8 @@ define i32 @byte_jumptable(i32 %x) {
 ; CHECK:       tshftl r0, r0, #2
 ; CHECK-NEXT:  tadd r0, pc
 ; CHECK-NEXT:  tloadr r0, [r0, #4]
+; CHECK-NEXT:  nop
+; CHECK-NEXT:  nop
 ; CHECK-NEXT:  tmov pc, r0
 ; CHECK:       [[JTI:\.LJTI0_0]]:
 ; CHECK-NEXT:  .long [[CASE0:\.LBB0_[0-9]+]]+1
