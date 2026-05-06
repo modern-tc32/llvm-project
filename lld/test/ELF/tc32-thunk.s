@@ -9,9 +9,15 @@
 # CHECK-NEXT:    {{[0-9a-f]+}}: 70 07         tjex lr
 # CHECK:       {{[0-9a-f]+}} <__TC32ABSLongThunk_target>:
 # CHECK-NEXT:    {{[0-9a-f]+}}: 03 64         tpush {r0, r1}
-# CHECK-NEXT:    {{[0-9a-f]+}}: 01 08         tloadr r0, [pc, #0x4]
+# CHECK-NEXT:    {{[0-9a-f]+}}: 04 08         tloadr r0, [pc, #0x10]
+# CHECK-NEXT:    {{[0-9a-f]+}}: c0 06         nop
+# CHECK-NEXT:    {{[0-9a-f]+}}: c0 06         nop
 # CHECK-NEXT:    {{[0-9a-f]+}}: 01 30         tstorer r0, [sp, #0x4]
+# CHECK-NEXT:    {{[0-9a-f]+}}: c0 06         nop
+# CHECK-NEXT:    {{[0-9a-f]+}}: c0 06         nop
 # CHECK-NEXT:    {{[0-9a-f]+}}: 01 6d         tpop {r0, pc}
+# CHECK-NEXT:    {{[0-9a-f]+}}: c0 06         nop
+# CHECK-NEXT:    {{[0-9a-f]+}}: c0 06         nop
 # CHECK-NEXT:    {{[0-9a-f]+}}: 00 00 43 00   .word 0x00430000
 
 #--- tc32-thunk.s
