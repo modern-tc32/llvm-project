@@ -283,6 +283,18 @@ private:
   ThunkSection *tsec = nullptr;
 };
 
+class TC32ABSLongThunk final : public Thunk {
+public:
+  TC32ABSLongThunk(Ctx &ctx, Symbol &dest, int64_t addend)
+      : Thunk(ctx, dest, addend) {
+    alignment = 4;
+  }
+
+  uint32_t size() override { return 12; }
+  void writeTo(uint8_t *buf) override;
+  void addSymbols(ThunkSection &isec) override;
+};
+
 // Architectures v4, v5 and v6 do not support the movt/movw instructions. v5 and
 // v6 support BLX to which BL instructions can be rewritten inline. There are no
 // Thumb entrypoints for v5 and v6 as there is no Thumb branch instruction on
@@ -1054,6 +1066,28 @@ void ThumbV6MPILongThunk::addLongMapSyms() {
   addSymbol("$d", STT_NOTYPE, 12, *tsec);
 }
 
+static uint64_t getTC32ThunkDestVA(Ctx &ctx, const Symbol &s, int64_t a) {
+  uint64_t v = s.isInPlt(ctx) ? s.getPltVA(ctx) : s.getVA(ctx, a);
+  return SignExtend64<32>(v & ~uint64_t(1));
+}
+
+void TC32ABSLongThunk::writeTo(uint8_t *buf) {
+  write16(ctx, buf + 0, 0x6403); // tpush {r0, r1}
+  write16(ctx, buf + 2, 0x0801); // tloadr r0, [pc, #4]
+  write16(ctx, buf + 4, 0x3001); // tstorer r0, [sp, #4]
+  write16(ctx, buf + 6, 0x6d01); // tpop {r0, pc}
+  write32(ctx, buf + 8, 0x00000000);
+  ctx.target->relocateNoSym(buf + 8, R_ARM_ABS32,
+                            getTC32ThunkDestVA(ctx, destination, addend));
+}
+
+void TC32ABSLongThunk::addSymbols(ThunkSection &isec) {
+  addSymbol(ctx.saver.save("__TC32ABSLongThunk_" + destination.getName()),
+            STT_FUNC, 0, isec);
+  addSymbol("$t", STT_NOTYPE, 0, isec);
+  addSymbol("$d", STT_NOTYPE, 8, isec);
+}
+
 void ARMV5LongLdrPcThunk::writeLong(uint8_t *buf) {
   write32(ctx, buf + 0, 0xe51ff004); // ldr pc, [pc,#-4] ; L1
   write32(ctx, buf + 4, 0x00000000); // L1: .word S
@@ -1687,6 +1721,18 @@ static std::unique_ptr<Thunk> addThunkV6M(Ctx &ctx, const InputSection &isec,
 // Creates a thunk for Thumb-ARM interworking or branch range extension.
 static std::unique_ptr<Thunk> addThunkArm(Ctx &ctx, const InputSection &isec,
                                           RelType reloc, Symbol &s, int64_t a) {
+  if (ctx.arg.emachine == EM_TC32) {
+    switch (reloc) {
+    case R_ARM_THM_CALL:
+    case R_ARM_THM_JUMP24:
+      return std::make_unique<TC32ABSLongThunk>(ctx, s, a);
+    default:
+      Fatal(ctx) << "relocation " << reloc << " to " << &s
+                 << " not supported for TC32 range extension thunk";
+      llvm_unreachable("");
+    }
+  }
+
   // Decide which Thunk is needed based on:
   // Available instruction set
   // - An Arm Thunk can only be used if Arm state is available.
