@@ -2512,6 +2512,8 @@ void ARMAsmPrinter::emitInstruction(const MachineInstr *MI) {
                                        .addImm(1)
                                        .addImm(ARMCC::AL)
                                        .addReg(0));
+      EmitToStreamer(*OutStreamer, MCInstBuilder(ARM::tTC32NOP));
+      EmitToStreamer(*OutStreamer, MCInstBuilder(ARM::tTC32NOP));
       EmitToStreamer(*OutStreamer, MCInstBuilder(ARM::tMOVr)
                                        .addReg(ARM::PC)
                                        .addReg(Idx)
