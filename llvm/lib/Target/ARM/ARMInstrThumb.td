@@ -326,6 +326,12 @@ class TC32SpecialLoReg<bits<13> opc, dag oops, dag iops, string asm>
   let Inst{2-0} = Rd;
 }
 
+let hasSideEffects = 1 in
+def tTC32NOP : T1I<(outs), (ins), NoItinerary, "nop", []>, Encoding16,
+               Sched<[WriteALU]> {
+  let Inst{15-0} = 0b0000011011000000;
+}
+
 def tHINT : T1pI<(outs), (ins imm0_15:$imm), NoItinerary, "hint", "\t$imm",
                  [(int_arm_hint imm0_15:$imm)]>,
             T1SystemEncoding<0x00>,

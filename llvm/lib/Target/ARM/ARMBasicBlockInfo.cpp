@@ -87,7 +87,7 @@ unsigned ARMBasicBlockUtils::getOffsetOf(MachineInstr *MI) const {
         continue;
 
       unsigned Offset = getOffsetOf(const_cast<MachineInstr *>(&*It));
-      return alignTo(Offset + 6, Align(4));
+      return alignTo(Offset + 10, Align(4));
     }
   }
 
