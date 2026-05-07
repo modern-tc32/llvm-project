@@ -1275,13 +1275,26 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
     uint16_t FirstHalf = llvm::support::endian::read<uint16_t>(
         Data + Fixup.getOffset(), Endian);
     unsigned Cond = (FirstHalf >> 6) & 0xFu;
-    if (Cond > 13) {
-      Ctx.reportError(Fixup.getLoc(),
-                      Twine("unsupported TC32 long conditional branch"));
-      return;
-    }
 
     int64_t Enc = (static_cast<int64_t>(Value) - 4) >> 1;
+    if (Cond > 13) {
+      if (!isInt<22>(Enc)) {
+        Ctx.reportError(Fixup.getLoc(),
+                        Twine("TC32 long jump out of range")
+                            + ", value=" + Twine(Value)
+                            + ", enc=" + Twine(Enc)
+                            + ", cond=" + Twine(Cond));
+        return;
+      }
+
+      uint32_t EncImm = static_cast<uint32_t>(Enc) & 0x3FFFFFu;
+      uint32_t EncodedFirst = 0x9000u | ((EncImm >> 11) & 0x07FFu);
+      uint32_t EncodedSecond = 0x6800u | (EncImm & 0x07FFu);
+      Value = joinHalfWords(EncodedFirst, EncodedSecond,
+                            Endian == llvm::endianness::little);
+      goto ApplyValue;
+    }
+
     if (!isInt<19>(Enc)) {
       Ctx.reportError(Fixup.getLoc(),
                       Twine("TC32 long conditional branch out of range")
@@ -1302,12 +1315,13 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
   } else {
     Value = adjustFixupValue(*Asm, Fixup, Target, Value, IsResolved, Ctx, STI);
   }
+ApplyValue:
   if (!Value)
     return; // Doesn't change encoding.
   const unsigned NumBytes = getFixupKindNumBytes(Kind);
-  const bool IsResolvedTC32Call =
-      IsResolved && Kind == ARM::fixup_arm_thumb_bl && STI &&
-      STI->getTargetTriple().isTC32();
+  const bool IsResolvedTC32FullInsn =
+      IsResolved && STI && STI->getTargetTriple().isTC32() &&
+      (Kind == ARM::fixup_arm_thumb_bl || Kind == ARM::fixup_tc32_long_bcc);
 
   assert(Fixup.getOffset() + NumBytes <= F.getSize() &&
          "Invalid fixup offset!");
@@ -1328,7 +1342,7 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
     unsigned Idx =
         Endian == llvm::endianness::little ? i : (FullSizeBytes - 1 - i);
     uint8_t Byte = uint8_t((Value >> (i * 8)) & 0xff);
-    if (IsResolvedTC32Call)
+    if (IsResolvedTC32FullInsn)
       Data[Idx] = Byte;
     else
       Data[Idx] |= Byte;
