@@ -5903,6 +5903,10 @@ void ARMAsmParser::cvtThumbBranches(MCInst &Inst,
       case ARM::t2Bcc:
         Inst.setOpcode(Cond == ARMCC::AL ? ARM::t2B : ARM::t2Bcc);
         break;
+      case ARM::tTC32B32:
+      case ARM::tTC32Bcc32:
+        Inst.setOpcode(Cond == ARMCC::AL ? ARM::tTC32B32 : ARM::tTC32Bcc32);
+        break;
     }
   }
 
