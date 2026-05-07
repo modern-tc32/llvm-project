@@ -5,7 +5,7 @@ target triple = "tc32-unknown-none-elf"
 define void @hint_and_signal() {
 ; CHECK-LABEL: hint_and_signal:
 ; CHECK-NOT: sev
-; CHECK: tjex
+; CHECK: tpop {r6, pc}
 entry:
   call void @llvm.arm.hint(i32 4)
   call void asm sideeffect "sev", ""()
@@ -65,7 +65,7 @@ define void @msr_primask_ns(i32 %x) {
 ; CHECK-LABEL: msr_primask_ns:
 ; CHECK-NOT: tmssr
 ; CHECK-NOT: tadd sp
-; CHECK: tjex
+; CHECK: tpop {r6, pc}
 entry:
   call void asm sideeffect "msr PRIMASK_NS, $0", "r"(i32 %x)
   ret void
@@ -84,7 +84,7 @@ define void @msr_other(i32 %x) {
 ; CHECK-LABEL: msr_other:
 ; CHECK-NOT: tmssr
 ; CHECK-NOT: tadd sp
-; CHECK: tjex
+; CHECK: tpop {r6, pc}
 entry:
   call void asm sideeffect "msr CONTROL, $0", "r"(i32 %x)
   ret void
