@@ -16,6 +16,7 @@ define void @disable_irq() {
 ; CHECK-LABEL: disable_irq:
 ; CHECK: tloadr r0, .LCPI{{[0-9]+}}_0
 ; CHECK-NEXT: tmov r1, #0
+; CHECK-NEXT: nop
 ; CHECK-NEXT: tstorerb r1, [r0]
 ; CHECK: .long 8390211
 entry:
@@ -27,6 +28,7 @@ define void @enable_irq() {
 ; CHECK-LABEL: enable_irq:
 ; CHECK: tloadr r0, .LCPI{{[0-9]+}}_0
 ; CHECK-NEXT: tmov r1, #1
+; CHECK-NEXT: nop
 ; CHECK-NEXT: tstorerb r1, [r0]
 ; CHECK: .long 8390211
 entry:
