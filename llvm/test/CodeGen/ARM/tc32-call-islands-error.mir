@@ -3,7 +3,10 @@
 # CHECK-LABEL: bb.0:
 # CHECK: tBL 14 {{.*}}, %bb.2, implicit-def dead $lr, implicit $sp
 # CHECK: bb.2:
-# CHECK: tTC32B32 %bb.4
+# CHECK: tPUSH 14
+# CHECK-NEXT: tBfar %bb.4, 14
+# CHECK: bb.4:
+# CHECK: tPOP 14
 
 --- |
   define void @f() { ret void }
