@@ -2,7 +2,7 @@
 
 # CHECK: tBL 14 {{.*}}, %bb.[[HOP0:[0-9]+]], implicit-def dead $lr, implicit $sp
 # CHECK: bb.[[HOP0]]:
-# CHECK: tB %bb.[[HOP1:[0-9]+]], 14 {{.*}}
+# CHECK: tTC32B32 %bb.0
 
 --- |
   define void @f() { ret void }
