@@ -416,12 +416,12 @@ DecodeStatus ARMDisassembler::decodeTC32Instruction(MCInst &MI, uint16_t Insn16,
     unsigned Imm = ((Insn16 >> 8) & 0x7) << 2 | ((Insn16 >> 6) & 0x3);
     unsigned Dst = Insn16 & 0x7;
     unsigned Src = (Insn16 >> 3) & 0x7;
-    if ((Insn16 & 0xF000u) == 0xF000u) {
-      MI.setOpcode(ARM::tLSLri);
-    } else if ((Insn16 & 0xF800u) == 0xF800u) {
+    if ((Insn16 & 0xF800u) == 0xF800u) {
       MI.setOpcode(ARM::tLSRri);
       if (Imm == 0)
         Imm = 32;
+    } else if ((Insn16 & 0xF000u) == 0xF000u) {
+      MI.setOpcode(ARM::tLSLri);
     } else {
       MI.setOpcode(ARM::tASRri);
       if (Imm == 0)
