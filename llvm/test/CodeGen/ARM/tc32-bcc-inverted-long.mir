@@ -3,8 +3,11 @@
 # CHECK-LABEL: bb.0:
 # CHECK-NOT: tTC32Bcc32
 # CHECK: tBcc %bb.1, 5
-# CHECK-NEXT: tTC32B32 %bb.3
+# CHECK-NEXT: tPUSH 14
+# CHECK-NEXT: tBfar %bb.3, 14
 # CHECK-LABEL: bb.1:
+# CHECK-LABEL: bb.3:
+# CHECK: tPOP 14
 
 --- |
   define void @f() { ret void }

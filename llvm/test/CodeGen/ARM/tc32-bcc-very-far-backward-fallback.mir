@@ -3,10 +3,14 @@
 # CHECK-LABEL: bb.0:
 # CHECK-NOT: tBfar
 # CHECK: tPOP_RET
-# CHECK-LABEL: bb.2:
-# CHECK: tBcc %bb.3, 1
-# CHECK: tTC32B32 %bb.0
+# CHECK: bb.1:
+# CHECK: tPOP 14
+# CHECK-NEXT: tB %bb.0, 14
 # CHECK-LABEL: bb.3:
+# CHECK: tBcc %bb.4, 1
+# CHECK: tPUSH 14
+# CHECK-NEXT: tBfar %bb.1, 14
+# CHECK-LABEL: bb.4:
 # CHECK: tPOP_RET
 
 --- |

@@ -3,7 +3,11 @@
 # CHECK-LABEL: name: tc32_b_very_far_fallback
 # CHECK: bb.0:
 # CHECK-NOT: tB %bb.2
-# CHECK: tTC32B32 %bb.2
+# CHECK: tPUSH 14
+# CHECK-NEXT: tBfar %bb.[[VENEER:[0-9]+]], 14
+# CHECK: bb.[[VENEER]]:
+# CHECK: tPOP 14
+# CHECK-NEXT: tB %bb.{{[0-9]+}}, 14
 
 --- |
   define void @tc32_b_very_far_fallback() { ret void }
