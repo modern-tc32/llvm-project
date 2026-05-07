@@ -2805,14 +2805,15 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
         MachineInstr *CondMI = &*std::prev(MI->getIterator());
         if (CondMI->getOpcode() == ARM::tBcc) {
           MachineBasicBlock *CondDestBB = CondMI->getOperand(0).getMBB();
+          ARMCC::CondCodes CC =
+              static_cast<ARMCC::CondCodes>(CondMI->getOperand(1).getImm());
           if (CondDestBB == MBB->getFallThrough() &&
+              CC < ARMCC::AL &&
               BBUtils->isBBInRange(CondMI, FinalDestBB,
                                    LongCondBranchMaxDisp)) {
             LLVM_DEBUG(dbgs() << "  Changed TC32 inverted Bcc+B to long "
                                  "conditional jump "
                               << *CondMI);
-            ARMCC::CondCodes CC =
-                static_cast<ARMCC::CondCodes>(CondMI->getOperand(1).getImm());
             CondMI->setDesc(TII->get(ARM::tTC32Bcc32));
             CondMI->getOperand(0).setMBB(FinalDestBB);
             CondMI->getOperand(1).setImm(ARMCC::getOppositeCondition(CC));
@@ -2944,8 +2945,22 @@ ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
   }
 
   if (STI->getTargetTriple().isTC32() && MI->getOpcode() == ARM::tBcc) {
+    ARMCC::CondCodes CC =
+        static_cast<ARMCC::CondCodes>(MI->getOperand(1).getImm());
+    if (CC >= ARMCC::AL) {
+      MI->setDesc(TII->get(ARM::tB));
+      Br.MaxDisp = getUnconditionalBrDisp(ARM::tB);
+      Br.isCond = false;
+      Br.UncondBr = ARM::tB;
+      if (BBUtils->isBBInRange(MI, DestBB, Br.MaxDisp)) {
+        ++NumUBrFixed;
+        return true;
+      }
+      return fixupUnconditionalBr(Br);
+    }
+
     const unsigned LongMaxDisp = getTC32LongConditionalBrDisp();
-    if (BBUtils->isBBInRange(MI, DestBB, LongMaxDisp)) {
+    if (CC < ARMCC::AL && BBUtils->isBBInRange(MI, DestBB, LongMaxDisp)) {
       LLVM_DEBUG(dbgs() << "  Changed TC32 Bcc to long conditional jump "
                         << *MI);
       MI->setDesc(TII->get(ARM::tTC32Bcc32));

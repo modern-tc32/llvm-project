@@ -55,7 +55,7 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
     return CTX.getRegisterInfo()->getEncodingValue(Reg);
   }
 
-  static void checkTC32Encoding(bool Cond, const char *Msg) {
+  static void checkTC32Encoding(bool Cond, const Twine &Msg) {
     if (!Cond)
       report_fatal_error(Twine("invalid TC32 instruction encoding: ") + Msg);
   }
@@ -434,8 +434,11 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
   uint32_t encodeTC32LongBranch(const MCInst &MI,
                                 SmallVectorImpl<MCFixup> &Fixups,
                                 ARMCC::CondCodes CC) const {
+    if (CC >= ARMCC::AL)
+      return encodeTC32LongJump(MI, Fixups);
     checkTC32Encoding(CC <= ARMCC::LE,
-                      "unsupported TC32 long conditional branch");
+                      Twine("unsupported TC32 long conditional branch, cond=") +
+                          Twine(static_cast<unsigned>(CC)));
     const MCOperand &Target = MI.getOperand(0);
     if (Target.isExpr()) {
       addTC32Fixup(Fixups, 0, Target.getExpr(), ARM::fixup_tc32_long_bcc);
