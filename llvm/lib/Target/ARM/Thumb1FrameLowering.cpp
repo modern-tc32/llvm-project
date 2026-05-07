@@ -712,6 +712,59 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
   findTemporariesForLR(GPRsNoLRSP, PopFriendly, UsedRegs, PopReg, TemporaryReg,
                        MF.getRegInfo());
 
+  bool HasTC32PopBeforeReturn =
+      MBBI != MBB.end() && MBBI->getOpcode() == ARM::tBX_RET &&
+      MBBI != MBB.begin() && std::prev(MBBI)->getOpcode() == ARM::tPOP;
+  // When TC32 has a saved-argument area above the LR slot, we cannot fold the
+  // return into the callee-save pop directly: that would leave SP below the
+  // saved arguments. Move LR to the final pop slot instead, adjust SP, and
+  // return with tpop {pc}.
+  if (IsTC32 && ArgRegsSaveSize && MBBI != MBB.end() && PopReg &&
+      ArgRegsSaveSize % 4 == 0 && ArgRegsSaveSize <= 1020 &&
+      (MBBI->getOpcode() == ARM::tPOP_RET || HasTC32PopBeforeReturn)) {
+    if (!DoIt)
+      return true;
+
+    if (MBBI->getOpcode() == ARM::tPOP_RET) {
+      MachineInstrBuilder PopMIB =
+          BuildMI(MBB, MBBI, MBBI->getDebugLoc(), TII.get(ARM::tPOP))
+              .add(predOps(ARMCC::AL))
+              .setMIFlag(MachineInstr::FrameDestroy);
+      bool Popped = false;
+      for (auto MO : MBBI->operands())
+        if (MO.isReg() && (MO.isImplicit() || MO.isDef()) &&
+            MO.getReg() != ARM::PC) {
+          PopMIB.add(MO);
+          if (!MO.isImplicit())
+            Popped = true;
+        }
+      if (!Popped)
+        MBB.erase(PopMIB.getInstr());
+    }
+
+    BuildMI(MBB, MBBI, dl, TII.get(ARM::tLDRspi))
+        .addReg(PopReg, RegState::Define)
+        .addReg(ARM::SP)
+        .addImm(0)
+        .add(predOps(ARMCC::AL))
+        .setMIFlag(MachineInstr::FrameDestroy);
+    BuildMI(MBB, MBBI, dl, TII.get(ARM::tSTRspi))
+        .addReg(PopReg, RegState::Kill)
+        .addReg(ARM::SP)
+        .addImm(ArgRegsSaveSize / 4)
+        .add(predOps(ARMCC::AL))
+        .setMIFlag(MachineInstr::FrameDestroy);
+    emitPrologueEpilogueSPUpdate(MBB, MBBI, TII, dl, *RegInfo,
+                                 ArgRegsSaveSize, ARM::NoRegister,
+                                 MachineInstr::FrameDestroy);
+    BuildMI(MBB, MBBI, dl, TII.get(ARM::tPOP_RET))
+        .add(predOps(ARMCC::AL))
+        .addReg(ARM::PC, RegState::Define)
+        .setMIFlag(MachineInstr::FrameDestroy);
+    MBB.erase(MBBI);
+    return true;
+  }
+
   // If we couldn't find a pop-friendly register, try restoring LR before
   // popping the other callee-saved registers, so we could use one of them as a
   // temporary.
