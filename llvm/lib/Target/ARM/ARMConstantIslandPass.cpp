@@ -2592,20 +2592,72 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
     MachineInstr *NewMI =
         BuildMI(*MBB, OldMI, OldMI->getDebugLoc(), TII->get(ARM::tBfar))
             .addMBB(DestBB)
-            .addImm(ARMCC::AL);
+            .add(predOps(ARMCC::AL));
     OldMI->eraseFromParent();
     return NewMI;
   };
 
   if (STI->getTargetTriple().isTC32()) {
     const unsigned BranchMaxDisp = Br.MaxDisp;
-    const unsigned LongBranchMaxDisp = getUnconditionalBrDisp(ARM::tTC32B32);
     MachineBasicBlock *FinalDestBB = MI->getOperand(Br.DestOpnd).getMBB();
     MachineInstr *CurrBrMI = MI;
     MachineBasicBlock *CurrMBB = MBB;
     unsigned CurrDestOpnd = Br.DestOpnd;
     bool Changed = false;
     unsigned InsertedHops = 0;
+
+    auto ReplaceWithLRPreservingTBfar =
+        [&](MachineInstr *OldMI, MachineBasicBlock *DestBB,
+            bool InsertAfterDest) -> MachineInstr * {
+      MachineBasicBlock *SrcMBB = OldMI->getParent();
+      MachineBasicBlock *VeneerBB =
+          MF->CreateMachineBasicBlock(SrcMBB->getBasicBlock());
+      MachineFunction::iterator InsertPos = DestBB->getIterator();
+      if (InsertAfterDest)
+        InsertPos = std::next(InsertPos);
+      MF->insert(InsertPos, VeneerBB);
+
+      BuildMI(VeneerBB, OldMI->getDebugLoc(), TII->get(ARM::tPOP))
+          .add(predOps(ARMCC::AL))
+          .addReg(ARM::LR, RegState::Define);
+      BuildMI(VeneerBB, OldMI->getDebugLoc(), TII->get(ARM::tB))
+          .addMBB(DestBB)
+          .add(predOps(ARMCC::AL));
+      VeneerBB->addSuccessor(DestBB);
+
+      MachineBasicBlock *PrevBB =
+          VeneerBB->getIterator() == MF->begin()
+              ? nullptr
+              : &*std::prev(VeneerBB->getIterator());
+      updateForInsertedWaterBlock(VeneerBB);
+      BBUtils->computeBlockSize(VeneerBB);
+      if (PrevBB)
+        BBUtils->adjustBBOffsetsAfter(PrevBB);
+
+      BuildMI(*SrcMBB, OldMI, OldMI->getDebugLoc(), TII->get(ARM::tPUSH))
+          .add(predOps(ARMCC::AL))
+          .addReg(ARM::LR, RegState::Kill);
+      MachineInstr *NewMI =
+          BuildMI(*SrcMBB, OldMI, OldMI->getDebugLoc(), TII->get(ARM::tBfar))
+              .addMBB(VeneerBB)
+              .add(predOps(ARMCC::AL));
+
+      if (SrcMBB->isSuccessor(DestBB))
+        SrcMBB->replaceSuccessor(DestBB, VeneerBB);
+      else
+        SrcMBB->addSuccessor(VeneerBB);
+
+      const int Delta = TII->getInstSizeInBytes(*NewMI) +
+                        TII->getInstSizeInBytes(*std::prev(NewMI->getIterator())) -
+                        TII->getInstSizeInBytes(*OldMI);
+      OldMI->eraseFromParent();
+      BBUtils->adjustBBSize(SrcMBB, Delta);
+      BBUtils->adjustBBOffsetsAfter(SrcMBB);
+
+      unsigned MaxDisp = getUnconditionalBrDisp(ARM::tB);
+      addImmBranch(&VeneerBB->back(), MaxDisp, false, false, 0, ARM::tB);
+      return NewMI;
+    };
 
     auto FindBestAnchor = [&](MachineInstr *SrcMI, MachineBasicBlock *SrcMBB,
                               MachineBasicBlock *DestBB, int64_t SrcOff,
@@ -2792,32 +2844,20 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
       if (CurDist <= static_cast<int64_t>(BranchMaxDisp))
         break;
 
-      if (!Changed && CurrBrMI == MI && CurrBrMI->getOpcode() == ARM::tB &&
-          CurDist <= static_cast<int64_t>(LongBranchMaxDisp)) {
-        MachineInstr *NewMI =
-            BuildMI(*MBB, MI, MI->getDebugLoc(), TII->get(ARM::tTC32B32))
-                .addMBB(FinalDestBB);
-        MI->eraseFromParent();
-        MI = NewMI;
-        Br.MI = MI;
-        Br.MaxDisp = LongBranchMaxDisp;
-        Br.UncondBr = ARM::tTC32B32;
-        BBInfo[MBB->getNumber()].Size += 2;
-        BBUtils->adjustBBOffsetsAfter(MBB);
-        ++NumUBrFixed;
-        return true;
-      }
-
-      // Extremely distant jumps can require thousands of tiny island hops and
-      // may exceed the global branch-fixup iteration budget. Only use long form
-      // directly when LR has already been spilled, because tBfar clobbers LR.
-      if (!Changed && CurDist > static_cast<int64_t>(BranchMaxDisp) * 16 &&
-          AFI->isLRSpilled()) {
+      // TC32 hardware does not reliably execute the dedicated long TJ encoding
+      // used by tTC32B32. Use TJL/BL as the long unconditional branch form. If
+      // LR is not already spilled, route through a tiny veneer that restores LR
+      // before entering the original destination.
+      if (!Changed && (AFI->isLRSpilled() || CurrBrMI == MI)) {
         Br.MaxDisp = (1 << 21) * 2;
-        MI = ReplaceWithTBfar(MI, FinalDestBB);
+        if (AFI->isLRSpilled()) {
+          MI = ReplaceWithTBfar(MI, FinalDestBB);
+          BBInfo[MBB->getNumber()].Size += 2;
+          BBUtils->adjustBBOffsetsAfter(MBB);
+        } else {
+          MI = ReplaceWithLRPreservingTBfar(MI, FinalDestBB, DestOff < SrcOff);
+        }
         Br.MI = MI;
-        BBInfo[MBB->getNumber()].Size += 2;
-        BBUtils->adjustBBOffsetsAfter(MBB);
         ++NumUBrFixed;
         return true;
       }
@@ -2928,7 +2968,7 @@ ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
 
     // TC32 hardware does not reliably execute the 32-bit conditional TJcc
     // encoding. Keep conditional branches in the short form and place a far
-    // unconditional TJ on the taken path instead.
+    // unconditional branch on the taken path instead.
   }
 
   // Add an unconditional branch to the destination and invert the branch
