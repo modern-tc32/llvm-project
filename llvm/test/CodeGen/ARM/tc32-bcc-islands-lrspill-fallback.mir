@@ -25,5 +25,8 @@ body:             |
     tPOP_RET 14, $noreg, def $pc
 
 # CHECK: bb.0:
-# CHECK: tTC32Bcc32 %bb.2, 0
-# CHECK: tB %bb.1, 14
+# CHECK-NOT: tTC32Bcc32
+# CHECK: tBcc %bb.1, 1
+# CHECK-NEXT: tTC32B32 %bb.2
+# CHECK: bb.1:
+# CHECK: tB %bb.3, 14
