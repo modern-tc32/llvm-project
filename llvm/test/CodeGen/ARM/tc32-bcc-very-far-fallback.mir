@@ -1,10 +1,13 @@
 # RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=arm-cp-islands %s -o - | FileCheck %s
 
 # CHECK-LABEL: bb.0:
-# CHECK-NOT: tBfar
+# CHECK-NOT: tTC32B32
 # CHECK: tBcc %bb.1, 1
-# CHECK: tTC32B32 %bb.[[FINAL:[0-9]+]]
-# CHECK: bb.[[FINAL]]:
+# CHECK: tPUSH 14
+# CHECK-NEXT: tBfar %bb.[[VENEER:[0-9]+]], 14
+# CHECK: bb.[[VENEER]]:
+# CHECK: tPOP 14
+# CHECK: bb.{{[0-9]+}}:
 # CHECK: tPOP_RET
 
 --- |
