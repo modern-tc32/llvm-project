@@ -20,10 +20,12 @@
 #include "MCTargetDesc/ARMAddressingModes.h"
 #include "MCTargetDesc/ARMBaseInfo.h"
 #include "MVETailPredUtils.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/CodeGen/CFIInstBuilder.h"
 #include "llvm/CodeGen/DFAPacketizer.h"
 #include "llvm/CodeGen/LiveVariables.h"
@@ -64,6 +66,7 @@
 #include <cassert>
 #include <cstdint>
 #include <iterator>
+#include <limits>
 #include <new>
 #include <utility>
 #include <vector>
@@ -74,6 +77,59 @@ using namespace llvm;
 
 #define GET_INSTRINFO_CTOR_DTOR
 #include "ARMGenInstrInfo.inc"
+
+static unsigned getTC32InlineAsmReptLength(ArrayRef<StringRef> Lines,
+                                           unsigned &LineNo,
+                                           const MCAsmInfo &MAI,
+                                           bool StopAtEndr) {
+  uint64_t Length = 0;
+  const unsigned MaxInstLength = MAI.getMaxInstLength();
+
+  for (; LineNo < Lines.size(); ++LineNo) {
+    StringRef Line = Lines[LineNo].trim();
+    if (Line.empty())
+      continue;
+
+    if (Line.starts_with(".endr")) {
+      if (StopAtEndr)
+        return static_cast<unsigned>(
+            std::min<uint64_t>(Length, std::numeric_limits<unsigned>::max()));
+      continue;
+    }
+
+    if (Line.consume_front(".rept")) {
+      uint64_t Count = 1;
+      Line = Line.trim();
+      if (Line.getAsInteger(10, Count))
+        Count = 1;
+
+      ++LineNo;
+      unsigned BodyLength =
+          getTC32InlineAsmReptLength(Lines, LineNo, MAI, true);
+      Length += Count * BodyLength;
+      Length = std::min<uint64_t>(Length,
+                                  std::numeric_limits<unsigned>::max());
+      continue;
+    }
+
+    if (Line.consume_front(".space")) {
+      uint64_t SpaceSize = 0;
+      Line = Line.trim();
+      if (!Line.getAsInteger(10, SpaceSize))
+        Length += SpaceSize;
+      continue;
+    }
+
+    if (Line.starts_with(".") || Line.starts_with("@"))
+      continue;
+
+    Length += MaxInstLength;
+    Length = std::min<uint64_t>(Length, std::numeric_limits<unsigned>::max());
+  }
+
+  return static_cast<unsigned>(
+      std::min<uint64_t>(Length, std::numeric_limits<unsigned>::max()));
+}
 
 /// ARM_MLxEntry - Record information about MLA / MLS instructions.
 struct ARM_MLxEntry {
@@ -660,7 +716,15 @@ unsigned ARMBaseInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   case ARM::INLINEASM:
   case ARM::INLINEASM_BR: {
     // If this machine instr is an inline asm, measure it.
-    unsigned Size = getInlineAsmLength(MI.getOperand(0).getSymbolName(), *MAI);
+    StringRef AsmString = MI.getOperand(0).getSymbolName();
+    unsigned Size = getInlineAsmLength(AsmString.data(), *MAI);
+    if (MF->getTarget().getTargetTriple().isTC32() &&
+        AsmString.contains(".rept")) {
+      SmallVector<StringRef, 16> Lines;
+      AsmString.split(Lines, '\n');
+      unsigned LineNo = 0;
+      Size = getTC32InlineAsmReptLength(Lines, LineNo, *MAI, false);
+    }
     if (!MF->getInfo<ARMFunctionInfo>()->isThumbFunction())
       Size = alignTo(Size, 4);
     return Size;
