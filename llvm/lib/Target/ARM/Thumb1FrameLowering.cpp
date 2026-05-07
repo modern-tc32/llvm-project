@@ -616,10 +616,14 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
   // LR in the PC.
   // This is only possible with v5T ops (v4T can't change the Thumb bit via
   // a POP PC instruction), and only if we do not need to emit any SP update.
+  // TC32 also supports tpop {..., pc}; using it matches the vendor return
+  // sequence and avoids splitting LR restore into a separate pop and tjex.
   // Otherwise, we need a temporary register to pop the value
   // and copy that value into LR.
   auto MBBI = MBB.getFirstTerminator();
-  bool CanRestoreDirectly = STI.hasV5TOps() && !ArgRegsSaveSize;
+  bool IsTC32 = MF.getTarget().getTargetTriple().isTC32();
+  bool CanRestoreDirectly =
+      (STI.hasV5TOps() || IsTC32) && !ArgRegsSaveSize;
   if (CanRestoreDirectly) {
     if (MBBI != MBB.end() && MBBI->getOpcode() != ARM::tB)
       CanRestoreDirectly = (MBBI->getOpcode() == ARM::tBX_RET ||
@@ -639,6 +643,17 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
   if (CanRestoreDirectly) {
     if (!DoIt || MBBI->getOpcode() == ARM::tPOP_RET)
       return true;
+
+    auto ReturnMBBI = MBB.end();
+    if (IsTC32 && MBBI != MBB.begin() && MBBI->getOpcode() == ARM::tBX_RET) {
+      auto PopMBBI = MBBI;
+      --PopMBBI;
+      if (PopMBBI->getOpcode() == ARM::tPOP) {
+        ReturnMBBI = MBBI;
+        MBBI = PopMBBI;
+      }
+    }
+
     MachineInstrBuilder MIB =
         BuildMI(MBB, MBBI, MBBI->getDebugLoc(), TII.get(ARM::tPOP_RET))
             .add(predOps(ARMCC::AL))
@@ -650,6 +665,8 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
     MIB.addReg(ARM::PC, RegState::Define);
     // Erase the old instruction (tBX_RET or tPOP).
     MBB.erase(MBBI);
+    if (ReturnMBBI != MBB.end())
+      MBB.erase(ReturnMBBI);
     return true;
   }
 
