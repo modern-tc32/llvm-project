@@ -12,6 +12,7 @@ test_tc32_disasm:
         .short 0x5841
         .short 0x5081
         .short 0xf0d2
+        .short 0xfa00
         .short 0x6bc0
         .short 0x6bdf
         .short 0x6bd1
@@ -46,6 +47,7 @@ test_tc32_disasm:
 // CHECK:      tloadr{{[ \t]+}}r1, [r0, #0x4]
 // CHECK:      tstorer{{[ \t]+}}r1, [r0, #0x8]
 // CHECK:      tshftl{{[ \t]+}}r2, r2, #0x3
+// CHECK:      tshftr{{[ \t]+}}r0, r0, #0x8
 // CHECK:      tmcsr{{[ \t]+}}r0
 // CHECK:      tmrss{{[ \t]+}}r7
 // CHECK:      tmssr{{[ \t]+}}r1
