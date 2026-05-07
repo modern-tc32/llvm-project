@@ -22,4 +22,4 @@ body:             |
 # CHECK: bb.0:
 # CHECK: tBL 14
 # CHECK: bb.2:
-# CHECK: tBfar %bb.4, 14
+# CHECK: tTC32B32 %bb.4
