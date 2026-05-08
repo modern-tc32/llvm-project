@@ -7,7 +7,9 @@ declare i32 @llvm.arm.space(i32, i32)
 define i32 @large_jumptable(i32 %x) {
 ; CHECK-LABEL: large_jumptable:
 ; CHECK:       tcmp r0, #7
-; CHECK-NEXT:  tjls [[TABLE:\.LBB0_[0-9]+]]
+; CHECK-NEXT:  tjhi [[DEFAULT_VENEER:\.LBB0_[0-9]+]]
+; CHECK-NEXT:  tj [[TABLE:\.LBB0_[0-9]+]]
+; CHECK-NEXT:  [[DEFAULT_VENEER]]:
 ; CHECK-NEXT:  tjl [[DEFAULT:\.LBB0_[0-9]+]]
 ; CHECK:       [[TABLE]]:
 ; CHECK:       tshftl r0, r0, #2

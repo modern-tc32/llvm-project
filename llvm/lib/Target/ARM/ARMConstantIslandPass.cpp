@@ -276,6 +276,8 @@ namespace {
                       bool IsCall, unsigned DestOpnd, unsigned UncondBr);
     void eraseImmBranch(MachineInstr *MI);
     void pruneDeletedImmBranches();
+    bool fixupTC32ConditionalBrWithoutInversion(ImmBranch &Br,
+                                                unsigned ExpectedUncondOpc);
     bool decrementCPEReferenceCount(unsigned CPI, MachineInstr* CPEMI);
     unsigned getCombinedIndex(const MachineInstr *CPEMI);
     int findInRangeCPEntry(CPUser& U, unsigned UserOffset);
@@ -1499,6 +1501,10 @@ initializeFunctionInfo(const std::vector<MachineInstr*> &CPEMIs) {
 static bool CompareMBBNumbers(const MachineBasicBlock *LHS,
                               const MachineBasicBlock *RHS) {
   return LHS->getNumber() < RHS->getNumber();
+}
+
+static bool needsTC32BranchConditionFixup(ARMCC::CondCodes CC) {
+  return CC == ARMCC::GE || CC == ARMCC::PL || CC == ARMCC::LS;
 }
 
 void ARMConstantIslands::updateWaterForBlock(MachineBasicBlock *MBB,
@@ -2929,6 +2935,60 @@ ARMConstantIslands::fixupUnconditionalBr(ImmBranch &Br) {
 /// fixupConditionalBr - Fix up a conditional branch whose destination is too
 /// far away to fit in its displacement field. It is converted to an inverse
 /// conditional branch + an unconditional branch to the destination.
+bool ARMConstantIslands::fixupTC32ConditionalBrWithoutInversion(
+    ImmBranch &Br, unsigned ExpectedUncondOpc) {
+  MachineInstr *MI = Br.MI;
+  MachineBasicBlock *MBB = MI->getParent();
+  MachineBasicBlock *DestBB = MI->getOperand(Br.DestOpnd).getMBB();
+  MachineBasicBlock *FallthroughBB = nullptr;
+  bool NeedExplicitFallthrough = false;
+
+  if (std::next(MI->getIterator()) == MBB->end()) {
+    if (!BBHasFallthrough(MBB))
+      return false;
+    FallthroughBB = &*std::next(MBB->getIterator());
+    NeedExplicitFallthrough = true;
+  }
+
+  MachineBasicBlock *VeneerBB =
+      MF->CreateMachineBasicBlock(MBB->getBasicBlock());
+  MF->insert(std::next(MBB->getIterator()), VeneerBB);
+
+  BuildMI(VeneerBB, DebugLoc(), TII->get(ExpectedUncondOpc))
+      .addMBB(DestBB)
+      .add(predOps(ARMCC::AL));
+  VeneerBB->addSuccessor(DestBB);
+
+  updateForInsertedWaterBlock(VeneerBB, true);
+  BBUtils->computeBlockSize(VeneerBB);
+
+  MI->getOperand(Br.DestOpnd).setMBB(VeneerBB);
+  if (MBB->isSuccessor(DestBB))
+    MBB->replaceSuccessor(DestBB, VeneerBB);
+  else
+    MBB->addSuccessor(VeneerBB);
+
+  addImmBranch(&VeneerBB->back(), getUnconditionalBrDisp(ExpectedUncondOpc),
+               false, false, 0, ExpectedUncondOpc);
+
+  if (NeedExplicitFallthrough) {
+    MachineInstrBuilder MIB =
+        BuildMI(*MBB, MBB->end(), DebugLoc(), TII->get(ExpectedUncondOpc))
+            .addMBB(FallthroughBB);
+    if (isThumb)
+      MIB.add(predOps(ARMCC::AL));
+    BBUtils->adjustBBSize(MBB, TII->getInstSizeInBytes(MBB->back()));
+    addImmBranch(&MBB->back(), getUnconditionalBrDisp(ExpectedUncondOpc),
+                 false, false, 0, ExpectedUncondOpc);
+    updateWaterForBlock(MBB, true);
+  }
+
+  Br.MI = MI;
+  BBUtils->adjustBBOffsetsAfter(MBB);
+  ++NumCBrFixed;
+  return true;
+}
+
 bool
 ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
   MachineInstr *MI = Br.MI;
@@ -2979,6 +3039,11 @@ ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
   // b   L1
   // L2:
   ARMCC::CondCodes CC = (ARMCC::CondCodes)MI->getOperand(1).getImm();
+  if (STI->getTargetTriple().isTC32() && MI->getOpcode() == ARM::tBcc &&
+      needsTC32BranchConditionFixup(ARMCC::getOppositeCondition(CC)) &&
+      fixupTC32ConditionalBrWithoutInversion(Br, ExpectedUncondOpc))
+    return true;
+
   CC = ARMCC::getOppositeCondition(CC);
   Register CCReg = MI->getOperand(2).getReg();
 
