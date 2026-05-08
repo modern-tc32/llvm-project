@@ -1,4 +1,4 @@
-//===-- TC32SignedBranchFixupPass.cpp - TC32 signed branch fixup ----------===//
+//===-- TC32SignedBranchFixupPass.cpp - TC32 branch condition fixup -------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -30,7 +30,7 @@ public:
   TC32SignedBranchFixup() : MachineFunctionPass(ID) {}
 
   StringRef getPassName() const override {
-    return "TC32 signed branch fixup";
+    return "TC32 branch condition fixup";
   }
 
   MachineFunctionProperties getRequiredProperties() const override {
@@ -50,7 +50,7 @@ char TC32SignedBranchFixup::ID = 0;
 } // end anonymous namespace
 
 INITIALIZE_PASS(TC32SignedBranchFixup, DEBUG_TYPE,
-                "TC32 signed branch fixup", false, false)
+                "TC32 branch condition fixup", false, false)
 
 static bool isTC32UncondBranch(const MachineInstr &MI) {
   return MI.getOpcode() == ARM::tB || MI.getOpcode() == ARM::tTC32B32;
@@ -66,8 +66,8 @@ skipDebugBackward(MachineBasicBlock &MBB, MachineBasicBlock::iterator I) {
   return MBB.end();
 }
 
-static bool needsTC32SignedBranchFixup(ARMCC::CondCodes CC) {
-  return CC == ARMCC::GE || CC == ARMCC::PL;
+static bool needsTC32BranchConditionFixup(ARMCC::CondCodes CC) {
+  return CC == ARMCC::GE || CC == ARMCC::PL || CC == ARMCC::LS;
 }
 
 static unsigned getUncondOpcode(unsigned CondOpcode) {
@@ -99,7 +99,7 @@ static bool rewriteTC32SignedBranch(MachineBasicBlock &MBB,
   Cond = &*Last;
   ARMCC::CondCodes CC =
       static_cast<ARMCC::CondCodes>(Cond->getOperand(1).getImm());
-  if (!needsTC32SignedBranchFixup(CC))
+  if (!needsTC32BranchConditionFixup(CC))
     return false;
 
   if (Uncond) {
