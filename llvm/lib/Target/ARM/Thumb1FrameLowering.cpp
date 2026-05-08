@@ -602,6 +602,21 @@ static void findTemporariesForLR(const BitVector &GPRsNoLRSP,
   }
 }
 
+static bool hasTC32ReturnUnsafePopDef(const MachineInstr &MI) {
+  if (MI.getOpcode() != ARM::tPOP)
+    return false;
+
+  for (const MachineOperand &MO : MI.operands()) {
+    if (!MO.isReg() || !MO.isDef() || MO.isImplicit())
+      continue;
+    Register Reg = MO.getReg();
+    if (Reg == ARM::R0 || Reg == ARM::R1 || Reg == ARM::R2 ||
+        Reg == ARM::R3)
+      return true;
+  }
+  return false;
+}
+
 bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
                                               bool DoIt) const {
   MachineFunction &MF = *MBB.getParent();
@@ -638,6 +653,13 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
       else
         CanRestoreDirectly = false;
     }
+    // TC32 hardware can return with tpop {..., pc}, and vendor GCC emits it
+    // for normal callee-saved registers. Keep caller/padding registers out of
+    // the same pop-to-PC though: Zephyr startup has been observed hanging at
+    // tpop {r3, r4, r5, r6, r7, pc} on TLSR8258.
+    if (CanRestoreDirectly && IsTC32 && MBBI != MBB.end() &&
+        hasTC32ReturnUnsafePopDef(*MBBI))
+      CanRestoreDirectly = false;
   }
 
   if (CanRestoreDirectly) {
@@ -648,7 +670,8 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
     if (IsTC32 && MBBI != MBB.begin() && MBBI->getOpcode() == ARM::tBX_RET) {
       auto PopMBBI = MBBI;
       --PopMBBI;
-      if (PopMBBI->getOpcode() == ARM::tPOP) {
+      if (PopMBBI->getOpcode() == ARM::tPOP &&
+          !hasTC32ReturnUnsafePopDef(*PopMBBI)) {
         ReturnMBBI = MBBI;
         MBBI = PopMBBI;
       }
