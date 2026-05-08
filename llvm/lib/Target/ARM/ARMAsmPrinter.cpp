@@ -2506,10 +2506,12 @@ void ARMAsmPrinter::emitInstruction(const MachineInstr *MI) {
                                        .addReg(ARM::PC)
                                        .addImm(ARMCC::AL)
                                        .addReg(0));
+      // TC32 reads PC below the following inline jump table base here, so load
+      // one word past the usual Thumb table offset.
       EmitToStreamer(*OutStreamer, MCInstBuilder(ARM::tLDRi)
                                        .addReg(Idx)
                                        .addReg(Idx)
-                                       .addImm(1)
+                                       .addImm(2)
                                        .addImm(ARMCC::AL)
                                        .addReg(0));
       EmitToStreamer(*OutStreamer, MCInstBuilder(ARM::tTC32NOP));
