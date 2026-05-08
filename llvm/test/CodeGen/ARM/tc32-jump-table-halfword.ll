@@ -14,7 +14,7 @@ define i32 @halfword_jumptable(i32 %x) {
 ; CHECK:       [[TABLE]]:
 ; CHECK:       tshftl r0, r0, #2
 ; CHECK:       tadd r0, pc
-; CHECK-NEXT:  tloadr r0, [r0, #4]
+; CHECK-NEXT:  tloadr r0, [r0, #8]
 ; CHECK-NEXT:  nop
 ; CHECK-NEXT:  nop
 ; CHECK-NEXT:  tmov pc, r0
