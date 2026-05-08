@@ -662,6 +662,11 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
     for (auto MO: MBBI->operands())
       if (MO.isReg() && (MO.isImplicit() || MO.isDef()))
         MIB.add(MO);
+    if (ReturnMBBI != MBB.end()) {
+      for (auto MO : ReturnMBBI->operands())
+        if (MO.isReg() && MO.isImplicit())
+          MIB.add(MO);
+    }
     MIB.addReg(ARM::PC, RegState::Define);
     // Erase the old instruction (tBX_RET or tPOP).
     MBB.erase(MBBI);

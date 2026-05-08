@@ -1,0 +1,35 @@
+# RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=prologepilog %s -o - | FileCheck %s
+
+# When TC32 folds a return into tpop {..., pc}, preserve implicit uses from the
+# original tBX_RET. Otherwise return-value materialization in r0 can be treated
+# as dead and removed.
+
+--- |
+  target triple = "tc32-unknown-none-elf"
+
+  define i32 @ret_zero_with_pop_ret() {
+    ret i32 0
+  }
+...
+---
+name:            ret_zero_with_pop_ret
+alignment:       2
+tracksRegLiveness: true
+noPhis:          true
+isSSA:           false
+noVRegs:         true
+frameInfo:
+  maxAlignment:    1
+  maxCallFrameSize: 0
+machineFunctionInfo:
+  isLRSpilled:     false
+body:             |
+  bb.0:
+    liveins: $lr
+
+    ; CHECK-LABEL: name: ret_zero_with_pop_ret
+    ; CHECK: $r0, dead $cpsr = tMOVi8 0
+    ; CHECK: frame-destroy tPOP_RET 14 {{.*}}, implicit $r0
+    $r0, dead $cpsr = tMOVi8 0, 14, $noreg
+    tBX_RET 14, $noreg, implicit $r0
+...
