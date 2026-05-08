@@ -56,7 +56,7 @@ def:
 ; CHECK: tcmp [[IDX:r[0-7]]], #7
 ; CHECK: tshftl [[IDX]], [[IDX]], #2
 ; CHECK-NEXT: tadd [[IDX]], pc
-; CHECK-NEXT: tloadr [[IDX]], [[[IDX]], #4]
+; CHECK-NEXT: tloadr [[IDX]], [[[IDX]], #8]
 ; CHECK-NEXT: nop
 ; CHECK-NEXT: nop
 ; CHECK-NEXT: tmov pc, [[IDX]]
