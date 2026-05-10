@@ -3633,7 +3633,17 @@ void ARMDAGToDAGISel::SelectCMPZ(SDNode *N, bool &SwitchEQNEToPLMI) {
     }
   };
 
-  if (Range->second == 0) {
+  if (Subtarget->getTargetTriple().isTC32() &&
+      Range->first == Range->second) {
+    // TC32 vendor code branches on N after shifting a single tested bit into
+    // the sign bit. In particular, do not rely on Z after tshftl #31 for bit 0.
+    if (!N->hasOneUse())
+      return;
+    NewN = EmitShift(ARM::tLSLri, X, 31 - Range->first);
+    ReplaceNode(And.getNode(), NewN);
+
+    SwitchEQNEToPLMI = true;
+  } else if (Range->second == 0) {
     //  1. Mask includes the LSB -> Simply shift the top N bits off
     NewN = EmitShift(ARM::tLSLri, X, 31 - Range->first);
     ReplaceNode(And.getNode(), NewN);
