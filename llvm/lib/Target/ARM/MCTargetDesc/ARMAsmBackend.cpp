@@ -1283,8 +1283,8 @@ void ARMAsmBackend::applyFixup(const MCFragment &F, const MCFixup &Fixup,
       return;
     }
 
-    uint16_t FirstHalf = llvm::support::endian::read<uint16_t>(
-        Data + Fixup.getOffset(), Endian);
+    uint16_t FirstHalf =
+        llvm::support::endian::read<uint16_t>(Data, Endian);
     unsigned Cond = (FirstHalf >> 6) & 0xFu;
 
     int64_t Enc = (static_cast<int64_t>(Value) - 4) >> 1;
