@@ -7,10 +7,11 @@
 # CHECK: tPOP 14
 # CHECK-NEXT: tB %bb.0, 14
 # CHECK-LABEL: bb.3:
-# CHECK: tBcc %bb.4, 1
+# CHECK: tBcc %bb.4, 0
+# CHECK-LABEL: bb.4:
 # CHECK: tPUSH 14
 # CHECK-NEXT: tBfar %bb.1, 14
-# CHECK-LABEL: bb.4:
+# CHECK-LABEL: bb.5:
 # CHECK: tPOP_RET
 
 --- |

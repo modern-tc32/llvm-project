@@ -26,7 +26,9 @@ body:             |
 
 # CHECK: bb.0:
 # CHECK-NOT: tTC32Bcc32
-# CHECK: tBcc %bb.1, 1
-# CHECK-NEXT: tBfar %bb.2, 14
+# CHECK: tBcc %bb.1, 0
+# CHECK-NEXT: tB %bb.2, 14
 # CHECK: bb.1:
-# CHECK: tB %bb.3, 14
+# CHECK: tBfar %bb.3, 14
+# CHECK: bb.2:
+# CHECK: tB %bb.4, 14
