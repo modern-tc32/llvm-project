@@ -2,10 +2,11 @@
 
 # CHECK-LABEL: bb.0:
 # CHECK-NOT: tTC32B32
-# CHECK: tBcc %bb.1, 1
+# CHECK: tBcc %bb.[[TAKEN:[0-9]+]], 0
+# CHECK: bb.[[TAKEN]]:
 # CHECK: tPUSH 14
-# CHECK-NEXT: tBfar %bb.[[VENEER:[0-9]+]], 14
-# CHECK: bb.[[VENEER]]:
+# CHECK-NEXT: tBfar %bb.[[LONG:[0-9]+]], 14
+# CHECK: bb.[[LONG]]:
 # CHECK: tPOP 14
 # CHECK: bb.{{[0-9]+}}:
 # CHECK: tPOP_RET
