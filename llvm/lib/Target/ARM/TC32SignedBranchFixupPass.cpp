@@ -74,6 +74,17 @@ static unsigned getUncondOpcode(unsigned CondOpcode) {
   return CondOpcode == ARM::tTC32Bcc32 ? ARM::tTC32B32 : ARM::tB;
 }
 
+static unsigned getTC32BlockSizeInBytes(const MachineBasicBlock &MBB,
+                                        const ARMBaseInstrInfo *TII) {
+  unsigned Size = 0;
+  for (const MachineInstr &MI : MBB) {
+    if (MI.isMetaInstruction())
+      continue;
+    Size += TII->getInstSizeInBytes(MI);
+  }
+  return Size;
+}
+
 static bool rewriteTC32SignedBranch(MachineBasicBlock &MBB,
                                     const ARMBaseInstrInfo *TII) {
   if (MBB.empty())
@@ -127,6 +138,35 @@ static bool rewriteTC32SignedBranch(MachineBasicBlock &MBB,
   return true;
 }
 
+static bool padTC32ZeroOffsetBranch(MachineBasicBlock &MBB,
+                                    const ARMBaseInstrInfo *TII) {
+  if (MBB.empty())
+    return false;
+
+  MachineBasicBlock::iterator Last = MBB.getLastNonDebugInstr();
+  if (Last == MBB.end() || Last->getOpcode() != ARM::tBcc)
+    return false;
+
+  MachineBasicBlock *Target = Last->getOperand(0).getMBB();
+  MachineBasicBlock *Fallthrough = MBB.getFallThrough();
+  if (!Target || !Fallthrough)
+    return false;
+
+  auto Next = Fallthrough->getIterator();
+  ++Next;
+  if (Next == Fallthrough->getParent()->end() || &*Next != Target)
+    return false;
+
+  if (getTC32BlockSizeInBytes(*Fallthrough, TII) != 2)
+    return false;
+
+  MachineBasicBlock::iterator InsertPt = Fallthrough->getFirstTerminator();
+  if (InsertPt == Fallthrough->end())
+    InsertPt = Fallthrough->end();
+  BuildMI(*Fallthrough, InsertPt, Last->getDebugLoc(), TII->get(ARM::tTC32NOP));
+  return true;
+}
+
 bool TC32SignedBranchFixup::runOnMachineFunction(MachineFunction &MF) {
   if (!MF.getTarget().getTargetTriple().isTC32())
     return false;
@@ -137,6 +177,9 @@ bool TC32SignedBranchFixup::runOnMachineFunction(MachineFunction &MF) {
 
   for (MachineBasicBlock &MBB : MF)
     Changed |= rewriteTC32SignedBranch(MBB, TII);
+
+  for (MachineBasicBlock &MBB : MF)
+    Changed |= padTC32ZeroOffsetBranch(MBB, TII);
 
   return Changed;
 }
