@@ -1,12 +1,6 @@
-// RUN: llvm-mc -triple=tc32 -filetype=obj %s -o %t
-// RUN: llvm-objdump -d %t | FileCheck %s
+// RUN: not llvm-mc -triple=tc32 -filetype=obj %s -o /dev/null 2>&1 | FileCheck %s
 
-// CHECK:      00000000 <start>:
-// CHECK-NEXT:        0: 8c 02         tcmp    r4, r1
-// CHECK-NEXT:        2: 40 90 01 20   tjne    0x8 <target>
-// CHECK-NEXT:        6: 00 a4         tmov    r4, #0x0
-// CHECK:      00000008 <target>:
-// CHECK-NEXT:        8: 70 07         tjex    lr
+// CHECK: error: unsupported TC32 zero-displacement conditional branch
 
   .syntax unified
   .thumb
