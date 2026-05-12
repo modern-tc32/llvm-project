@@ -486,13 +486,6 @@ unsigned ARMAsmBackend::adjustFixupValue(const MCAssembler &Asm,
                             DescribeTC32Fixup());
         return 0;
       }
-      if (Value == 4) {
-        Ctx.reportError(
-            Fixup.getLoc(),
-            Twine("unsupported TC32 zero-displacement conditional branch") +
-                DescribeTC32Fixup());
-        return 0;
-      }
       int64_t Enc = (static_cast<int64_t>(Value) - 4) >> 1;
       if (!isInt<8>(Enc)) {
         Ctx.reportError(Fixup.getLoc(),

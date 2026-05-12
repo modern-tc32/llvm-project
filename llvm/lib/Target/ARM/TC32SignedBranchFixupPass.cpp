@@ -157,13 +157,30 @@ static bool padTC32ZeroOffsetBranch(MachineBasicBlock &MBB,
   if (Next == Fallthrough->getParent()->end() || &*Next != Target)
     return false;
 
-  if (getTC32BlockSizeInBytes(*Fallthrough, TII) != 2)
+  unsigned FallthroughSize = getTC32BlockSizeInBytes(*Fallthrough, TII);
+  if (FallthroughSize != 0 && FallthroughSize != 2)
     return false;
 
   MachineBasicBlock::iterator InsertPt = Fallthrough->getFirstTerminator();
   if (InsertPt == Fallthrough->end())
     InsertPt = Fallthrough->end();
   BuildMI(*Fallthrough, InsertPt, Last->getDebugLoc(), TII->get(ARM::tTC32NOP));
+  return true;
+}
+
+static bool removeTC32FallthroughBranch(MachineBasicBlock &MBB) {
+  if (MBB.empty())
+    return false;
+
+  MachineBasicBlock::iterator Last = MBB.getLastNonDebugInstr();
+  if (Last == MBB.end() || Last->getOpcode() != ARM::tBcc)
+    return false;
+
+  MachineBasicBlock *Fallthrough = MBB.getFallThrough();
+  if (!Fallthrough || Last->getOperand(0).getMBB() != Fallthrough)
+    return false;
+
+  Last->eraseFromParent();
   return true;
 }
 
@@ -177,6 +194,9 @@ bool TC32SignedBranchFixup::runOnMachineFunction(MachineFunction &MF) {
 
   for (MachineBasicBlock &MBB : MF)
     Changed |= rewriteTC32SignedBranch(MBB, TII);
+
+  for (MachineBasicBlock &MBB : MF)
+    Changed |= removeTC32FallthroughBranch(MBB);
 
   for (MachineBasicBlock &MBB : MF)
     Changed |= padTC32ZeroOffsetBranch(MBB, TII);
