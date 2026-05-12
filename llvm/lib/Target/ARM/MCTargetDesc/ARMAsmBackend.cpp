@@ -185,8 +185,14 @@ MCFixupKindInfo ARMAsmBackend::getFixupKindInfo(MCFixupKind Kind) const {
 
 unsigned ARMAsmBackend::getRelaxedOpcode(unsigned Op,
                                          const MCSubtargetInfo &STI) const {
-  if (STI.getTargetTriple().isTC32())
-    return Op;
+  if (STI.getTargetTriple().isTC32()) {
+    switch (Op) {
+    default:
+      return Op;
+    case ARM::tBcc:
+      return ARM::tTC32Bcc32;
+    }
+  }
 
   bool HasThumb2 = STI.hasFeature(ARM::FeatureThumb2);
   bool HasV8MBaselineOps = STI.hasFeature(ARM::HasV8MBaselineOps);
@@ -328,12 +334,17 @@ bool ARMAsmBackend::fixupNeedsRelaxationAdvanced(const MCFragment &,
   if (needsInterworking(*Asm, Sym, Fixup.getKind()))
     return true;
 
+  // TC32 hardware misexecutes the 16-bit conditional branch encoding whose
+  // effective displacement is zero, i.e. when the target is exactly PC+4 and
+  // the branch skips over a single 16-bit instruction.
+  if (Asm && Asm->getContext().getTargetTriple().isTC32() &&
+      Resolved && Fixup.getKind() == ARM::fixup_arm_thumb_bcc)
+    return Value == 4;
+
   if (!Resolved) {
     if (Asm && Asm->getContext().getTargetTriple().isTC32() &&
         (Fixup.getKind() == ARM::fixup_arm_thumb_br ||
          Fixup.getKind() == ARM::fixup_arm_thumb_bcc)) {
-      if (const MCSymbol *Sym = Target.getAddSym(); Sym && !Sym->isDefined())
-        return true;
       return false;
     }
     return true;
