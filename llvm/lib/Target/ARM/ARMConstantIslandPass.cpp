@@ -1503,10 +1503,6 @@ static bool CompareMBBNumbers(const MachineBasicBlock *LHS,
   return LHS->getNumber() < RHS->getNumber();
 }
 
-static bool needsTC32BranchConditionFixup(ARMCC::CondCodes CC) {
-  return CC == ARMCC::GE || CC == ARMCC::PL || CC == ARMCC::LS;
-}
-
 void ARMConstantIslands::updateWaterForBlock(MachineBasicBlock *MBB,
                                              bool MarkNewWater) {
   if (!MBB)
@@ -3027,8 +3023,12 @@ ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
     }
 
     // TC32 hardware does not reliably execute the 32-bit conditional TJcc
-    // encoding. Keep conditional branches in the short form and place a far
-    // unconditional branch on the taken path instead.
+    // encoding. Keep conditional branches in the short form and route the
+    // taken edge through a veneer instead of creating the usual
+    // "invert-and-skip-over-unconditional-branch" shape. That generic shape
+    // can degenerate into a zero-displacement short conditional branch.
+    if (fixupTC32ConditionalBrWithoutInversion(Br, ExpectedUncondOpc))
+      return true;
   }
 
   // Add an unconditional branch to the destination and invert the branch
@@ -3039,11 +3039,6 @@ ARMConstantIslands::fixupConditionalBr(ImmBranch &Br) {
   // b   L1
   // L2:
   ARMCC::CondCodes CC = (ARMCC::CondCodes)MI->getOperand(1).getImm();
-  if (STI->getTargetTriple().isTC32() && MI->getOpcode() == ARM::tBcc &&
-      needsTC32BranchConditionFixup(ARMCC::getOppositeCondition(CC)) &&
-      fixupTC32ConditionalBrWithoutInversion(Br, ExpectedUncondOpc))
-    return true;
-
   CC = ARMCC::getOppositeCondition(CC);
   Register CCReg = MI->getOperand(2).getReg();
 

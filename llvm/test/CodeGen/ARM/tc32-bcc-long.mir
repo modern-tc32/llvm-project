@@ -2,13 +2,15 @@
 
 # CHECK-LABEL: bb.0:
 # CHECK-NOT: tTC32Bcc32
-# CHECK: tBcc %bb.[[SKIP:[0-9]+]], 1
-# CHECK-NEXT: tPUSH 14
-# CHECK-NEXT: tBfar %bb.[[TAKEN:[0-9]+]], 14
+# CHECK: tBcc %bb.[[TAKEN:[0-9]+]], 0
+# CHECK: bb.[[TAKEN]]:
+# CHECK: tPUSH 14
+# CHECK-NEXT: tBfar %bb.[[LONG:[0-9]+]], 14
+# CHECK: bb.[[LONG]]:
+# CHECK: tPOP 14
+# CHECK-NEXT: tB %bb.[[SKIP:[0-9]+]], 14
 # CHECK: bb.[[SKIP]]:
 # CHECK: tPOP_RET
-# CHECK: bb.[[TAKEN]]:
-# CHECK: tPOP 14
 
 --- |
   define void @f() { ret void }
