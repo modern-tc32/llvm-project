@@ -6,7 +6,9 @@ target triple = "tc32-unknown-none-elf"
 define void @tc32_inline_asm_rept_branch(i32 %x) {
 ; CHECK-LABEL: tc32_inline_asm_rept_branch:
 ; CHECK:       tcmp r0, #0
-; CHECK-NEXT:  tjne [[SKIP:\.LBB0_[0-9]+]]
+; CHECK-NEXT:  tjeq [[DONE_VENEER:\.LBB0_[0-9]+]]
+; CHECK-NEXT:  tj [[SKIP:\.LBB0_[0-9]+]]
+; CHECK-NEXT:  [[DONE_VENEER]]:
 ; CHECK-NEXT:  tj [[DONE:\.LBB0_[0-9]+]]
 ; CHECK:       [[SKIP]]:
 ; CHECK:       nop
