@@ -12,8 +12,11 @@ define i32 @tc32_far_tj_epilogue_repro(ptr %out, ptr %s, ptr %ctx) minsize noinl
 ; CHECK-LABEL: tc32_far_tj_epilogue_repro:
 ; CHECK-NOT: {{\ttj[ \t]+\.LBB}}
 ; CHECK:      tcmp r0, #0
-; CHECK-NEXT: tjne [[NONZERO:.LBB[0-9_]+]]
+; CHECK-NEXT: tjeq [[ZERO_VENEER:.LBB[0-9_]+]]
+; CHECK-NEXT: tj [[NONZERO:.LBB[0-9_]+]]
+; CHECK-NEXT: [[ZERO_VENEER]]:
 ; CHECK-NEXT: tjl [[DONE_FROM_ZERO:.LBB[0-9_]+]]
+; CHECK-NEXT: [[NONZERO]]:
 ; CHECK-NOT: {{\ttj[ \t]+\.LBB}}
 ; CHECK:      tcmp r0, #0
 ; CHECK-NEXT: tjmi [[NEGATIVE_VENEER:.LBB[0-9_]+]]
