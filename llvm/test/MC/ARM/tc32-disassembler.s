@@ -58,7 +58,7 @@ test_tc32_disasm:
 // CHECK:      tmov{{[ \t]+}}r1, r8
 // CHECK:      tcmp{{[ \t]+}}r8, r1
 // CHECK:      tadd{{[ \t]+}}r1, r8
-// CHECK:      tadd{{[ \t]+}}r4, r7, #0x0
+// CHECK:      tmov{{[ \t]+}}r4, r7
 // CHECK:      tadd{{[ \t]+}}r4, r7, #0x7
 // CHECK:      tadd{{[ \t]+}}r4, r7, r3
 // CHECK:      tsub{{[ \t]+}}r4, r7, #0x0
