@@ -743,10 +743,10 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
   bool HasTC32PopBeforeReturn =
       MBBI != MBB.end() && MBBI->getOpcode() == ARM::tBX_RET &&
       MBBI != MBB.begin() && std::prev(MBBI)->getOpcode() == ARM::tPOP;
-  // When TC32 has a saved-argument area above the LR slot, we cannot fold the
-  // return into the callee-save pop directly: that would leave SP below the
-  // saved arguments. Move LR to the final pop slot instead, adjust SP, and
-  // return with tpop {pc}.
+  // When TC32 has a saved-argument area above the LR slot, restore LR through a
+  // temporary and return with tjex after skipping the saved arguments. Vendor
+  // GCC uses this sequence for varargs; avoid copying the return address within
+  // the stack and then returning with tpop {pc}, which is unsafe on TLSR8258.
   if (IsTC32 && ArgRegsSaveSize && MBBI != MBB.end() && PopReg &&
       ArgRegsSaveSize % 4 == 0 && ArgRegsSaveSize <= 1020 &&
       (MBBI->getOpcode() == ARM::tPOP_RET || HasTC32PopBeforeReturn)) {
@@ -770,25 +770,21 @@ bool Thumb1FrameLowering::emitPopSpecialFixUp(MachineBasicBlock &MBB,
         MBB.erase(PopMIB.getInstr());
     }
 
-    BuildMI(MBB, MBBI, dl, TII.get(ARM::tLDRspi))
+    BuildMI(MBB, MBBI, dl, TII.get(ARM::tPOP))
+        .add(predOps(ARMCC::AL))
         .addReg(PopReg, RegState::Define)
-        .addReg(ARM::SP)
-        .addImm(0)
-        .add(predOps(ARMCC::AL))
-        .setMIFlag(MachineInstr::FrameDestroy);
-    BuildMI(MBB, MBBI, dl, TII.get(ARM::tSTRspi))
-        .addReg(PopReg, RegState::Kill)
-        .addReg(ARM::SP)
-        .addImm(ArgRegsSaveSize / 4)
-        .add(predOps(ARMCC::AL))
         .setMIFlag(MachineInstr::FrameDestroy);
     emitPrologueEpilogueSPUpdate(MBB, MBBI, TII, dl, *RegInfo,
                                  ArgRegsSaveSize, ARM::NoRegister,
                                  MachineInstr::FrameDestroy);
-    BuildMI(MBB, MBBI, dl, TII.get(ARM::tPOP_RET))
-        .add(predOps(ARMCC::AL))
-        .addReg(ARM::PC, RegState::Define)
-        .setMIFlag(MachineInstr::FrameDestroy);
+    MachineInstrBuilder RetMIB =
+        BuildMI(MBB, MBBI, dl, TII.get(ARM::tBX_RET_vararg))
+            .addReg(PopReg, RegState::Kill)
+            .add(predOps(ARMCC::AL))
+            .setMIFlag(MachineInstr::FrameDestroy);
+    for (auto MO : MBBI->operands())
+      if (MO.isReg() && MO.isImplicit())
+        RetMIB.add(MO);
     MBB.erase(MBBI);
     return true;
   }
