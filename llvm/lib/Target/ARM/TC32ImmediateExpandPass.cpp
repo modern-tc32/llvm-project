@@ -16,7 +16,6 @@
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/CodeGen/RegisterScavenging.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/Pass.h"
@@ -156,8 +155,9 @@ bool TC32DistinctDstRegFixup::runOnMachineFunction(MachineFunction &MF) {
   bool Changed = false;
 
   for (MachineBasicBlock &MBB : MF) {
-    for (auto I = MBB.begin(); I != MBB.end(); ++I) {
-      MachineInstr &MI = *I;
+    for (auto I = MBB.begin(); I != MBB.end();) {
+      MachineInstr &MI = *I++;
+      auto InsertPt = MI.getIterator();
       if (!isUnsafeDistinctDstRegOp(MI))
         continue;
 
@@ -178,7 +178,7 @@ bool TC32DistinctDstRegFixup::runOnMachineFunction(MachineFunction &MF) {
       }
 
       if (Dst != RHS) {
-        BuildMI(MBB, I, DL, TII->get(ARM::tMOVSr), Dst)
+        BuildMI(MBB, InsertPt, DL, TII->get(ARM::tMOVSr), Dst)
             .addReg(LHS, getKillRegState(MI.getOperand(2).isKill()))
             ->addRegisterDead(ARM::CPSR, TRI);
         MI.getOperand(2).setReg(Dst);
@@ -187,28 +187,29 @@ bool TC32DistinctDstRegFixup::runOnMachineFunction(MachineFunction &MF) {
         continue;
       }
 
-      RegScavenger RS;
-      RS.enterBasicBlockEnd(MBB);
-      RS.backward(std::next(I));
-      Register Scratch = RS.scavengeRegisterBackwards(ARM::tGPRRegClass, I,
-                                                      /*RestoreAfter=*/false,
-                                                      /*SPAdj=*/0,
-                                                      /*AllowSpill=*/true);
-      assert(Scratch != ARM::NoRegister &&
-             "expected a low register scratch for TC32 sub fixup");
-      RS.setRegUsed(Scratch);
+      assert(MI.getOpcode() == ARM::tSUBrr &&
+             "only tc32 sub with dst==rhs needs the carry rewrite");
 
-      BuildMI(MBB, I, DL, TII->get(ARM::tMOVSr), Scratch)
+      // Rewrite `dst = lhs - dst` as `dst = lhs + (~dst) + 1` without
+      // introducing an extra scratch register. We materialize the carry-in
+      // with `cmp dst, dst`, which reliably sets C=1.
+      BuildMI(MBB, InsertPt, DL, TII->get(ARM::tMVN), Dst)
+          .addReg(ARM::CPSR, RegState::Define | RegState::Dead)
           .addReg(RHS, getKillRegState(MI.getOperand(3).isKill()))
-          ->addRegisterDead(ARM::CPSR, TRI);
-      BuildMI(MBB, I, DL, TII->get(ARM::tMOVSr), Dst)
+          .add(predOps(ARMCC::AL));
+      BuildMI(MBB, InsertPt, DL, TII->get(ARM::tCMPr))
+          .addReg(Dst)
+          .addReg(Dst)
+          .add(predOps(ARMCC::AL));
+      BuildMI(MBB, InsertPt, DL, TII->get(ARM::tADC), Dst)
+          .addReg(ARM::CPSR, RegState::Define |
+                              getDeadRegState(MI.getOperand(1).isDead()))
+          .addReg(Dst)
           .addReg(LHS, getKillRegState(MI.getOperand(2).isKill()))
-          ->addRegisterDead(ARM::CPSR, TRI);
-      MI.getOperand(2).setReg(Dst);
-      MI.getOperand(2).setIsKill(false);
-      MI.getOperand(3).setReg(Scratch);
-      MI.getOperand(3).setIsKill(true);
+          .add(predOps(ARMCC::AL));
+      MI.eraseFromParent();
       Changed = true;
+      continue;
     }
   }
 
