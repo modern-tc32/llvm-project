@@ -94,6 +94,18 @@ void ARMInstPrinter::printInst(const MCInst *MI, uint64_t Address,
   }
 
   switch (MI->getOpcode()) {
+  case ARM::tADDi3:
+    if (MI->getNumOperands() >= 4 && MI->getOperand(0).isReg() &&
+        MI->getOperand(2).isReg() && MI->getOperand(3).isImm() &&
+        MI->getOperand(3).getImm() == 0) {
+      O << "tmov\t";
+      printOperand(MI, 0, STI, O);
+      O << ", ";
+      printOperand(MI, 2, STI, O);
+      printAnnotation(O, Annot);
+      return;
+    }
+    break;
   case ARM::tMOVr:
     if (MI->getNumOperands() >= 2 && MI->getOperand(0).isReg() &&
         MI->getOperand(1).isReg() && MI->getOperand(0).getReg() == ARM::R8 &&
