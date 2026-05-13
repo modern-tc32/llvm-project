@@ -23,9 +23,9 @@ define ptr @kernel_base_from_runq(ptr %pq) minsize noinline nounwind optsize "ta
 ; CHECK-LABEL: kernel_base_from_runq:
 ; CHECK:       tmov [[BASE:r[0-7]]], r0
 ; CHECK:       tmov [[OFF:r[0-7]]], #24
-; CHECK:       tmov [[TMP:r[0-7]]], [[OFF]]
-; CHECK:       tmov [[RES:r[0-7]]], [[BASE]]
-; CHECK:       tsub [[RES]], [[RES]], [[TMP]]
+; CHECK:       tmovn [[OFF]], [[OFF]]
+; CHECK:       tcmp [[OFF]], [[OFF]]
+; CHECK:       taddc [[OFF]], [[BASE]]
   %base = getelementptr inbounds i8, ptr %pq, i32 -24
   %head = load ptr, ptr %pq, align 4
   %is_null = icmp eq ptr %head, null
