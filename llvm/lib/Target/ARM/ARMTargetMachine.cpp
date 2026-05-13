@@ -114,6 +114,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARMTarget() {
   initializeARMFixCortexA57AES1742098Pass(Registry);
   initializeARMDAGToDAGISelLegacyPass(Registry);
   initializeKCFIPass(Registry);
+  initializeTC32DistinctDstRegFixupPass(Registry);
   initializeTC32ImmediateExpandPass(Registry);
   initializeTC32LoadHazardFixupPass(Registry);
   initializeTC32PackedByteLoadStorePassPass(Registry);
@@ -586,6 +587,7 @@ void ARMPassConfig::addPreEmitPass() {
 void ARMPassConfig::addPreEmitPass2() {
 
   if (TM->getTargetTriple().isTC32()) {
+    addPass(createTC32DistinctDstRegFixupPass());
     addPass(createTC32SignedBranchFixupPass());
     addPass(createTC32LoadHazardFixupPass());
   }
