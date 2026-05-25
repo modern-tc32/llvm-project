@@ -429,6 +429,9 @@ void ARMPassConfig::addIRPasses() {
 
   if (TM->Options.JMCInstrument)
     addPass(createJMCInstrumenterPass());
+
+  if (TM->getTargetTriple().isTC32())
+    addPass(createTC32IRFixupPass());
 }
 
 void ARMPassConfig::addCodeGenPrepare() {
