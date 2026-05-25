@@ -673,6 +673,10 @@ unsigned ARMBaseInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     // contrast to AArch64 instructions which have a default size of 4 bytes for
     // example.
     return MCID.getSize();
+  case ARM::tLEApcrel:
+    if (MF->getTarget().getTargetTriple().isTC32())
+      return 6;
+    return MCID.getSize();
   case ARM::tBR_JTr:
     if (MF->getTarget().getTargetTriple().isTC32()) {
       unsigned Size = 10;
