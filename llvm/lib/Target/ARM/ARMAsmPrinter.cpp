@@ -2017,6 +2017,30 @@ void ARMAsmPrinter::emitInstruction(const MachineInstr *MI) {
   case ARM::t2LEApcrel: {
     // FIXME: Need to also handle globals and externals
     MCSymbol *CPISymbol = GetCPISymbol(MI->getOperand(1).getIndex());
+    if (MI->getOpcode() == ARM::tLEApcrel && TM.getTargetTriple().isTC32()) {
+      Register Dst = MI->getOperand(0).getReg();
+      const MCExpr *CPIExpr = MCSymbolRefExpr::create(CPISymbol, OutContext);
+      EmitToStreamer(*OutStreamer, MCInstBuilder(ARM::tMOVi8)
+                                       .addReg(Dst)
+                                       .addReg(ARM::CPSR)
+                                       .addExpr(CPIExpr)
+                                       .addImm(ARMCC::AL)
+                                       .addReg(0));
+      EmitToStreamer(*OutStreamer, MCInstBuilder(ARM::tLSLri)
+                                       .addReg(Dst)
+                                       .addReg(ARM::CPSR)
+                                       .addReg(Dst)
+                                       .addImm(2)
+                                       .addImm(ARMCC::AL)
+                                       .addReg(0));
+      EmitToStreamer(*OutStreamer, MCInstBuilder(ARM::tADDhirr)
+                                       .addReg(Dst)
+                                       .addReg(Dst)
+                                       .addReg(ARM::PC)
+                                       .addImm(ARMCC::AL)
+                                       .addReg(0));
+      return;
+    }
     EmitToStreamer(*OutStreamer, MCInstBuilder(MI->getOpcode() ==
                                                ARM::t2LEApcrel ? ARM::t2ADR
                   : (MI->getOpcode() == ARM::tLEApcrel ? ARM::tADR
