@@ -18,6 +18,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "ARM.h"
+#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -37,6 +38,50 @@ namespace {
 class TC32IRFixup {
 public:
   static constexpr uint32_t TC32RegIrqEnAddr = 0x800643;
+
+  Function *getOrCreateCTTZHelper(Module &M) {
+    if (Function *F = M.getFunction("__tc32_cttzsi2"))
+      return F;
+
+    LLVMContext &Ctx = M.getContext();
+    Type *I32Ty = Type::getInt32Ty(Ctx);
+    FunctionType *FTy = FunctionType::get(I32Ty, {I32Ty}, false);
+    Function *F = Function::Create(FTy, GlobalValue::InternalLinkage,
+                                   "__tc32_cttzsi2", M);
+    F->setDoesNotThrow();
+    F->setDoesNotAccessMemory();
+    F->addFnAttr(Attribute::WillReturn);
+
+    Argument *X = F->getArg(0);
+    X->setName("x");
+
+    BasicBlock *EntryBB = BasicBlock::Create(Ctx, "entry", F);
+    BasicBlock *ZeroBB = BasicBlock::Create(Ctx, "zero", F);
+    BasicBlock *LoopBB = BasicBlock::Create(Ctx, "loop", F);
+    BasicBlock *ExitBB = BasicBlock::Create(Ctx, "exit", F);
+
+    IRBuilder<> Builder(EntryBB);
+    Value *IsZero = Builder.CreateICmpEQ(X, Builder.getInt32(0));
+    Builder.CreateCondBr(IsZero, ZeroBB, LoopBB);
+
+    Builder.SetInsertPoint(ZeroBB);
+    Builder.CreateRet(Builder.getInt32(32));
+
+    Builder.SetInsertPoint(LoopBB);
+    PHINode *Count = Builder.CreatePHI(I32Ty, 2, "count");
+    Count->addIncoming(Builder.getInt32(0), EntryBB);
+    Value *Shifted = Builder.CreateLShr(X, Count, "shifted");
+    Value *LSB = Builder.CreateAnd(Shifted, Builder.getInt32(1), "lsb");
+    Value *Done = Builder.CreateICmpNE(LSB, Builder.getInt32(0));
+    Value *Next = Builder.CreateAdd(Count, Builder.getInt32(1), "next");
+    Builder.CreateCondBr(Done, ExitBB, LoopBB);
+    Count->addIncoming(Next, LoopBB);
+
+    Builder.SetInsertPoint(ExitBB);
+    Builder.CreateRet(Count);
+
+    return F;
+  }
 
   static StringRef getSystemRegisterName(StringRef LowerAsm, bool IsMRS) {
     StringRef Args = LowerAsm.drop_front(IsMRS ? 4 : 4).trim();
@@ -89,6 +134,17 @@ public:
   bool handleIntrinsic(IntrinsicInst *II,
                        SmallVectorImpl<Instruction *> &ToErase) {
     switch (II->getIntrinsicID()) {
+    case Intrinsic::cttz:
+      if (II->getType()->isIntegerTy(32)) {
+        IRBuilder<> Builder(II);
+        CallInst *Call = Builder.CreateCall(getOrCreateCTTZHelper(*II->getModule()),
+                                            {II->getArgOperand(0)});
+        Call->setTailCallKind(CallInst::TCK_Tail);
+        II->replaceAllUsesWith(Call);
+        ToErase.push_back(II);
+        return true;
+      }
+      return false;
     case Intrinsic::arm_ldrex:
     case Intrinsic::arm_strex:
       return rejectUnsupportedInstruction(
