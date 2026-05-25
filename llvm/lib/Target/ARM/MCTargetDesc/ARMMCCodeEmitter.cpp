@@ -96,10 +96,16 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
     return static_cast<uint16_t>(Base | Lo);
   }
 
-  uint16_t encodeTC32MOVi8(const MCInst &MI, unsigned ImmIdx) const {
+  uint16_t encodeTC32MOVi8(const MCInst &MI, unsigned ImmIdx,
+                           SmallVectorImpl<MCFixup> &Fixups) const {
     unsigned Dst = getTC32RegEncoding(MI.getOperand(0).getReg());
-    int64_t Imm = MI.getOperand(ImmIdx).getImm();
     checkTC32Encoding(Dst < 8, "tmov immediate requires low destination");
+    if (MI.getOperand(ImmIdx).isExpr()) {
+      addTC32Fixup(Fixups, 0, MI.getOperand(ImmIdx).getExpr(),
+                   ARM::fixup_arm_thumb_cp);
+      return static_cast<uint16_t>((0xA0u + Dst) << 8);
+    }
+    int64_t Imm = MI.getOperand(ImmIdx).getImm();
     checkTC32Encoding(Imm >= 0 && Imm <= 255, "tmov immediate out of range");
     return static_cast<uint16_t>(((0xA0u + Dst) << 8) |
                                  static_cast<uint16_t>(Imm));
@@ -486,7 +492,7 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
                                       0x0400u);
       break;
     case ARM::tMOVi8:
-      Bits16 = encodeTC32MOVi8(MI, Desc.getNumDefs());
+      Bits16 = encodeTC32MOVi8(MI, Desc.getNumDefs(), Fixups);
       break;
     case ARM::tMOVSr:
       Bits16 = encodeTC32MOVrr(MI, Desc.getNumDefs());
