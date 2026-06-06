@@ -1067,8 +1067,10 @@ void ThumbV6MPILongThunk::addLongMapSyms() {
 }
 
 static uint64_t getTC32ThunkDestVA(Ctx &ctx, const Symbol &s, int64_t a) {
+  // TC32 long thunks pop the literal directly into PC, so the destination
+  // must retain its Thumb-state bit instead of following the BX/BLX pattern.
   uint64_t v = s.isInPlt(ctx) ? s.getPltVA(ctx) : s.getVA(ctx, a);
-  return SignExtend64<32>(v & ~uint64_t(1));
+  return SignExtend64<32>(v);
 }
 
 void TC32ABSLongThunk::writeTo(uint8_t *buf) {
