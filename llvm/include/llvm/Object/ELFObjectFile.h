@@ -1396,6 +1396,8 @@ template <class ELFT> Triple::ArchType ELFObjectFile<ELFT>::getArch() const {
     return Triple::tc32;
   case ELF::EM_AVR:
     return Triple::avr;
+  case ELF::EM_8051:
+    return Triple::mcs51;
   case ELF::EM_HEXAGON:
     return Triple::hexagon;
   case ELF::EM_LANAI:
