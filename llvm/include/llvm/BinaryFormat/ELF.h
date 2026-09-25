@@ -1040,6 +1040,11 @@ enum {
 #include "ELFRelocs/MSP430.def"
 };
 
+// ELF Relocation types for MCS-51
+enum {
+#include "ELFRelocs/MCS51.def"
+};
+
 // ELF Relocation type for VE.
 enum {
 #include "ELFRelocs/VE.def"
