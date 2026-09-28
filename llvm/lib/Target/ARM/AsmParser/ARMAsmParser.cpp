@@ -6617,6 +6617,10 @@ static StringRef normalizeVendorTC32Mnemonic(StringRef Mnemonic) {
       .Case("tstorerb", "strb")
       .Case("tstorerh", "strh")
       .Case("tand", "ands")
+      .Case("tnand", "tnand")
+      .Case("ttst", "tnand")
+      .Case("tneg", "tnegs")
+      .Case("tnegs", "tnegs")
       .Case("txor", "eors")
       .Case("tor", "orrs")
       .Case("tbclr", "bics")
@@ -6705,7 +6709,7 @@ StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic, StringRef ExtraToken,
       Mnemonic == "pac" || Mnemonic == "pacbti" || Mnemonic == "bti" ||
       (getSTI().getTargetTriple().isTC32() &&
        (Mnemonic == "tmrss" || Mnemonic == "tmssr" || Mnemonic == "tmcsr" ||
-        Mnemonic == "treti")))
+        Mnemonic == "treti" || Mnemonic == "tnegs")))
     return Mnemonic;
 
   // First, split out any predication code. Ignore mnemonics we know aren't
@@ -6742,7 +6746,8 @@ StringRef ARMAsmParser::splitMnemonic(StringRef Mnemonic, StringRef ExtraToken,
         Mnemonic == "fcmps" || Mnemonic == "fcmpzs" || Mnemonic == "vfms" ||
         Mnemonic == "vfnms" || Mnemonic == "fconsts" || Mnemonic == "bxns" ||
         Mnemonic == "blxns" || Mnemonic == "vfmas" || Mnemonic == "vmlas" ||
-        (Mnemonic == "movs" && isThumb()))) {
+        (Mnemonic == "movs" && isThumb()) ||
+        (getSTI().getTargetTriple().isTC32() && Mnemonic == "tnegs"))) {
     Mnemonic = Mnemonic.slice(0, Mnemonic.size() - 1);
     CarrySetting = true;
   }

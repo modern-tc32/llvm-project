@@ -23,6 +23,8 @@ test_tc32_disasm:
         .short 0x0641
         .short 0x0588
         .short 0x0441
+        .short 0x0219
+        .short 0x0259
         .short 0xec3c
         .short 0xedfc
         .short 0xe8fc
@@ -58,6 +60,8 @@ test_tc32_disasm:
 // CHECK:      tmov{{[ \t]+}}r1, r8
 // CHECK:      tcmp{{[ \t]+}}r8, r1
 // CHECK:      tadd{{[ \t]+}}r1, r8
+// CHECK:      tnand{{[ \t]+}}r1, r3
+// CHECK:      tnegs{{[ \t]+}}r1, r3
 // CHECK:      tmov{{[ \t]+}}r4, r7
 // CHECK:      tadd{{[ \t]+}}r4, r7, #0x7
 // CHECK:      tadd{{[ \t]+}}r4, r7, r3

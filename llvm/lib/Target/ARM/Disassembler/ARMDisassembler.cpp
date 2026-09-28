@@ -486,6 +486,7 @@ DecodeStatus ARMDisassembler::decodeTC32Instruction(MCInst &MI, uint16_t Insn16,
       (Insn16 & 0xFFC0u) == 0x0080u || (Insn16 & 0xFFC0u) == 0x00C0u ||
       (Insn16 & 0xFFC0u) == 0x0100u || (Insn16 & 0xFFC0u) == 0x0140u ||
       (Insn16 & 0xFFC0u) == 0x0180u || (Insn16 & 0xFFC0u) == 0x01C0u ||
+      (Insn16 & 0xFFC0u) == 0x0200u || (Insn16 & 0xFFC0u) == 0x0240u ||
       (Insn16 & 0xFFC0u) == 0x0280u || (Insn16 & 0xFFC0u) == 0x02C0u ||
       (Insn16 & 0xFFC0u) == 0x0300u || (Insn16 & 0xFFC0u) == 0x0340u ||
       (Insn16 & 0xFFC0u) == 0x0380u || (Insn16 & 0xFFC0u) == 0x03C0u) {
@@ -501,6 +502,8 @@ DecodeStatus ARMDisassembler::decodeTC32Instruction(MCInst &MI, uint16_t Insn16,
     case 0x0140u: MI.setOpcode(ARM::tADC); break;
     case 0x0180u: MI.setOpcode(ARM::tSBC); break;
     case 0x01C0u: MI.setOpcode(ARM::tROR); break;
+    case 0x0200u: MI.setOpcode(ARM::tTST); break;
+    case 0x0240u: MI.setOpcode(ARM::tRSB); break;
     case 0x0280u: MI.setOpcode(ARM::tCMPr); break;
     case 0x02C0u: MI.setOpcode(ARM::tCMN); break;
     case 0x0300u: MI.setOpcode(ARM::tORR); break;
@@ -510,7 +513,16 @@ DecodeStatus ARMDisassembler::decodeTC32Instruction(MCInst &MI, uint16_t Insn16,
     default: llvm_unreachable("handled above");
     }
 
-    if (Base == 0x0280u || Base == 0x02C0u) {
+    if (Base == 0x0200u) {
+      addTC32LowReg(MI, Dst);
+      addTC32LowReg(MI, Src);
+      addTC32PredicateOperands(MI);
+    } else if (Base == 0x0240u) {
+      addTC32LowReg(MI, Dst);
+      addTC32CCOutOperand(MI);
+      addTC32LowReg(MI, Src);
+      addTC32PredicateOperands(MI);
+    } else if (Base == 0x0280u || Base == 0x02C0u) {
       addTC32LowReg(MI, Dst);
       addTC32LowReg(MI, Src);
       addTC32PredicateOperands(MI);
