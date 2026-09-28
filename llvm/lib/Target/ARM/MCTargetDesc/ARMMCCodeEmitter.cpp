@@ -134,6 +134,13 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
     return static_cast<uint16_t>(0x02C0u | (RHS << 3) | LHS);
   }
 
+  uint16_t encodeTC32TST(const MCInst &MI, unsigned SrcIdx) const {
+    unsigned LHS = getTC32RegEncoding(MI.getOperand(SrcIdx).getReg());
+    unsigned RHS = getTC32RegEncoding(MI.getOperand(SrcIdx + 1).getReg());
+    checkTC32Encoding(LHS < 8 && RHS < 8, "tnand register requires low regs");
+    return static_cast<uint16_t>(0x0200u | (RHS << 3) | LHS);
+  }
+
   uint16_t encodeTC32ADDrrr(MCRegister DstReg, MCRegister SrcReg,
                             MCRegister RhsReg) const {
     unsigned Dst = getTC32RegEncoding(DstReg);
@@ -511,6 +518,10 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
     case ARM::tCMN:
       Bits16 = encodeTC32CMNz(MI, Desc.getNumDefs());
       break;
+    case ARM::tTST:
+    case ARM::tTC32TST:
+      Bits16 = encodeTC32TST(MI, Desc.getNumDefs());
+      break;
     case ARM::tADDrr:
       Bits16 = encodeTC32ADDrrr(MI.getOperand(0).getReg(),
                                 MI.getOperand(Desc.getNumDefs()).getReg(),
@@ -556,6 +567,10 @@ class ARMMCCodeEmitter : public MCCodeEmitter {
       break;
     case ARM::tMVN:
       Bits16 = encodeTC32UnaryLogic(MI, Desc.getNumDefs(), 0x03C0u);
+      break;
+    case ARM::tRSB:
+    case ARM::tTC32NEG:
+      Bits16 = encodeTC32UnaryLogic(MI, Desc.getNumDefs(), 0x0240u);
       break;
     case ARM::tLSLri:
       Bits16 = encodeTC32ShiftImm(MI.getOperand(0).getReg(),

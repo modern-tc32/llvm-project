@@ -8,6 +8,10 @@ aliases:
         tand    r1, r0
         txor    r1, r0
         tbclr   r1, r0
+        tnand   r2, r1
+        ttst    r2, r1
+        tnegs   r2, r1
+        tneg    r2, r1
         tsub    r3, r3, #8
         tmrcs   r3
         tjne    aliases
@@ -19,6 +23,10 @@ aliases:
 // CHECK:      tand{{[ \t]+}}r1, r0
 // CHECK:      txor{{[ \t]+}}r1, r0
 // CHECK:      tbclr{{[ \t]+}}r1, r0
+// CHECK:      tnand{{[ \t]+}}r2, r1
+// CHECK:      tnand{{[ \t]+}}r2, r1
+// CHECK:      tnegs{{[ \t]+}}r2, r1
+// CHECK:      tnegs{{[ \t]+}}r2, r1
 // CHECK:      tsub{{[ \t]+}}r3, #0x8
 // CHECK:      tmrss{{[ \t]+}}r3
 // CHECK:      tjne
