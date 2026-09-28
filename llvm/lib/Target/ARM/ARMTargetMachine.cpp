@@ -393,7 +393,7 @@ public:
 };
 char ARMExecutionDomainFix::ID;
 
-class TC32IRFixupPass : public PassInfoMixin<TC32IRFixupPass> {
+class TC32IRFixupPass : public OptionalPassInfoMixin<TC32IRFixupPass> {
 public:
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
     return runTC32IRFixup(F) ? PreservedAnalyses::none()
@@ -402,7 +402,7 @@ public:
 };
 
 class TC32PackedByteLoadStorePass
-    : public PassInfoMixin<TC32PackedByteLoadStorePass> {
+    : public OptionalPassInfoMixin<TC32PackedByteLoadStorePass> {
 public:
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
     return runTC32PackedByteLoadStore(F) ? PreservedAnalyses::none()
