@@ -1367,6 +1367,19 @@ def tRSB :                      // A8.6.141
                "tneg", "\t$Rd, $Rn",
                [(set tGPR:$Rd, (ineg tGPR:$Rn))]>, Requires<[IsThumb, IsThumb1Only, HasV6]>, Sched<[WriteALU]>;
 
+// TC32 uses these Thumb ALU encodings with vendor mnemonics. Keep separate
+// assembler opcodes so they remain available on TC32's Thumb v4T subtarget.
+def tTC32NEG :
+  T1pI<(outs tGPR:$Rd), (ins tGPR:$Rn), IIC_iALUi,
+       "tnegs", "\t$Rd, $Rn", []>, T1DataProcessing<0b1001>,
+  Sched<[WriteALU]> {
+  bits<3> Rd;
+  bits<3> Rn;
+  let Inst{5-3} = Rn;
+  let Inst{2-0} = Rd;
+  let isAsmParserOnly = 1;
+}
+
 // Subtract with carry register
 let Uses = [CPSR], hasSideEffects = 0 in
 def tSBC :                      // A8.6.151
@@ -1487,6 +1500,13 @@ def tTST :                      // A8.6.230
                [(set CPSR, (ARMcmpZ (and_su tGPR:$Rn, tGPR:$Rm), 0))]>,
                Requires<[IsThumb, IsThumb1Only, HasV6]>,
                Sched<[WriteALU]>;
+
+let isCompare = 1, Defs = [CPSR] in
+def tTC32TST :
+  T1pIDPEncode<0b1000, (outs), (ins tGPR:$Rn, tGPR:$Rm), IIC_iTSTr,
+               "tnand", "\t$Rn, $Rm", []>, Sched<[WriteALU]> {
+  let isAsmParserOnly = 1;
+}
 
 // A8.8.247  UDF - Undefined (Encoding T1)
 def tUDF : TI<(outs), (ins imm0_255:$imm8), IIC_Br, "udf\t$imm8",
