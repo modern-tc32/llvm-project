@@ -3,7 +3,7 @@ name: Build TC32 LLVM Toolchain
 on:
   workflow_dispatch:
   push:
-    branches: [ "main", "tc32-as-thumb-extension" ]
+    branches: [ "main", "tc32", "tc32-as-thumb-extension" ]
     paths:
       - "llvm/**"
       - "clang/**"
