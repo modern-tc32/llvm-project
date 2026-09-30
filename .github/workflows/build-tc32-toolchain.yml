@@ -595,28 +595,30 @@ jobs:
           Compress-Archive -Path (Join-Path $installDir '*') -DestinationPath $archive
 
       - name: Upload toolchain-only artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tc32-llvm-toolchain-${{ matrix.host }}
           path: tc32-llvm-toolchain-${{ matrix.host }}.${{ matrix.archive_ext }}
           if-no-files-found: error
+          compression-level: 0
 
       - name: Upload Rust-compatible artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tc32-llvm-rust-llvm-${{ matrix.host }}
           path: tc32-llvm-rust-llvm-${{ matrix.host }}.${{ matrix.archive_ext }}
           if-no-files-found: error
+          compression-level: 0
 
       - name: Upload toolchain-only size report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: size-report-toolchain-${{ matrix.host }}
           path: size-report-toolchain-${{ matrix.host }}.txt
           if-no-files-found: error
 
       - name: Upload Rust-compatible size report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: size-report-rust-llvm-${{ matrix.host }}
           path: |
@@ -624,3 +626,84 @@ jobs:
             llvm-components-full-${{ matrix.host }}.txt
             llvm-system-libs-full-${{ matrix.host }}.txt
           if-no-files-found: error
+
+  publish-prerelease:
+    needs: build-toolchain
+    if: github.event_name != 'pull_request'
+    name: Publish prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set release version and tag
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          source = Path("cmake/Modules/LLVMVersion.cmake").read_text()
+          values = dict(re.findall(
+              r"set\(LLVM_VERSION_(MAJOR|MINOR|PATCH) ([0-9]+)\)", source
+          ))
+          missing = {"MAJOR", "MINOR", "PATCH"} - values.keys()
+          if missing:
+              raise SystemExit(f"Missing LLVM version fields: {sorted(missing)}")
+          print(".".join(values[field] for field in ("MAJOR", "MINOR", "PATCH")))
+          PY
+          )"
+          TAG="${VERSION}-tc32-$(date -u +%Y%m%d)"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download toolchain-only archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: tc32-llvm-toolchain-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Download Rust-compatible archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: tc32-llvm-rust-llvm-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Write release notes
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          TC32 LLVM toolchain prerelease ${RELEASE_VERSION}.
+
+          Source commit: \`${{ github.sha }}\`
+          Workflow run: \`${{ github.run_id }}\`
+
+          Included archives for Linux, macOS, and Windows:
+          - \`tc32-llvm-toolchain-<host>.tar.gz\` or \`.zip\`: toolchain-only distribution
+          - \`tc32-llvm-rust-llvm-<host>.tar.gz\` or \`.zip\`: Rust-compatible full distribution
+
+          Tag: \`${RELEASE_TAG}\`
+          EOF
+
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: TC32 LLVM ${{ steps.release.outputs.version }} (${{ steps.release.outputs.tag }})
+          prerelease: true
+          generate_release_notes: false
+          overwrite_files: true
+          body_path: release-notes.md
+          files: release-artifacts/*
