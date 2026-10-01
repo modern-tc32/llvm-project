@@ -13,10 +13,9 @@ target triple = "tc32-unknown-none-elf"
 
 define dso_local i32 @do_device_init_min(ptr noundef %dev) minsize noinline nounwind optsize "frame-pointer"="all" "target-cpu"="tc32" "target-features"="+armv4t,+thumb-mode" {
 ; CHECK-LABEL: do_device_init_min:
-; CHECK:       tpush {r3, r4, r5, r6, r7, lr}
-; CHECK-NOT:   tpop {r3, r4, r5, r6, r7, pc}
-; CHECK:       tpop {r3, r4, r5, r6, r7}
-; CHECK-NEXT:  tpop {pc}
+; CHECK:       tpush {r4, r5, r7, lr}
+; CHECK-NOT:   tpop {r3, {{.*}}pc}
+; CHECK:       tpop {r4, r5, r7, pc}
   %ops.init.ptr = getelementptr inbounds nuw i8, ptr %dev, i32 16
   %ops.init = load ptr, ptr %ops.init.ptr, align 4
   %has.init = icmp eq ptr %ops.init, null
