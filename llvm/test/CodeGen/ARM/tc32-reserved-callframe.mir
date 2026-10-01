@@ -1,8 +1,8 @@
-# RUN: llc -run-pass=prologepilog %s -o - | FileCheck %s
+# RUN: llc -run-pass=prolog-epilog %s -o - | FileCheck %s
 
-# TC32 must not reserve the outgoing call frame in the function prologue.
-# Keep call-frame growth local to call sites so early startup functions do not
-# enter with a needlessly inflated stack frame.
+# TC32 reserves the outgoing call frame once in the prologue (like vendor GCC,
+# ACCUMULATE_OUTGOING_ARGS=1). SP does not move around the call and no base
+# pointer is needed.
 
 --- |
   target datalayout = "e-m:e-p:32:32-i64:64-a:0:32-n32-S64"
@@ -32,12 +32,12 @@ body:             |
 
     ; CHECK-LABEL: name:            foo
     ; CHECK: frame-setup tPUSH
-    ; CHECK: $sp = frame-setup tSUBspi $sp, 2
-    ; CHECK: tSTRi killed $r0, $r6, 1
-    ; CHECK: $sp = tSUBspi $sp, 4
+    ; CHECK: $sp = frame-setup tSUBspi $sp, 6
+    ; CHECK: tSTRspi killed $r0, $sp, 5
+    ; CHECK-NOT: $sp = tSUBspi
     ; CHECK: tBL 14
-    ; CHECK: $sp = tADDspi $sp, 4
-    ; CHECK: $sp = frame-destroy tADDspi $sp, 2
+    ; CHECK-NOT: $sp = tADDspi
+    ; CHECK: $sp = frame-destroy tADDspi $sp, 6
     tSTRspi killed $r0, %stack.0, 0, 14, $noreg :: (store (s32) into %stack.0)
     ADJCALLSTACKDOWN 16, 0, 14, $noreg, implicit-def dead $sp, implicit $sp
     renamable $r0 = tLDRspi %stack.0, 0, 14, $noreg :: (load (s32) from %stack.0)

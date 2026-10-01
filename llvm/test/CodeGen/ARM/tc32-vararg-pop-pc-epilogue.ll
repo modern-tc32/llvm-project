@@ -7,8 +7,8 @@
 define i32 @vararg_large(i32 %fixed, ...) minsize noinline nounwind optsize "frame-pointer"="all" "target-cpu"="tc32" "target-features"="+armv4t,+thumb-mode" {
 ; CHECK-LABEL: vararg_large:
 ; CHECK:       tsub sp, #12
-; CHECK:       tpush {r4, r5, r6, r7, lr}
-; CHECK:       tpop {r4, r5, r6, r7}
+; CHECK:       tpush {r4, r5, r7, lr}
+; CHECK:       tpop {r4, r5, r7}
 ; CHECK-NOT:   tloadr {{r[0-7]}}, [sp]
 ; CHECK-NOT:   tstorer {{r[0-7]}}, [sp, #12]
 ; CHECK:       tpop {[[RET:r[0-7]]]}
@@ -47,8 +47,8 @@ declare void @llvm.lifetime.end.p0(ptr)
 define i64 @vararg_large_i64(i32 %fixed, ...) minsize noinline nounwind optsize "frame-pointer"="all" "target-cpu"="tc32" "target-features"="+armv4t,+thumb-mode" {
 ; CHECK-LABEL: vararg_large_i64:
 ; CHECK:       tsub sp, #12
-; CHECK:       tpush {r4, r5, r6, r7, lr}
-; CHECK:       tpop {r4, r5, r6, r7}
+; CHECK:       tpush {r4, r5, r7, lr}
+; CHECK:       tpop {r4, r5, r7}
 ; CHECK-NOT:   tloadr {{r[0-7]}}, [sp]
 ; CHECK-NOT:   tstorer {{r[0-7]}}, [sp, #12]
 ; CHECK:       tpop {[[RET64:r[2-7]]]}

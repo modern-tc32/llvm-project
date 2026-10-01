@@ -1,4 +1,4 @@
-# RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=prologepilog %s -o - | FileCheck %s
+# RUN: llc -mtriple=tc32-unknown-none-elf -frame-pointer=all -run-pass=prolog-epilog %s -o - | FileCheck %s
 
 # When TC32 folds a return into tpop {..., pc}, preserve implicit uses from the
 # original tBX_RET. Otherwise return-value materialization in r0 can be treated
