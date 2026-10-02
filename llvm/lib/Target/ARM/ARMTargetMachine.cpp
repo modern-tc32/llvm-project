@@ -116,7 +116,6 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARMTarget() {
   initializeMachineKCFILegacyPass(Registry);
   initializeTC32DistinctDstRegFixupPass(Registry);
   initializeTC32ImmediateExpandPass(Registry);
-  initializeTC32LoadHazardFixupPass(Registry);
   initializeTC32PackedByteLoadStorePassPass(Registry);
   initializeTC32SignedBranchFixupPass(Registry);
 }
@@ -588,7 +587,6 @@ void ARMPassConfig::addPreEmitPass2() {
   if (TM->getTargetTriple().isTC32()) {
     addPass(createTC32DistinctDstRegFixupPass());
     addPass(createTC32SignedBranchFixupPass());
-    addPass(createTC32LoadHazardFixupPass());
   }
 
   // Inserts fixup instructions before unsafe AES operations. Instructions may
