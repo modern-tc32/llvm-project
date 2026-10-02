@@ -22,8 +22,7 @@ define i32 @ffs_lsb(i32 %x) {
 ; CHECK:      tcmp r0, #0x0
 ; CHECK:      tmov r1, #0x0
 ; CHECK:      tmovn r1, r1
-; CHECK:      tmov r2, #0x1
-; CHECK:      tadd r1, r1, r2
+; CHECK:      tadd r1, #0x1
 ; CHECK:      tshftr r2, r1
 ; CHECK:      tjmi
 ; CHECK-NOT:  tloadrb
