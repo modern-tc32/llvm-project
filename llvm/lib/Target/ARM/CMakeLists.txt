@@ -57,7 +57,6 @@ add_llvm_target(ARMCodeGen
   ARMTargetMachine.cpp
   TC32ImmediateExpandPass.cpp
   TC32IRFixupPass.cpp
-  TC32LoadHazardFixupPass.cpp
   TC32PackedByteLoadStorePass.cpp
   TC32SignedBranchFixupPass.cpp
   ARMTargetObjectFile.cpp

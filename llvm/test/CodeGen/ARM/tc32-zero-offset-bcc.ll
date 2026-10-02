@@ -8,8 +8,6 @@ target triple = "tc32-unknown-none-elf"
 define ptr @tc32_zero_offset_bcc(ptr %l, ptr %sentinel) {
 ; CHECK-LABEL: tc32_zero_offset_bcc:
 ; CHECK:       tloadr r0, [r0, #4]
-; CHECK-NEXT:  nop
-; CHECK-NEXT:  nop
 ; CHECK-NEXT:  tcmp r0, r1
 ; CHECK-NEXT:  tjne [[KEEP:\.LBB0_[0-9]+]]
 ; CHECK:       tmov r0, #0

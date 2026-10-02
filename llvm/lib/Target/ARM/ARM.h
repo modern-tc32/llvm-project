@@ -61,7 +61,6 @@ FunctionPass *createARMFixCortexA57AES1742098Pass();
 FunctionPass *createTC32IRFixupPass();
 FunctionPass *createTC32DistinctDstRegFixupPass();
 FunctionPass *createTC32ImmediateExpandPass();
-FunctionPass *createTC32LoadHazardFixupPass();
 FunctionPass *createTC32PackedByteLoadStorePass();
 FunctionPass *createTC32SignedBranchFixupPass();
 bool runTC32IRFixup(Function &F);
@@ -92,7 +91,6 @@ void initializeThumb2SizeReducePass(PassRegistry &);
 void initializeTC32IRFixupPassPass(PassRegistry &);
 void initializeTC32DistinctDstRegFixupPass(PassRegistry &);
 void initializeTC32ImmediateExpandPass(PassRegistry &);
-void initializeTC32LoadHazardFixupPass(PassRegistry &);
 void initializeTC32PackedByteLoadStorePassPass(PassRegistry &);
 void initializeTC32SignedBranchFixupPass(PassRegistry &);
 
