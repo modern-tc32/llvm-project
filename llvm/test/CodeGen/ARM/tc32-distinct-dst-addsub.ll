@@ -10,8 +10,7 @@ target triple = "tc32-unknown-none-elf"
 define ptr @ready_q_ptr() minsize noinline nounwind optsize "target-cpu"="tc32" "target-features"="+armv4t,+thumb-mode" {
 ; CHECK-LABEL: ready_q_ptr:
 ; CHECK:       tloadr [[BASE:r[0-7]]], .LCPI0_0
-; CHECK:       tmov [[PQ:r[0-7]]], #24
-; CHECK:       tadd [[PQ]], [[PQ]], [[BASE]]
+; CHECK:       tadd [[BASE]], #24
   %pq = getelementptr inbounds %struct.kernel_like, ptr @gk, i32 0, i32 2
   %head = load ptr, ptr %pq, align 4
   %is_self = icmp eq ptr %head, %pq
@@ -21,11 +20,7 @@ define ptr @ready_q_ptr() minsize noinline nounwind optsize "target-cpu"="tc32" 
 
 define ptr @kernel_base_from_runq(ptr %pq) minsize noinline nounwind optsize "target-cpu"="tc32" "target-features"="+armv4t,+thumb-mode" {
 ; CHECK-LABEL: kernel_base_from_runq:
-; CHECK:       tmov [[BASE:r[0-7]]], r0
-; CHECK:       tmov [[OFF:r[0-7]]], #24
-; CHECK:       tmovn [[OFF]], [[OFF]]
-; CHECK:       tcmp [[OFF]], [[OFF]]
-; CHECK:       taddc [[OFF]], [[BASE]]
+; CHECK:       tsub r0, #24
   %base = getelementptr inbounds i8, ptr %pq, i32 -24
   %head = load ptr, ptr %pq, align 4
   %is_null = icmp eq ptr %head, null
