@@ -117,6 +117,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeARMTarget() {
   initializeTC32DistinctDstRegFixupPass(Registry);
   initializeTC32PackedByteLoadStorePassPass(Registry);
   initializeTC32SignedBranchFixupPass(Registry);
+  initializeTC32CopyHoistPass(Registry);
 }
 
 static std::unique_ptr<TargetLoweringObjectFile> createTLOF(const Triple &TT) {
@@ -316,6 +317,7 @@ public:
   bool addRegBankSelect() override;
   bool addGlobalInstructionSelect() override;
   void addPreRegAlloc() override;
+  void addPostRegAlloc() override;
   void addPreSched2() override;
   void addPreEmitPass() override;
   void addPreEmitPass2() override;
@@ -515,6 +517,12 @@ void ARMPassConfig::addPreRegAlloc() {
     if (!DisableA15SDOptimization)
       addPass(createA15SDOptimizerPass());
   }
+}
+
+void ARMPassConfig::addPostRegAlloc() {
+  // TC32: hoist copies out of flag windows before COPY expansion.
+  if (TM->getTargetTriple().isTC32())
+    addPass(createTC32CopyHoistPass());
 }
 
 void ARMPassConfig::addPreSched2() {
