@@ -55,6 +55,7 @@ add_llvm_target(ARMCodeGen
   ARMSLSHardening.cpp
   ARMSubtarget.cpp
   ARMTargetMachine.cpp
+  TC32CopyHoistPass.cpp
   TC32DistinctDstRegFixupPass.cpp
   TC32IRFixupPass.cpp
   TC32PackedByteLoadStorePass.cpp

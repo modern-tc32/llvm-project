@@ -1,0 +1,49 @@
+# RUN: llc -mtriple=tc32-unknown-none-elf -run-pass=tc32-copy-hoist -o - %s | FileCheck %s
+
+# A copy that directly follows a CPSR-defining compare is hoisted above it:
+# the compare neither reads nor writes $r3 and does not write $r1.
+# CHECK-LABEL: name: hoist_ok
+# CHECK:       $r3 = COPY $r1
+# CHECK-NEXT:  tCMPi8 $r0, 1
+---
+name: hoist_ok
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r0, $r1
+    tCMPi8 $r0, 1, 14 /* CC::al */, $noreg, implicit-def $cpsr
+    $r3 = COPY $r1
+    tBcc %bb.1, 0 /* CC::eq */, killed $cpsr
+    tB %bb.2, 14 /* CC::al */, $noreg
+  bb.1:
+    liveins: $r3
+    $r0 = COPY $r3
+    tBX_RET 14 /* CC::al */, $noreg, implicit $r0
+  bb.2:
+    liveins: $r3
+    $r0, dead $cpsr = tMOVi8 0, 14 /* CC::al */, $noreg
+    tBX_RET 14 /* CC::al */, $noreg, implicit $r0
+...
+
+# The compare reads $r3, which the copy overwrites, so the copy must stay
+# after the compare.
+# CHECK-LABEL: name: no_hoist_reads_dst
+# CHECK:       tCMPi8 $r3, 1
+# CHECK-NEXT:  $r3 = COPY $r1
+---
+name: no_hoist_reads_dst
+tracksRegLiveness: true
+body: |
+  bb.0:
+    liveins: $r1, $r3
+    tCMPi8 $r3, 1, 14 /* CC::al */, $noreg, implicit-def $cpsr
+    $r3 = COPY $r1
+    tBcc %bb.1, 0 /* CC::eq */, killed $cpsr
+    tB %bb.2, 14 /* CC::al */, $noreg
+  bb.1:
+    liveins: $r3
+    tBX_RET 14 /* CC::al */, $noreg, implicit $r3
+  bb.2:
+    liveins: $r3
+    tBX_RET 14 /* CC::al */, $noreg, implicit $r3
+...

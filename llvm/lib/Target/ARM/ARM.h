@@ -62,6 +62,7 @@ FunctionPass *createTC32IRFixupPass();
 FunctionPass *createTC32DistinctDstRegFixupPass();
 FunctionPass *createTC32PackedByteLoadStorePass();
 FunctionPass *createTC32SignedBranchFixupPass();
+FunctionPass *createTC32CopyHoistPass();
 bool runTC32IRFixup(Function &F);
 bool runTC32PackedByteLoadStore(Function &F);
 
@@ -91,6 +92,7 @@ void initializeTC32IRFixupPassPass(PassRegistry &);
 void initializeTC32DistinctDstRegFixupPass(PassRegistry &);
 void initializeTC32PackedByteLoadStorePassPass(PassRegistry &);
 void initializeTC32SignedBranchFixupPass(PassRegistry &);
+void initializeTC32CopyHoistPass(PassRegistry &);
 
 class ARMPreAllocLoadStoreOptPass
     : public OptionalPassInfoMixin<ARMPreAllocLoadStoreOptPass> {
