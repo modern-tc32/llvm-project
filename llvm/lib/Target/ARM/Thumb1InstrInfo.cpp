@@ -116,6 +116,49 @@ void Thumb1InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   }
 }
 
+// PHI-elimination places the source copy right before the block terminators,
+// which is after a flag-setting compare feeding the branch. On TC32 a low
+// register copy writes N/Z, so after RA it would clobber the branch condition
+// and copyPhysReg has to detour through a high register. Hoist the copy above
+// the compare instead, when that is legal, so it becomes a single tmov.
+MachineInstr *Thumb1InstrInfo::createPHISourceCopy(
+    MachineBasicBlock &MBB, MachineBasicBlock::iterator InsPt,
+    const DebugLoc &DL, Register Src, unsigned SrcSubReg,
+    Register Dst) const {
+  if (!getSubtarget().getTargetTriple().isTC32() || SrcSubReg != 0 ||
+      !Src.isVirtual() || !Dst.isVirtual())
+    return TargetInstrInfo::createPHISourceCopy(MBB, InsPt, DL, Src, SrcSubReg,
+                                                Dst);
+
+  // Step back over copies already placed before the terminators, so that
+  // several PHI copies for one edge all end up above the compare. A copy that
+  // defines Src must stay where it is, or the new copy would read a stale Src.
+  MachineBasicBlock::iterator Pos = InsPt;
+  while (Pos != MBB.begin()) {
+    const MachineInstr &Prev = *std::prev(Pos);
+    if (!Prev.isCopy() || Prev.getOperand(0).getReg() == Src)
+      break;
+    --Pos;
+  }
+  if (Pos == MBB.begin())
+    return TargetInstrInfo::createPHISourceCopy(MBB, InsPt, DL, Src, SrcSubReg,
+                                                Dst);
+
+  const MachineInstr &Cmp = *std::prev(Pos);
+  if (Cmp.getOpcode() != ARM::tCMPi8 && Cmp.getOpcode() != ARM::tCMPr)
+    return TargetInstrInfo::createPHISourceCopy(MBB, InsPt, DL, Src, SrcSubReg,
+                                                Dst);
+  // PHI elimination marks the copy as the last use of Src, so the compare
+  // must not read Src (or the new destination) after the copy.
+  for (const MachineOperand &MO : Cmp.operands())
+    if (MO.isReg() && (MO.getReg() == Dst || MO.getReg() == Src))
+      return TargetInstrInfo::createPHISourceCopy(MBB, InsPt, DL, Src,
+                                                  SrcSubReg, Dst);
+
+  return BuildMI(MBB, std::prev(Pos), DL, get(TargetOpcode::COPY), Dst)
+      .addReg(Src);
+}
+
 void Thumb1InstrInfo::storeRegToStackSlot(MachineBasicBlock &MBB,
                                           MachineBasicBlock::iterator I,
                                           Register SrcReg, bool isKill, int FI,
