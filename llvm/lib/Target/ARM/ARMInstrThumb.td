@@ -645,6 +645,8 @@ let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
   def tTC32B32 : ThumbXI<(outs), (ins t_brtarget:$target), AddrModeNone, 4,
                          IIC_Br, "tj\t$target", "", []>,
                  Sched<[WriteBr]> {
+    // TC32-only: keep out of the generic Thumb decoder tables.
+    let DecoderNamespace = "TC32";
     bits<24> target;
     let Inst{31-27} = 0b00000;
     let Inst{15-14} = 0b00;
@@ -694,6 +696,8 @@ let isBranch = 1, isTerminator = 1, hasSideEffects = 0 in {
   def tTC32Bcc32 : ThumbXI<(outs), (ins thumb_bcc_target:$target, pred:$p),
                            AddrModeNone, 4, IIC_Br, "tj${p}\t$target", "", []>,
                     Sched<[WriteBr]> {
+    // TC32-only: keep out of the generic Thumb decoder tables.
+    let DecoderNamespace = "TC32";
     bits<4> p;
     bits<19> target;
     let Inst{31-13} = target;
