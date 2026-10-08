@@ -155,6 +155,8 @@ def DontUseNEONForFP : Predicate<"!Subtarget->useNEONForSinglePrecisionFP()">;
 def IsThumb          : Predicate<"Subtarget->isThumb()">,
                                  AssemblerPredicate<(all_of ModeThumb), "thumb">;
 def IsThumb1Only     : Predicate<"Subtarget->isThumb1Only()">;
+// TC32 is Thumb1-only but has no Thumb1 negate; keep the generic pattern off it.
+def NotTC32         : Predicate<"!Subtarget->getTargetTriple().isTC32()">;
 def IsThumb2         : Predicate<"Subtarget->isThumb2()">,
                                  AssemblerPredicate<(all_of ModeThumb, FeatureThumb2),
                                                     "thumb2">;
