@@ -1707,8 +1707,11 @@ MachineBasicBlock *ARMConstantIslands::splitBlockBeforeInstr(MachineInstr *MI) {
     BuildMI(OrigBB, DebugLoc(), TII->get(Opc))
         .addMBB(NewBB)
         .add(predOps(ARMCC::AL));
-  addImmBranch(&OrigBB->back(), getUnconditionalBrDisp(Opc), false, false, 0,
-               Opc);
+  // Upstream does not track this branch; only TC32 records it, so the generic
+  // Thumb2 pass does not shrink it to a 16-bit tB.
+  if (STI->getTargetTriple().isTC32())
+    addImmBranch(&OrigBB->back(), getUnconditionalBrDisp(Opc), false, false, 0,
+                 Opc);
   ++NumSplit;
 
   // Update the CFG.  All succs of OrigBB are now succs of NewBB.
