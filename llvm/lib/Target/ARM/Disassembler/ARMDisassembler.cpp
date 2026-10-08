@@ -6850,6 +6850,19 @@ DecodeStatus ARMDisassembler::getThumbInstruction(MCInst &MI, uint64_t &Size,
     return Result;
   }
 
+  // Remaining TC32-only 32-bit forms (long tj). Tried only after the 16-bit
+  // TC32 decoder, and kept out of the generic Thumb2 tables.
+  if (STI.getTargetTriple().isTC32() && Bytes.size() >= 4) {
+    uint32_t Insn32 =
+        (uint32_t(Insn16) << 16) | llvm::support::endian::read<uint16_t>(
+                                       Bytes.data() + 2, InstructionEndianness);
+    if (decodeInstruction(DecoderTableTC3232, MI, Insn32, Address, this, STI) ==
+        MCDisassembler::Success) {
+      Size = 4;
+      return MCDisassembler::Success;
+    }
+  }
+
   Result = decodeInstruction(DecoderTableThumb16, MI, Insn16, Address, this,
                              STI);
   if (Result != MCDisassembler::Fail) {
