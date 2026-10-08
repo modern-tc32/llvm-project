@@ -11321,14 +11321,21 @@ ARMAsmParser::checkEarlyTargetMatchPredicate(MCInst &Inst,
   unsigned Opc = Inst.getOpcode();
   switch (Opc) {
   // Prevent the mov r8 r8 encoding for nop being selected when the v6/thumb 2
-  // encoding is available.
+  // encoding is available. TC32 nop is 0x06c0 (tTC32NOP), not mov r8, r8.
   case ARM::tMOVr: {
     if (Operands[0]->isToken() &&
         static_cast<ARMOperand &>(*Operands[0]).getToken() == "nop" &&
-        ((isThumb() && !isThumbOne()) || hasV6MOps())) {
+        ((isThumb() && !isThumbOne()) || hasV6MOps() ||
+         getSTI().getTargetTriple().isTC32())) {
       return Match_MnemonicFail;
     }
+    return Match_Success;
   }
+  // 0x06c0 is the TC32 nop. On other Thumb targets 0x06c0 is lsls r0, r0, #27,
+  // so the TC32-only nop must not be selected there.
+  case ARM::tTC32NOP:
+    if (!getSTI().getTargetTriple().isTC32())
+      return Match_MnemonicFail;
     [[fallthrough]];
   default:
     return Match_Success;
