@@ -1369,6 +1369,9 @@ def tRSB :                      // A8.6.141
 
 // TC32 uses these Thumb ALU encodings with vendor mnemonics. Keep separate
 // assembler opcodes so they remain available on TC32's Thumb v4T subtarget.
+// TC32 negate: rd = 0 - rn, sets N/Z/C/V like RSBS. Encoding 0x0240 | (rn<<3) | rd
+// is the one used by vendor code; flags were checked on TLSR8258 hardware.
+let Defs = [CPSR] in
 def tTC32NEG :
   T1pI<(outs tGPR:$Rd), (ins tGPR:$Rn), IIC_iALUi,
        "tnegs", "\t$Rd, $Rn", []>, T1DataProcessing<0b1001>,
@@ -1377,8 +1380,9 @@ def tTC32NEG :
   bits<3> Rn;
   let Inst{5-3} = Rn;
   let Inst{2-0} = Rd;
-  let isAsmParserOnly = 1;
 }
+
+def : T1Pat<(ineg tGPR:$Rn), (tTC32NEG tGPR:$Rn)>, Requires<[IsTC32]>;
 
 // Subtract with carry register
 let Uses = [CPSR], hasSideEffects = 0 in
