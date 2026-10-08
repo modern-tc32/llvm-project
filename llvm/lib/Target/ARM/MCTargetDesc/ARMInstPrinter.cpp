@@ -134,6 +134,15 @@ void ARMInstPrinter::printInst(const MCInst *MI, uint64_t Address,
     O << "treti\t{r15}";
     printAnnotation(O, Annot);
     return;
+  case ARM::tRSB:
+    // rsbs Rd, Rn, #0 is the TC32 negate tnegs (same encoding as tTC32NEG).
+    // Operands: Rd, cc_out (CPSR), Rn, predicate, predicate register.
+    O << "tnegs\t";
+    printOperand(MI, 0, STI, O);
+    O << ", ";
+    printOperand(MI, 2, STI, O);
+    printAnnotation(O, Annot);
+    return;
   default:
     break;
   }
