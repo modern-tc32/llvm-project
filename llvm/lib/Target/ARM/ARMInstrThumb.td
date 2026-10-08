@@ -1364,8 +1364,8 @@ def tROR :                      // A8.6.139
 def tRSB :                      // A8.6.141
   T1sIDPEncode<0b1001, (outs tGPR:$Rd), (ins tGPR:$Rn),
                IIC_iALUi,
-               "tneg", "\t$Rd, $Rn",
-               [(set tGPR:$Rd, (ineg tGPR:$Rn))]>, Requires<[IsThumb, IsThumb1Only, HasV6]>, Sched<[WriteALU]>;
+               "rsb", "\t$Rd, $Rn, #0",
+               [(set tGPR:$Rd, (ineg tGPR:$Rn))]>, Requires<[IsThumb, IsThumb1Only, NotTC32]>, Sched<[WriteALU]>;
 
 // TC32 uses these Thumb ALU encodings with vendor mnemonics. Keep separate
 // assembler opcodes so they remain available on TC32's Thumb v4T subtarget.
@@ -1461,11 +1461,11 @@ let hasPostISelHook = 1, Defs = [CPSR] in {
                 Requires<[IsThumb1Only]>,
                 Sched<[WriteALU]>;
 
-//  def tRSBS   : tPseudoInst<(outs tGPR:$Rd), (ins tGPR:$Rn),
-//                            2, IIC_iALUr,
-//                            [(set tGPR:$Rd, CPSR, (ARMsubc 0, tGPR:$Rn))]>,
-//                Requires<[IsThumb1Only]>,
-//                Sched<[WriteALU]>;
+  def tRSBS   : tPseudoInst<(outs tGPR:$Rd), (ins tGPR:$Rn),
+                            2, IIC_iALUr,
+                            [(set tGPR:$Rd, CPSR, (ARMsubc 0, tGPR:$Rn))]>,
+                Requires<[IsThumb1Only, NotTC32]>,
+                Sched<[WriteALU]>;
 
   def tLSLSri : tPseudoInst<(outs tGPR:$Rd), (ins tGPR:$Rn, imm0_31:$imm5),
                             2, IIC_iALUr,
